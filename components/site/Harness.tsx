@@ -2,7 +2,25 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { UIMessage } from "ai";
+import {
+  IconArrowRight,
+  IconChartBar,
+  IconChecklist,
+  IconCode,
+  IconCoins,
+  IconDatabase,
+  IconDots,
+  IconGavel,
+  IconPencil,
+  IconRefresh,
+  IconRepeat,
+  IconRoute,
+  IconSettings,
+  IconTicket,
+  IconWallet,
+} from "@tabler/icons-react";
 import { LiveResponse } from "@/components/app/LiveResponse";
+import { ConnectGate } from "@/components/app/ConnectGate";
 import AgentScreen from "@/components/primitives/AgentScreen";
 import ApprovalCard from "@/components/primitives/ApprovalCard";
 import ContextCards from "@/components/primitives/ContextCards";
@@ -344,21 +362,36 @@ function matchScenario(text: string): ScenarioId {
 /* ── suggestion + recents catalogs ────────────────────────── */
 
 function SuggestionIcon({ kind }: { kind: string }) {
-  const paths: Record<string, ReactNode> = {
-    todos: <g><path d="M11 6h9M11 12h9M11 18h9" /><path d="M4 6l1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17" /></g>,
-    workload: <g><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M8 10l2.5 2.5L16 8" /></g>,
-    "find-ticket": <g><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></g>,
-    suppliers: <g><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></g>,
-    restock: <path d="M8 6l-5 6 5 6M16 6l5 6-5 6" />,
-    rewrite: <g><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></g>,
-    tune: <g><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h14M20 18h0" /><circle cx="16" cy="6" r="2" /><circle cx="8" cy="12" r="2" /><circle cx="18" cy="18" r="2" /></g>,
-    appeal: <g><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" /></g>,
-  };
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      {paths[kind] ?? paths.workload}
-    </svg>
-  );
+  const props = { size: 15, stroke: 1.9 } as const;
+  switch (kind) {
+    case "todos":
+      return <IconChecklist {...props} />;
+    case "workload":
+      return <IconChartBar {...props} />;
+    case "find-ticket":
+      return <IconTicket {...props} />;
+    case "suppliers":
+      return <IconDatabase {...props} />;
+    case "restock":
+      return <IconCode {...props} />;
+    case "rewrite":
+    case "edits":
+      return <IconPencil {...props} />;
+    case "tune":
+      return <IconSettings {...props} />;
+    case "appeal":
+      return <IconGavel {...props} />;
+    case "quote":
+      return <IconCoins {...props} />;
+    case "swap":
+      return <IconRepeat {...props} />;
+    case "balances":
+      return <IconWallet {...props} />;
+    case "routes":
+      return <IconRoute {...props} />;
+    default:
+      return <IconChartBar {...props} />;
+  }
 }
 
 const LIVE_SUGGESTIONS: { id: string; label: string }[] = [
@@ -542,12 +575,12 @@ function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { 
         ))}
         <div className="mt-1 flex items-center gap-5 pl-0.5 text-[13px] text-ink-3">
           <button type="button" className="flex items-center gap-2 py-1 transition-colors duration-150 hover:text-ink">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
+            <IconDots size={15} stroke={1.9} aria-hidden />
             Connect your apps for a better experience
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            <IconArrowRight size={13} stroke={2} aria-hidden />
           </button>
           <button type="button" onClick={shuffle} className="flex items-center gap-2 py-1 transition-colors duration-150 hover:text-ink">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" /></svg>
+            <IconRefresh size={14} stroke={2} aria-hidden />
             Shuffle suggestions
           </button>
         </div>
@@ -559,7 +592,6 @@ function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { 
 /* ── main ─────────────────────────────────────────────────── */
 
 type Msg = { id: number; role: "user"; text: string } | { id: number; role: "assistant"; scenarioId: ScenarioId };
-type Chat = { id: number; title: string | null; messages: Msg[] };
 
 /* the pane arrives on the same beat as the answer it belongs to */
 /* The pane shell reserves its space as soon as the message is sent, so the
@@ -711,11 +743,23 @@ export type LiveChat = {
 
 export default function Harness({
   live,
+  gated,
+  title,
+  onNewChat,
+  onRename,
   footer,
   models,
   onModelChange,
 }: {
   live?: LiveChat;
+  /** visitor prompts held at the gate, each answered by the connect reply */
+  gated?: { id: number; prompt: string }[];
+  /** the live thread title; null until the first prompt names it */
+  title?: string | null;
+  /** starts a fresh live thread */
+  onNewChat?: () => void;
+  /** renames the live thread */
+  onRename?: (next: string) => void;
   /** replaces the sidebar's footer button */
   footer?: ReactNode;
   /** the models the composer offers */
@@ -723,25 +767,33 @@ export default function Harness({
   /** called with the model id whenever the selection changes */
   onModelChange?: (modelId: string) => void;
 } = {}) {
-  const [chats, setChats] = useState<Chat[]>([{ id: 1, title: null, messages: [] }]);
-  const [activeId, setActiveId] = useState(1);
+  /* the demo thread is a single conversation — one title, one transcript,
+   * no tabs. The live thread is the same shape: `live.messages` plus the
+   * title the application owns. */
+  const [demoMessages, setDemoMessages] = useState<Msg[]>([]);
+  const [demoTitle, setDemoTitle] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   /* spreadsheet: which view/property is open in the right inspector (null = chat) */
   const [propView, setPropView] = useState<string | null>(null);
   /* "use this harness" open-source modal */
   const [useOpen, setUseOpen] = useState(false); // retained so the modal removal is a no-op
-  const chatIdRef = useRef(1);
   const msgIdRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const [composerH, setComposerH] = useState(150);
 
-  const chat = chats.find((c) => c.id === activeId) ?? chats[0];
-  const active = chat.messages.length > 0;
+  const displayTitle = live ? title : demoTitle;
+  // In live mode the conversation lives in `live.messages`, so the thread is
+  // "active" whenever the assistant has something to show — including a
+  // gated turn.
+  const gatedCount = live ? (gated?.length ?? 0) : 0;
+  const active = live
+    ? (live.messages?.length ?? 0) + gatedCount > 0
+    : demoMessages.length > 0;
 
   /* right-hand pane: the latest assistant message that carries one */
   const [closedPaneId, setClosedPaneId] = useState(0);
-  const lastPaneMsg = [...chat.messages]
+  const lastPaneMsg = [...demoMessages]
     .reverse()
     .find(
       (m): m is Extract<Msg, { role: "assistant" }> =>
@@ -751,7 +803,7 @@ export default function Harness({
   const paneScenario = paneMsg ? SCENARIOS[paneMsg.scenarioId] : null;
 
   /* spreadsheet workspace: table becomes the main pane, chat docks to the right */
-  const workspaceMsg = [...chat.messages]
+  const workspaceMsg = [...demoMessages]
     .reverse()
     .find(
       (m): m is Extract<Msg, { role: "assistant" }> =>
@@ -759,78 +811,36 @@ export default function Harness({
     );
   const workspaceScenario = workspaceMsg ? SCENARIOS[workspaceMsg.scenarioId] : null;
 
-  const appendExchange = (target: Chat, text: string, scenarioId: ScenarioId): Chat => ({
-    ...target,
-    title: target.title ?? (text.length > 30 ? `${text.slice(0, 30).trimEnd()}…` : text),
-    messages: [
-      ...target.messages,
+  const send = (text: string, scenarioId: ScenarioId) => {
+    setDemoTitle((current) => current ?? (text.length > 30 ? `${text.slice(0, 30).trimEnd()}…` : text));
+    setDemoMessages((current) => [
+      ...current,
       { id: (msgIdRef.current += 1), role: "user", text },
       { id: (msgIdRef.current += 1), role: "assistant", scenarioId },
-    ],
-  });
-
-  const send = (text: string, scenarioId: ScenarioId) => {
-    setChats((current) => current.map((c) => (c.id === chat.id ? appendExchange(c, text, scenarioId) : c)));
+    ]);
   };
 
-  /* reopening an existing chat replays it; otherwise recents open in a
-   * fresh chat unless the current one is empty */
-  const [replay, setReplay] = useState<Record<number, number>>({});
+  /* recents open as a fresh single thread with that prompt */
   const pickRecent = (scenarioId: ScenarioId, label: string, prompt = label) => {
-    const existing = chats.find((c) => c.title === label);
-    if (existing) {
-      if (prompt !== label) {
-        setChats((current) =>
-          current.map((c) =>
-            c.id === existing.id
-              ? {
-                  ...c,
-                  messages: c.messages.map((message) =>
-                    message.role === "user" && message.text === label ? { ...message, text: prompt } : message,
-                  ),
-                }
-              : c,
-          ),
-        );
-      }
-      setActiveId(existing.id);
-      setReplay((current) => ({ ...current, [existing.id]: (current[existing.id] ?? 0) + 1 }));
-      return;
-    }
-    if (chat.messages.length === 0) {
-      setChats((current) =>
-        current.map((c) => (c.id === chat.id ? appendExchange({ ...c, title: label }, prompt, scenarioId) : c)),
-      );
-      return;
-    }
-    const id = (chatIdRef.current += 1);
-    setChats((current) => [...current, appendExchange({ id, title: label, messages: [] }, prompt, scenarioId)]);
-    setActiveId(id);
+    setDemoTitle(label);
+    setPropView(null);
+    setDemoMessages([
+      { id: (msgIdRef.current += 1), role: "user", text: prompt },
+      { id: (msgIdRef.current += 1), role: "assistant", scenarioId },
+    ]);
   };
 
-  const newChat = () => {
-    const id = (chatIdRef.current += 1);
-    setChats((current) => [...current, { id, title: null, messages: [] }]);
-    setActiveId(id);
-  };
-
-  const closeChat = (id: number) => {
-    const remaining = chats.filter((c) => c.id !== id);
-    if (remaining.length === 0) {
-      const nid = (chatIdRef.current += 1);
-      setChats([{ id: nid, title: null, messages: [] }]);
-      setActiveId(nid);
-      return;
-    }
-    setChats(remaining);
-    if (id === activeId) setActiveId(remaining[remaining.length - 1].id);
+  const newDemoChat = () => {
+    setDemoMessages([]);
+    setDemoTitle(null);
+    setPropView(null);
   };
 
   useEffect(() => {
     if (!active) return;
     const el = scrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [chat.messages, active]);
+  }, [demoMessages, gatedCount, active]);
 
   /* the composer floats over the thread (ChatGPT-style), so the thread pads its
    * bottom by the composer's height — that lets the last message rest flush with
@@ -843,7 +853,7 @@ export default function Harness({
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [active, activeId]);
+  }, [active]);
 
   /* artifacts (charts, tables, approval cards) reveal after the text streams
    * in, growing the thread well after `messages` last changed — often in one
@@ -881,41 +891,71 @@ export default function Harness({
       mutate.disconnect();
       cancelAnimationFrame(raf);
     };
-  }, [active, activeId]);
+  }, [active]);
 
-  /* switching threads returns the inspector to the chat */
-  useEffect(() => setPropView(null), [activeId]);
+  /* the title bar rides the top of the main pane in both layouts. The type
+   * matches the sidebar's "New chat" row: 14px medium ink-2. Hovering the
+   * title reveals a pencil that renames it inline. */
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
 
-  /* the tab bar rides the top of the main pane in both layouts */
-  const tabBar = (
-    <div className="flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b border-line px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      {chats.map((c) => (
-        <div
-          key={c.id}
-          /* fixed width so every close button sits in the same spot — you can
-           * close a run of tabs without chasing the next × across the bar */
-          className={`group/tab flex h-7 w-36 shrink-0 items-center gap-0.5 rounded-[7px] pl-2.5 pr-0.5 text-[12.5px] font-medium transition-colors duration-100 ${
-            c.id === activeId ? "bg-hover-2 text-ink" : "text-ink-2 hover:bg-hover hover:text-ink"
-          }`}
-        >
-          <button type="button" aria-pressed={c.id === activeId} onClick={() => setActiveId(c.id)} title={c.title ?? "New chat"} className="min-w-0 flex-1 text-left">
-            <span className="block truncate">{c.title ?? "New chat"}</span>
-          </button>
+  const startRename = () => {
+    setTitleDraft(displayTitle ?? "");
+    setEditingTitle(true);
+  };
+  const commitRename = () => {
+    const next = titleDraft.replace(/\s+/g, " ").trim().slice(0, 84);
+    setEditingTitle(false);
+    if (!next) return;
+    if (live) onRename?.(next);
+    else setDemoTitle(next);
+  };
+
+  /* a fresh thread leaves nothing to rename */
+  useEffect(() => {
+    if (!displayTitle) setEditingTitle(false);
+  }, [displayTitle]);
+
+  const titleBar = (
+    <div className="group flex h-11 shrink-0 items-center justify-between gap-2 border-b border-line px-3 sm:pl-4">
+      {editingTitle ? (
+        <input
+          autoFocus
+          value={titleDraft}
+          maxLength={84}
+          aria-label="Rename chat"
+          onChange={(event) => setTitleDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") commitRename();
+            else if (event.key === "Escape") setEditingTitle(false);
+          }}
+          onBlur={commitRename}
+          onFocus={(event) => event.currentTarget.select()}
+          className="min-w-0 flex-1 bg-transparent text-[14px] font-medium text-ink outline-none"
+        />
+      ) : (
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <span
+            className="block min-w-0 max-w-full truncate text-[14px] font-medium text-ink-2"
+            title={displayTitle ?? "New chat"}
+          >
+            {displayTitle ?? "New chat"}
+          </span>
           <button
             type="button"
-            aria-label="Close tab"
-            onClick={() => closeChat(c.id)}
-            className="-my-1 flex size-6 shrink-0 items-center justify-center rounded-[5px] text-ink-3 transition-[background-color,color] duration-100 hover:bg-hover-2 hover:text-ink"
+            aria-label="Rename chat"
+            onClick={startRename}
+            className="flex size-7 shrink-0 items-center justify-center rounded-[7px] text-ink-3 opacity-0 transition-[opacity,background-color,color] duration-100 hover:bg-hover hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
           >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M18 6L6 18M6 6l12 12" /></svg>
+            <IconPencil size={15} stroke={1.9} />
           </button>
         </div>
-      ))}
+      )}
       <button
         type="button"
         aria-label="New chat"
-        onClick={newChat}
-        className="ml-0.5 flex size-7 shrink-0 items-center justify-center rounded-[7px] text-ink-3 transition-colors duration-100 hover:bg-hover hover:text-ink"
+        onClick={live ? onNewChat : newDemoChat}
+        className="flex size-7 shrink-0 items-center justify-center rounded-[7px] text-ink-3 transition-colors duration-100 hover:bg-hover hover:text-ink"
       >
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
       </button>
@@ -926,7 +966,10 @@ export default function Harness({
    * docked assistant panel in spreadsheet mode (narrow) */
   const renderThread = (narrow: boolean) => (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
+      >
         <div
           className={`flex flex-col gap-8 pt-8 ${narrow ? "px-4" : "px-4 sm:px-8 lg:px-12"}`}
           /* pad the bottom by the floating composer's height so the last message
@@ -934,35 +977,57 @@ export default function Harness({
           style={{ paddingBottom: composerH + 16 }}
         >
           {live ? (
-            live.messages.map((message) => {
-              const text = message.parts
-                .filter((part) => part.type === "text")
-                .map((part) => part.text)
-                .join("");
-              return (
-                <div key={message.id} className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
-                  {message.role === "user" ? (
-                    <UserBubble text={text} />
-                  ) : (
-                    <LiveResponse message={message} status={live.status} />
-                  )}
+            <>
+              {live.messages.map((message) => {
+                const text = message.parts
+                  .filter((part) => part.type === "text")
+                  .map((part) => part.text)
+                  .join("");
+                return (
+                  <div key={message.id} className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+                    {message.role === "user" ? (
+                      <UserBubble text={text} />
+                    ) : (
+                      <LiveResponse message={message} status={live.status} />
+                    )}
+                  </div>
+                );
+              })}
+              {(gated ?? []).map((exchange) => (
+                <div key={`gated-${exchange.id}`} className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+                  <div className="flex flex-col gap-8">
+                    <UserBubble text={exchange.prompt} />
+                    <ConnectGate />
+                  </div>
                 </div>
-              );
-            })
+              ))}
+            </>
           ) : (
-            chat.messages.map((message) => {
+            demoMessages.map((message) => {
               const full = !narrow && message.role === "assistant" && SCENARIOS[message.scenarioId].fullBleed;
               return (
                 <div key={message.id} className={narrow || full ? "w-full" : "mx-auto w-full max-w-[720px]"}>
                   {message.role === "user" ? (
                     <UserBubble text={message.text} />
                   ) : (
-                    <AssistantResponse key={`${message.id}-${replay[chat.id] ?? 0}`} scenarioId={message.scenarioId} />
+                    <AssistantResponse key={message.id} scenarioId={message.scenarioId} />
                   )}
                 </div>
               );
             })
           )}
+          {/* the round trip from send to the first stream chunk has no
+              assistant message to attach to, so the loader sits on its own */}
+          {live?.status === "submitted" ? (
+            <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+              <LoadingState variant="Drive" />
+            </div>
+          ) : null}
+          {live?.error ? (
+            <div className="mx-auto w-full max-w-[720px] text-[13px] text-red">
+              {live.error}
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -996,10 +1061,10 @@ export default function Harness({
       <SidebarNav
         fill
         className="hidden lg:flex"
-        recents={live ? [] : RECENTS}
-        activeTitle={chat.title}
-        onPick={(id, label, prompt) => pickRecent(id as ScenarioId, label, prompt)}
-        onNewChat={newChat}
+        recents={live ? (title ? [{ id: "current", label: title }] : []) : RECENTS}
+        activeTitle={displayTitle}
+        onPick={live ? undefined : (id, label, prompt) => pickRecent(id as ScenarioId, label, prompt)}
+        onNewChat={live ? onNewChat : newDemoChat}
         footerLabel="Fork this"
         onFooterClick={footer ? () => {} : () => setUseOpen(true)}
         footer={footer}
@@ -1012,7 +1077,7 @@ export default function Harness({
             <>
               {/* main pane — the live spreadsheet */}
               <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-line bg-page">
-                {tabBar}
+                {titleBar}
                 <div className="flex min-h-0 flex-1 flex-col">{workspaceScenario.Workspace?.()}</div>
                 {/* views — selecting one opens its property inspector on the right */}
                 <div className="flex h-10 shrink-0 items-center gap-1 overflow-x-auto border-t border-line px-2">
@@ -1063,7 +1128,7 @@ export default function Harness({
           ) : (
             <>
               <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-line bg-page">
-                {tabBar}
+                {titleBar}
                 {active ? (
                   renderThread(false)
                 ) : (
@@ -1076,7 +1141,7 @@ export default function Harness({
               {/* artifact pane — its own rounded container */}
               {active && paneMsg && paneScenario?.Pane && (
                   <aside
-                    key={`${paneMsg.id}-${replay[chat.id] ?? 0}`}
+                    key={paneMsg.id}
                     className="hidden w-[360px] shrink-0 flex-col overflow-hidden rounded-[14px] border border-line bg-page lg:flex"
                     style={{ animation: "fade-in 300ms ease both" }}
                   >
@@ -1111,8 +1176,6 @@ export default function Harness({
           )}
         </div>
       </div>
-
-      null
     </main>
   );
 }
