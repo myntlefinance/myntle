@@ -1,0 +1,61 @@
+{
+  "name": "myntle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "trustedDependencies": [
+    "@swc/core",
+    "esbuild"
+  ],
+  "scripts": {
+    "dev": "bun --bun next dev",
+    "build": "bun --bun next build",
+    "start": "bun --bun next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "workflow:web": "workflow web",
+    "workflow:runs": "workflow inspect runs"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.75",
+    "@ai-sdk/react": "^4.0.152",
+    "@ai-sdk/workflow": "^2.0.80",
+    "@hot-labs/near-connect": "^0.11.4",
+    "@solana/wallet-standard": "^1.1.8",
+    "@supabase/supabase-js": "^2.118.0",
+    "@tabler/icons-react": "^3.49.0",
+    "@tanstack/react-query": "^5.104.5",
+    "@wallet-standard/app": "^1.1.1",
+    "@wallet-standard/base": "^1.1.1",
+    "ai": "^7.0.148",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "glimm": "^0.3.1",
+    "iconoir-react": "^7.12.1",
+    "liveline": "^0.0.7",
+    "near-api-js": "^7.3.1",
+    "near-connect-hooks": "^1.1.6",
+    "next": "^16.4.2",
+    "react": "~19.2.9",
+    "react-dom": "~19.2.9",
+    "shadow-plugin": "^2.1.1",
+    "tailwind-merge": "^3.6.0",
+    "viem": "^2.57.10",
+    "wagmi": "^2.19.5",
+    "workflow": "^5.2.3",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.8",
+    "@types/node": "^22",
+    "@types/react": "~19.2.18",
+    "@types/react-dom": "~19.2.3",
+    "tailwindcss": "^4.1.8",
+    "typescript": "^5",
+    "vitest": "^3.2.7"
+  }
+}

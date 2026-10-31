@@ -1,0 +1,4 @@
+[install]
+# Bun 1.4 defaults to an isolated linker for workspaces. This project is a
+# single package, so the hoisted linker keeps node_modules flat and predictable.
+linker = "hoisted"
