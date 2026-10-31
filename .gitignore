@@ -31,6 +31,16 @@ pnpm-lock.yaml
 coverage/
 /.swc
 
+# Local learnings. Working notes from real sessions, kept out of the repo
+# so design docs stay small. See learnings/agents.md.
+learnings/
+
+# Local build plans. Step-by-step working notes, kept out of the repo.
+plans/
+
+# Local context notes. Research and working docs, kept out of the repo.
+context/
+
 # Agent tooling. The impeccable skill is installed per agent harness, and the
 # nine copies of it are 19 megabytes each. The design configuration in
 # .impeccable/live/ is project configuration and is committed; the local
