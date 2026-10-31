@@ -14,7 +14,7 @@ import { fromHex, type ConnectedWallet } from "./types";
  */
 export function useEvmWallet() {
   const { address, isConnected } = useAccount();
-  const { connect, connectors, isPending } = useConnect();
+  const { connectAsync, connectors, isPending } = useConnect();
   const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
 
@@ -42,11 +42,17 @@ export function useEvmWallet() {
     isConnected: isConnected && !!account,
     isPending,
     connectors,
-    connect: async (connectorId?: string) => {
+    connect: async (connectorId?: string): Promise<string> => {
       const connector =
         connectors.find((c) => c.id === connectorId) ?? connectors[0];
       if (!connector) throw new Error("No EVM wallet is available");
-      await connect({ connector });
+      // connectAsync waits for the wallet's approval. The plain `connect`
+      // returns void immediately, which is what made the picker report
+      // success before the user had approved anything.
+      const result = await connectAsync({ connector });
+      const next = result.accounts?.[0] ?? address;
+      if (!next) throw new Error("This wallet did not share an account");
+      return next;
     },
     disconnect: async () => disconnect(),
     signMessage: sign,

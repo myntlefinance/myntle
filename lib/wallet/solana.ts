@@ -66,10 +66,39 @@ export function useSolanaWallet() {
   const wallets = useSolanaWallets();
   const [connection, setConnection] = useState<SolanaConnection | null>(null);
 
-  const connect = useCallback((wallet: Wallet) => {
+  const connect = useCallback(async (wallet: Wallet) => {
+    // A wallet the browser advertises has not necessarily authorised the
+    // application yet, so the connect feature is required. A rejection must
+    // propagate to the picker; falling back to already-exposed accounts is
+    // what let any watch-only address in without approval.
+    const feature = wallet.features["standard:connect"] as
+      | {
+          connect: (input?: unknown) => Promise<{
+            accounts: readonly WalletAccount[];
+          }>;
+        }
+      | undefined;
+    if (feature) {
+      const result = await feature.connect();
+      const authorised = result.accounts[0] ?? wallet.accounts[0];
+      if (!authorised) {
+        throw new Error("This wallet did not share an account");
+      }
+      const next = {
+        wallet,
+        account: authorised,
+        address: authorised.address,
+      };
+      setConnection(next);
+      return next;
+    }
     const account = wallet.accounts[0];
-    if (!account) return;
-    setConnection({ wallet, account, address: account.address });
+    if (!account) {
+      throw new Error("This wallet did not share an account");
+    }
+    const next = { wallet, account, address: account.address };
+    setConnection(next);
+    return next;
   }, []);
 
   const disconnect = useCallback(() => setConnection(null), []);

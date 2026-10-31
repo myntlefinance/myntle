@@ -18,6 +18,7 @@ export function useNearWalletAdapter() {
     signIn,
     signOut,
     loading,
+    connector,
   } = useNearWallet();
 
   const account = useMemo<ConnectedWallet | null>(() => {
@@ -52,13 +53,29 @@ export function useNearWalletAdapter() {
     account,
     isConnected: !!account,
     isPending: loading,
-    connect: async () => {
+    connect: async (): Promise<string> => {
       await signIn();
+      // signIn resolves after the wallet approves. The hook state updates on
+      // the next render, so read the authorised account from the connector
+      // as the source of truth, with the hook state as the fallback.
+      try {
+        const wallet = await connector.wallet();
+        const accounts = await wallet.getAccounts();
+        const id = accounts[0]?.accountId ?? signedAccountId;
+        if (!id) throw new Error("NEAR wallet did not share an account");
+        return id;
+      } catch (cause) {
+        if (signedAccountId) return signedAccountId;
+        throw cause instanceof Error
+          ? cause
+          : new Error("NEAR wallet did not share an account");
+      }
     },
     disconnect: async () => {
       await signOut();
     },
     signMessage: sign,
+    signNEP413: signNEP413Message,
   };
 }
 
