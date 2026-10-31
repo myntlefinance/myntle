@@ -13,7 +13,7 @@ import { tools } from "@/lib/ai/tools";
 export const maxDuration = 300;
 
 export async function POST(req: Request) {
-  const { messages }: { messages: UIMessage[] } = await req.json();
+  const { messages, model }: { messages: UIMessage[]; model?: string } = await req.json();
 
   if (!process.env.NEAR_AI_CLOUD_API_KEY) {
     return Response.json(
@@ -26,10 +26,18 @@ export async function POST(req: Request) {
   }
 
   const result = streamText({
-    model: nearAI(DEFAULT_MODEL),
+    model: nearAI(model ?? DEFAULT_MODEL),
     instructions: SYSTEM_INSTRUCTIONS,
     messages: await convertToModelMessages(messages),
     tools,
+    // GLM 5.3 Flash is a reasoning model, and its thinking arrives through
+    // the reasoning channel, which `toUIMessageStream` forwards as reasoning
+    // parts of the UI message. The interface renders those as the thinking
+    // pills of the activity record (`components/app/ActivityPills`) rather
+    // than as chat output. Do not pass reasoningEffort here: verified against
+    // the live service, a forced "none" does not stop this model from
+    // reasoning — it reroutes the thinking into the answer channel, where the
+    // user would read it as chat output.
     // The default is one step, which would end the assistant after a single
     // tool round and leave a question like "swap some and tell me my balance"
     // half answered.

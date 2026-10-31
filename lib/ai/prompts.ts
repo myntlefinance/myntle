@@ -12,7 +12,13 @@ How to work:
 - Assets are identified by their full asset id, which includes the chain. The same ticker can be a different contract on a different chain, and the right one depends on the route.
 - Be plain about what you do not know. If a tool fails, say which one and what you were trying to find out.
 
-Write in short paragraphs. Do not open with a restatement of the question, and do not close with a summary of what you are about to do.`;
+Write in short paragraphs. Do not open with a restatement of the question, and do not close with a summary of what you are about to do.
+
+Your reply is rendered as markdown, and plain text does most of the work. Use a bullet list only when you are enumerating, and bold or an inline code span only when one figure or one name has to stand out from the sentence around it. Avoid headings and tables; the interface around your reply already shows the numbers that matter.
+
+Do not say what you are about to do. Give only the answer.
+
+Be concise. When listing assets, show at most five per chain and stop there. Do not list every asset you were given. When listing balances, show only the ones that matter.`;
 
 export const TOOL_DESCRIPTIONS = {
   getWalletBalances:

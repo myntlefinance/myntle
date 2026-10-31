@@ -70,8 +70,9 @@ export async function getAssets(): Promise<Asset[]> {
   const res = await fetch(`${BASE}/v0/tokens`, { next: { revalidate: 300 } });
   if (!res.ok) throw new Error("The asset catalogue is unavailable");
 
-  const body = (await res.json()) as TokensResponse;
-  const assets = (body.data ?? []).map((t) => ({
+  const raw = (await res.json()) as TokensResponse | TokensResponse["data"];
+  const items = Array.isArray(raw) ? raw : (raw.data ?? []);
+  const assets = items.map((t) => ({
     assetId: t.assetId,
     symbol: t.symbol,
     decimals: t.decimals,

@@ -22,41 +22,51 @@ export type ModelOption = {
   /** The model id the service expects. */
   key: string;
   name: string;
-  /** What the model is for, in the interface's own words. */
-  tag: string;
+  /** What the model is for, in the interface's own words. Left off the model
+   * the application opens with: the default is stated by the selection, not
+   * by a label. */
+  tag?: string;
+  enabled?: boolean;
 };
 
 /**
  * The models worth offering, and what each is for.
  *
- * The full catalogue has fifty-nine entries. These are the ones that can run
- * the tool loop, because the assistant has to be able to call the balance and
- * quote tools.
+ * The first entry is the one the composer opens with, so the default lives
+ * here and nowhere else: no label on the picker row, no chip in the composer.
+ *
+ * The service's catalogue does not advertise `tools` for GPT-6 Luna, but it
+ * was verified against the live API that the model emits real tool calls
+ * with `finish_reason: "tool_calls"`, so it can drive the tool loop — trust
+ * the API over the feature flags.
  */
 export const MODELS: ModelOption[] = [
   {
     key: "openai/gpt-6-luna",
     name: "GPT-6 Luna",
-    tag: "Default",
-  },
-  {
-    key: "Qwen/Qwen3.8-27B",
-    name: "Qwen 3.8 27B",
-    tag: "Cheapest",
-  },
-  {
-    key: "anthropic/claude-sonnet-5-5",
-    name: "Claude Sonnet 5.5",
-    tag: "Strongest",
+    enabled: true,
   },
   {
     key: "z-ai/glm-5.3-flash",
     name: "GLM 5.3 Flash",
     tag: "Fast",
+    enabled: true,
+  },
+  {
+    key: "Qwen/Qwen3.8-27B",
+    name: "Qwen 3.8 27B",
+    tag: "Cheapest",
+    enabled: false,
+  },
+  {
+    key: "anthropic/claude-sonnet-5-5",
+    name: "Claude Sonnet 5.5",
+    tag: "Strongest",
+    enabled: false,
   },
 ];
 
-export const DEFAULT_MODEL = MODELS[0].key;
+export const DEFAULT_MODEL = "openai/gpt-6-luna";
 
 /**
  * The catalogue of models the service actually offers, read at runtime.

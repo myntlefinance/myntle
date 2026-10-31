@@ -1,17 +1,22 @@
 "use client";
 
 import type { UIMessage } from "ai";
-import StreamingText from "@/components/primitives/StreamingText";
-import ThinkingState from "@/components/primitives/ThinkingState";
-import ToolChips from "@/components/primitives/ToolChips";
+import ActivityPills, {
+  type ActivityBlock,
+} from "@/components/app/ActivityPills";
 import type { ToolStep } from "@/components/primitives/ToolChips";
 
 /**
  * The assistant's live reply.
  *
- * It uses the same primitives the demo uses, so the thinking state, the tool
- * chips and the streaming text look exactly as they do in the harness. The
- * only difference is where the content comes from.
+ * The message parts arrive in stream order — reasoning deltas between tool
+ * rounds, tool calls, and text — and are grouped into activity blocks in
+ * that order: consecutive reasoning deltas form one thinking pill, a tool
+ * part breaks the run and the next tool call continues the same pills, and
+ * text renders as markdown through `components/app/Markdown`. Each
+ * interrupt (a new tool run, new thinking after a result) therefore starts
+ * a fresh pill; see
+ * `components/app/ActivityPills` for the pill lifecycle.
  */
 export function LiveResponse({
   message,
@@ -20,50 +25,40 @@ export function LiveResponse({
   message: UIMessage;
   status: "submitted" | "streaming" | "ready" | "error";
 }) {
-  const text = message.parts
-    .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
-    .map((p) => p.text)
-    .join("");
+  const blocks: ActivityBlock[] = [];
+  for (const part of message.parts) {
+    if (part.type === "reasoning") {
+      const last = blocks[blocks.length - 1];
+      if (last?.kind === "reasoning") last.text += part.text;
+      else blocks.push({ kind: "reasoning", text: part.text });
+    } else if (part.type.startsWith("tool-")) {
+      const tool = part as { type: string; state?: string; input?: unknown };
+      const step: ToolStep = {
+        icon: "think",
+        label: toolLabel(tool.type),
+        chip: toolChip(tool),
+        mono: false,
+        detailMono: false,
+        detail: [],
+      };
+      const last = blocks[blocks.length - 1];
+      if (last?.kind === "tools") last.steps.push(step);
+      else blocks.push({ kind: "tools", steps: [step] });
+    } else if (part.type === "text" && part.text.length > 0) {
+      const last = blocks[blocks.length - 1];
+      if (last?.kind === "text") last.text += part.text;
+      else blocks.push({ kind: "text", text: part.text });
+    }
+  }
 
-  const steps: ToolStep[] = message.parts
-    .filter((p): p is Extract<typeof p, { type: `tool-${string}` }> =>
-      p.type.startsWith("tool-"),
-    )
-    .map((part) => ({
-      icon: "think",
-      label: toolLabel(part.type),
-      chip: toolChip(part),
-      mono: false,
-      detailMono: false,
-      detail: [],
-    }));
-
-  const waiting = status === "submitted" && text.length === 0 && steps.length === 0;
+  const running = status === "submitted" || status === "streaming";
 
   return (
     <article
       className="min-w-0"
       style={{ animation: "fade-up 450ms cubic-bezier(0.23,1,0.32,1) both" }}
     >
-      {steps.length > 0 ? (
-        <div className="mb-4">
-          <ToolChips steps={steps} />
-        </div>
-      ) : null}
-
-      {waiting ? (
-        <div className="flex min-h-6 items-center" style={{ animation: "fade-in 200ms ease-out both" }}>
-          <ThinkingState />
-        </div>
-      ) : null}
-
-      {text.length > 0 ? (
-        <div style={{ animation: "fade-in 260ms ease both" }}>
-          <StreamingText
-            content={text.split(" ").map((word) => ({ text: word + " " }))}
-          />
-        </div>
-      ) : null}
+      <ActivityPills blocks={blocks} running={running} />
     </article>
   );
 }

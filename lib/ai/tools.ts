@@ -32,22 +32,30 @@ export async function readBalances(accountId: string) {
 
 export const getWalletBalances = tool({
   description:
-    "Read the assets the connected account holds, valued with the current price list. " +
-    "Returns each asset with its chain, its decimals, and its price.",
+    "List the assets that are available to trade, with their chain, their decimals, " +
+    "and their current price. This is the catalogue of tradeable assets, not the " +
+    "user's personal balances, which are shown separately in the interface.",
   inputSchema: z.object({}),
   execute: async () => {
     const assets = await getAssets();
-    return {
-      assets: assets
-        .filter((a) => ["near", "eth", "sol", "arb", "base"].includes(a.chain))
-        .map((a) => ({
-          assetId: a.assetId,
-          symbol: a.symbol,
-          chain: a.chain,
-          decimals: a.decimals,
-          priceUsd: a.price,
-        })),
-    };
+    // Only the major assets per chain. The full catalogue is 205 entries and
+    // would take the model too long to read and summarise.
+    const major = ["near", "eth", "sol", "arb", "base"];
+    const seen = new Set<string>();
+    const picked: Array<{ assetId: string; symbol: string; chain: string }> = [];
+    for (const chain of major) {
+      const chainAssets = assets
+        .filter((a) => a.chain === chain)
+        .sort((a, b) => b.price - a.price)
+        .slice(0, 4);
+      for (const a of chainAssets) {
+        if (!seen.has(a.assetId)) {
+          seen.add(a.assetId);
+          picked.push({ assetId: a.assetId, symbol: a.symbol, chain: a.chain });
+        }
+      }
+    }
+    return { assets: picked };
   },
 });
 
