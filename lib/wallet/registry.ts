@@ -7,6 +7,7 @@ import { useNearWalletAdapter } from "./near";
 import { useSolanaWallet } from "./solana";
 import type { ChainKind, ConnectedWallet } from "./types";
 import { toHex } from "./types";
+import { clearThreadCache } from "@/components/app/threadCache";
 
 /**
  * One wallet interface over three libraries.
@@ -64,6 +65,12 @@ function hexNonceToBytes(nonceHex: string): Uint8Array {
     out[i] = Number.parseInt(nonceHex.slice(i * 2, i * 2 + 2), 16);
   }
   return out;
+}
+
+function notifySignIn() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("myntle:sign-in"));
+  }
 }
 
 export function useWallet() {
@@ -217,6 +224,7 @@ export function useWallet() {
       setAuthStage("verify");
       try {
         await verifyEvmOwnership(address);
+        notifySignIn();
       } catch (cause) {
         await evm.disconnect().catch(() => {});
         throw cause;
@@ -246,6 +254,7 @@ export function useWallet() {
           connection.address,
           new Uint8Array(connection.account.publicKey),
         );
+        notifySignIn();
       } catch (cause) {
         solana.disconnect();
         throw cause;
@@ -271,6 +280,7 @@ export function useWallet() {
     setAuthStage("verify");
     try {
       await verifyNearOwnership(address);
+      notifySignIn();
     } catch (cause) {
       await near.disconnect().catch(() => {});
       throw cause;
@@ -296,6 +306,10 @@ export function useWallet() {
 
   const disconnect = useCallback(async () => {
     void postJson("/api/auth/logout", {}).catch(() => {});
+    clearThreadCache();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("myntle:sign-out"));
+    }
     if (evm.isConnected) await evm.disconnect();
     else if (solana.connection) solana.disconnect();
     else if (near.isConnected) await near.disconnect();

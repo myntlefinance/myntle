@@ -21,6 +21,7 @@ import {
 } from "@tabler/icons-react";
 import { LiveResponse } from "@/components/app/LiveResponse";
 import { ConnectGate } from "@/components/app/ConnectGate";
+import { UserBubble, AgentMessageActions } from "@/components/app/MessageActions";
 import AgentScreen from "@/components/primitives/AgentScreen";
 import ApprovalCard from "@/components/primitives/ApprovalCard";
 import ContextCards from "@/components/primitives/ContextCards";
@@ -35,6 +36,7 @@ import SidebarNav from "@/components/primitives/SidebarNav";
 import StreamingText from "@/components/primitives/StreamingText";
 import TaskRows from "@/components/primitives/TaskRows";
 import ThinkingState from "@/components/primitives/ThinkingState";
+import { TITLE_MAX_CHARS } from "@/lib/ai/title";
 import ToolChips from "@/components/primitives/ToolChips";
 // UseThisHarness (the "fork this" modal pointing at the upstream repo) has been
 // removed. The footer button now opens the wallet picker instead.
@@ -437,7 +439,19 @@ function AssistantResponse({ scenarioId, className = "" }: { scenarioId: Scenari
   return (
     <article className={`min-w-0 ${className}`} style={{ animation: "fade-up 450ms cubic-bezier(0.23,1,0.32,1) both" }}>
       {answered ? (
-        <div style={{ animation: "fade-in 260ms ease both" }}>{scenario.Answer()}</div>
+        <div style={{ animation: "fade-in 260ms ease both" }}>
+          {scenario.Answer()}
+          <div className="mt-3">
+            <AgentMessageActions
+              text={scenario.prompt || "Response"}
+              onRegenerate={() => {
+                setAnswered(false);
+                const t = setTimeout(() => setAnswered(true), scenario.beat);
+                return () => clearTimeout(t);
+              }}
+            />
+          </div>
+        </div>
       ) : (
         <div className="flex min-h-6 items-center" style={{ animation: "fade-in 200ms ease-out both" }}>
           {scenario.loadingVariant === "Surfer" ? (
@@ -448,14 +462,6 @@ function AssistantResponse({ scenarioId, className = "" }: { scenarioId: Scenari
         </div>
       )}
     </article>
-  );
-}
-
-function UserBubble({ text }: { text: string }) {
-  return (
-    <div className="flex justify-end pl-10 sm:pl-24" style={{ animation: "fade-up 300ms cubic-bezier(0.23,1,0.32,1) both" }}>
-      <div className="rounded-xl bg-field px-3.5 py-2 text-[13px] leading-relaxed text-ink shadow-hairline">{text}</div>
-    </div>
   );
 }
 
@@ -502,6 +508,10 @@ const revealParams = {
   },
 };
 
+// Played once per page load. Remounts later (switching chats, new chat)
+// render the final state immediately instead of replaying the blur-fade.
+let homeRevealPlayed = false;
+
 function homeRevealStyle(
   visible: boolean,
   reveal: { blur: number; offsetY: number; duration: number },
@@ -516,12 +526,53 @@ function homeRevealStyle(
   };
 }
 
+/* Static placeholder while a saved thread loads. Deliberately plain: no
+ * staged blur-fade, so switching chats never replays the entrance. Row
+ * wrappers mirror renderThread exactly (same max-w, same gutters) so the
+ * skeleton sits precisely where the messages will land on every screen. */
+function ThreadSkeleton({ bottomPad }: { bottomPad: number }) {
+  return (
+    <div
+      className="flex flex-col gap-8 px-4 pt-8 sm:px-8 lg:px-12"
+      style={{ paddingBottom: bottomPad }}
+    >
+      <div className="mx-auto w-full max-w-[720px]">
+        <div className="flex justify-end pl-10 sm:pl-24">
+          <div className="h-10 w-44 animate-pulse rounded-xl bg-hover-2" />
+        </div>
+      </div>
+      <div className="mx-auto w-full max-w-[720px]">
+        <div className="flex animate-pulse flex-col gap-2">
+          <div className="h-3.5 w-full rounded-[4px] bg-hover-2" />
+          <div className="h-3.5 w-11/12 rounded-[4px] bg-hover-2" />
+          <div className="h-3.5 w-3/5 rounded-[4px] bg-hover-2" />
+        </div>
+      </div>
+      <div className="mx-auto w-full max-w-[720px]">
+        <div className="flex justify-end pl-10 sm:pl-24">
+          <div className="h-10 w-56 animate-pulse rounded-xl bg-hover-2" />
+        </div>
+      </div>
+      <div className="mx-auto w-full max-w-[720px]">
+        <div className="flex animate-pulse flex-col gap-2">
+          <div className="h-3.5 w-full rounded-[4px] bg-hover-2" />
+          <div className="h-3.5 w-10/12 rounded-[4px] bg-hover-2" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { onSend: (text: string, id: ScenarioId) => void; shuffle: () => void; offset: number; live?: LiveChat; models?: PromptModel[]; onModelChange?: (modelId: string) => void }) {
   const pool = live ? LIVE_SUGGESTIONS : SUGGESTION_POOL;
   const shown = [0, 1, 2].map((i) => pool[(offset + i) % pool.length]);
-  const [stage, setStage] = useState(0);
+  const [stage, setStage] = useState(homeRevealPlayed ? 4 : 0);
   useEffect(() => {
-    setStage(0);
+    if (homeRevealPlayed) {
+      setStage(4);
+      return;
+    }
+    homeRevealPlayed = true;
     const timers = [
       setTimeout(() => setStage(1), revealParams.sequence.helloAt),
       setTimeout(() => setStage(2), revealParams.sequence.questionAt),
@@ -529,7 +580,10 @@ function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { 
       setTimeout(() => setStage(4), revealParams.sequence.recommendationsAt),
     ];
 
-    return () => timers.forEach(clearTimeout);
+    return () => {
+      timers.forEach(clearTimeout);
+      setStage(4);
+    };
   }, []);
 
   return (
@@ -669,7 +723,7 @@ function PropertyConfig({ view, onClose }: { view: string; onClose: () => void }
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 overflow-y-auto scroll-slim p-4">
         <div className="text-[14px] font-semibold text-ink">{view} suppliers</div>
 
         <div className="mt-4 flex flex-col gap-3">
@@ -739,6 +793,8 @@ export type LiveChat = {
   status: "submitted" | "streaming" | "ready" | "error";
   send: (text: string) => void;
   error?: string;
+  regenerate?: (messageId?: string) => void;
+  editAndSend?: (messageId: string, nextText: string) => void;
 };
 
 export default function Harness({
@@ -747,7 +803,18 @@ export default function Harness({
   title,
   onNewChat,
   onRename,
+  threads,
+  onPickThread,
+  activeChatId,
+  onHoverThread,
+  onRenameThread,
+  onDeleteThread,
+  trashCount,
+  trashActive,
+  onOpenTrash,
+  loadingThread,
   footer,
+  footerCompact,
   models,
   onModelChange,
 }: {
@@ -760,8 +827,30 @@ export default function Harness({
   onNewChat?: () => void;
   /** renames the live thread */
   onRename?: (next: string) => void;
+  /** all live threads for the sidebar; falls back to current title alone */
+  threads?: Array<{ id: string; label: string }>;
+  /** navigate to a live thread */
+  onPickThread?: (id: string) => void;
+  /** unique id of the open live thread; highlight matches by this, not title */
+  activeChatId?: string | null;
+  /** hover intent on a live thread, for prefetching its history into cache */
+  onHoverThread?: (id: string) => void;
+  /** renames a saved live thread from its sidebar row */
+  onRenameThread?: (id: string, next: string) => void;
+  /** moves a saved live thread to trash from its sidebar row */
+  onDeleteThread?: (id: string) => void;
+  /** number of chats sitting in trash; shows the sidebar shortcut */
+  trashCount?: number;
+  /** the Trash page is open; highlights the sidebar shortcut */
+  trashActive?: boolean;
+  /** opens the Trash page */
+  onOpenTrash?: () => void;
+  /** a saved thread is loading its history; show a skeleton, never the composer */
+  loadingThread?: boolean;
   /** replaces the sidebar's footer button */
   footer?: ReactNode;
+  /** the icon-only footer control the collapsed sidebar keeps */
+  footerCompact?: ReactNode;
   /** the models the composer offers */
   models?: PromptModel[];
   /** called with the model id whenever the selection changes */
@@ -872,7 +961,11 @@ export default function Harness({
       stick = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
     };
     const pin = () => {
+      // Re-evaluate if user is actually near the bottom before auto-scrolling
+      stick = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
       if (!stick) return;
+      // Do not auto-scroll if an interactive component is undergoing a user-initiated height transition
+      if (content.querySelector("[data-prevent-scroll-pin='true']")) return;
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         el.scrollTop = el.scrollHeight;
@@ -904,7 +997,7 @@ export default function Harness({
     setEditingTitle(true);
   };
   const commitRename = () => {
-    const next = titleDraft.replace(/\s+/g, " ").trim().slice(0, 84);
+    const next = titleDraft.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX_CHARS);
     setEditingTitle(false);
     if (!next) return;
     if (live) onRename?.(next);
@@ -922,7 +1015,7 @@ export default function Harness({
         <input
           autoFocus
           value={titleDraft}
-          maxLength={84}
+          maxLength={TITLE_MAX_CHARS}
           aria-label="Rename chat"
           onChange={(event) => setTitleDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -968,7 +1061,7 @@ export default function Harness({
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-slim [scrollbar-gutter:stable]"
       >
         <div
           className={`flex flex-col gap-8 pt-8 ${narrow ? "px-4" : "px-4 sm:px-8 lg:px-12"}`}
@@ -986,9 +1079,26 @@ export default function Harness({
                 return (
                   <div key={message.id} className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
                     {message.role === "user" ? (
-                      <UserBubble text={text} />
+                      <UserBubble
+                        text={text}
+                        onEdit={(next) => {
+                          if (live.editAndSend) {
+                            live.editAndSend(message.id, next);
+                          } else {
+                            live.send(next);
+                          }
+                        }}
+                      />
                     ) : (
-                      <LiveResponse message={message} status={live.status} />
+                      <LiveResponse
+                        message={message}
+                        status={live.status}
+                        onRegenerate={
+                          live.regenerate
+                            ? () => live.regenerate?.(message.id)
+                            : undefined
+                        }
+                      />
                     )}
                   </div>
                 );
@@ -1008,7 +1118,16 @@ export default function Harness({
               return (
                 <div key={message.id} className={narrow || full ? "w-full" : "mx-auto w-full max-w-[720px]"}>
                   {message.role === "user" ? (
-                    <UserBubble text={message.text} />
+                    <UserBubble
+                      text={message.text}
+                      onEdit={(next) => {
+                        setDemoMessages((current) =>
+                          current.map((m) =>
+                            m.id === message.id ? { ...m, text: next } : m,
+                          ),
+                        );
+                      }}
+                    />
                   ) : (
                     <AssistantResponse key={message.id} scenarioId={message.scenarioId} />
                   )}
@@ -1061,13 +1180,35 @@ export default function Harness({
       <SidebarNav
         fill
         className="hidden lg:flex"
-        recents={live ? (title ? [{ id: "current", label: title }] : []) : RECENTS}
+        recents={
+          live
+            ? (threads && threads.length > 0
+                ? threads
+                : title
+                  ? [{ id: "current", label: title }]
+                  : [])
+            : RECENTS
+        }
         activeTitle={displayTitle}
-        onPick={live ? undefined : (id, label, prompt) => pickRecent(id as ScenarioId, label, prompt)}
+        activeId={live ? (activeChatId ?? null) : undefined}
+        onPick={
+          live
+            ? onPickThread
+              ? (id) => onPickThread(id)
+              : undefined
+            : (id, label, prompt) => pickRecent(id as ScenarioId, label, prompt)
+        }
+        onHoverThread={live ? onHoverThread : undefined}
+        onRenameChat={live ? onRenameThread : undefined}
+        onDeleteChat={live ? onDeleteThread : undefined}
+        trashCount={live ? (trashCount ?? 0) : 0}
+        trashActive={trashActive}
+        onOpenTrash={live ? onOpenTrash : undefined}
         onNewChat={live ? onNewChat : newDemoChat}
         footerLabel="Fork this"
         onFooterClick={footer ? () => {} : () => setUseOpen(true)}
         footer={footer}
+        footerCompact={footerCompact}
       />
 
       <div className="flex min-w-0 flex-1 flex-col gap-2.5">
@@ -1131,8 +1272,12 @@ export default function Harness({
                 {titleBar}
                 {active ? (
                   renderThread(false)
+                ) : loadingThread ? (
+                  <div className="min-h-0 flex-1 overflow-y-auto scroll-slim">
+                    <ThreadSkeleton bottomPad={composerH + 16} />
+                  </div>
                 ) : (
-                  <div className="min-h-0 flex-1 overflow-y-auto">
+                  <div className="min-h-0 flex-1 overflow-y-auto scroll-slim">
                     <EmptyState onSend={send} shuffle={() => setOffset((current) => (current + 3) % SUGGESTION_POOL.length)} offset={offset} live={live} models={models} onModelChange={onModelChange} />
                   </div>
                 )}
@@ -1167,7 +1312,7 @@ export default function Harness({
                         </button>
                       </div>
                     </div>
-                    <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                    <div className="min-h-0 flex-1 overflow-y-auto scroll-slim p-4">
                       <PaneBody beat={paneScenario.beat}>{paneScenario.Pane()}</PaneBody>
                     </div>
                   </aside>
