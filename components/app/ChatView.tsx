@@ -10,15 +10,20 @@ import { MODELS, DEFAULT_MODEL } from "@/lib/ai/provider";
 import { TITLE_MAX_CHARS } from "@/lib/ai/title";
 import { openWalletPicker } from "@/components/app/ConnectGate";
 import { useWallet } from "@/lib/wallet/registry";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  useThreads,
+  useTrashed,
+  THREADS_QUERY_KEY,
+  TRASHED_QUERY_KEY,
+} from "@/components/app/threadQueries";
 import {
   clearThreadCache,
-  fetchThreads,
-  fetchTrashed,
   findThreadLabel,
   messageCache,
   prefetchInflight,
   prefetchThread,
-  readThreadsCache,
+  threadPagination,
   type ThreadItem,
   type TrashedItem,
 } from "@/components/app/threadCache";
@@ -30,6 +35,9 @@ export default function ChatView({
 }: {
   initialConversationId?: string | null;
 }) {
+  const queryClient = useQueryClient();
+  const { data: threads = [] } = useThreads();
+  const { data: trashed = [] } = useTrashed();
   const [model, setModel] = useState(DEFAULT_MODEL);
   const { connected } = useWallet();
   const router = useRouter();
@@ -78,11 +86,15 @@ export default function ChatView({
       setTitle(null);
       setGated([]);
       setLoadingThread(false);
+      setHasMoreOlder(false);
+      setLoadingOlder(false);
+      lastLoadedConvRef.current = null;
       router.replace("/");
+      clearThreadCache();
       // Allow the reverse cascade exit animation in the sidebar to play smoothly
       timer = setTimeout(() => {
-        setThreads([]);
-        setTrashed([]);
+        queryClient.setQueryData(THREADS_QUERY_KEY, []);
+        queryClient.setQueryData(TRASHED_QUERY_KEY, []);
       }, 350);
     };
 
@@ -91,50 +103,37 @@ export default function ChatView({
       if (timer) clearTimeout(timer);
       window.removeEventListener("myntle:sign-out", handleSignOut);
     };
-  }, [router, setMessages]);
+  }, [router, setMessages, queryClient]);
 
-  const [threads, setThreads] = useState<ThreadItem[]>(() => readThreadsCache());
-  const [trashed, setTrashed] = useState<TrashedItem[]>([]);
-
-  const refreshThreads = useCallback(async () => {
-    setThreads(await fetchThreads());
-  }, []);
-
+  // Refresh sidebar threads and trash when wallet connection lands.
+  const prevConnectedRef = useRef(connected);
   useEffect(() => {
-    void refreshThreads();
-  }, [refreshThreads]);
-
-  const refreshTrash = useCallback(async () => {
-    setTrashed(await fetchTrashed(50));
-  }, []);
-
-  useEffect(() => {
-    void refreshTrash();
-  }, [refreshTrash]);
-
-  // Refresh sidebar threads and trash when wallet connection/sign-in lands.
-  useEffect(() => {
-    if (!connected) return;
-    void refreshThreads();
-    void refreshTrash();
-  }, [connected, refreshThreads, refreshTrash]);
+    if (!prevConnectedRef.current && connected) {
+      void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: TRASHED_QUERY_KEY });
+    }
+    prevConnectedRef.current = connected;
+  }, [connected, queryClient]);
 
   useEffect(() => {
     const handleSignIn = () => {
-      void refreshThreads();
-      void refreshTrash();
+      void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: TRASHED_QUERY_KEY });
     };
 
     window.addEventListener("myntle:sign-in", handleSignIn);
     return () => window.removeEventListener("myntle:sign-in", handleSignIn);
-  }, [refreshThreads, refreshTrash]);
+  }, [queryClient]);
 
   // Keep the sidebar fresh after each finished turn.
+  const prevStatusRef = useRef(status);
   useEffect(() => {
-    if (status === "submitted" || status === "streaming") return;
-    if (messages.length === 0) return;
-    refreshThreads();
-  }, [status, messages.length, refreshThreads]);
+    const wasBusy = prevStatusRef.current === "submitted" || prevStatusRef.current === "streaming";
+    prevStatusRef.current = status;
+    if (wasBusy && status === "ready" && messages.length > 0) {
+      void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
+    }
+  }, [status, messages.length, queryClient]);
 
   // Surface a brand-new chat in the sidebar while its first answer streams
   // instead of waiting for the turn to finish. The row is in Supabase from
@@ -144,10 +143,12 @@ export default function ChatView({
   useEffect(() => {
     if (conversationId || messages.length === 0) return;
     if (status !== "submitted" && status !== "streaming") return;
-    refreshThreads();
-    const timer = setTimeout(refreshThreads, 2000);
+    void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
+    const timer = setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
+    }, 2000);
     return () => clearTimeout(timer);
-  }, [conversationId, messages.length, status, refreshThreads]);
+  }, [conversationId, messages.length, status, queryClient]);
 
   const onPickThread = useCallback(
     (id: string) => {
@@ -163,10 +164,10 @@ export default function ChatView({
   }, [conversationId, messages]);
 
   useEffect(() => {
-    if (!conversationId || messages.length > 0) return;
-    // Visited before: render instantly, revalidate quietly underneath.
+    if (!conversationId) return;
+    // Visited before: render instantly from cache
     const cached = messageCache.get(conversationId);
-    if (cached && cached.length > 0) {
+    if (cached && cached.length > 0 && messages.length === 0) {
       setMessages(cached);
       setLoadingThread(false);
       const threadLabel = threads.find((t) => t.id === conversationId)?.label;
@@ -174,9 +175,15 @@ export default function ChatView({
         titleDirtyRef.current = false;
         setTitle(threadLabel);
       }
+      const pag = threadPagination.get(conversationId);
+      if (pag) setHasMoreOlder(pag.hasMore);
     }
+
+    if (messages.length > 0 && lastLoadedConvRef.current === conversationId) return;
+    lastLoadedConvRef.current = conversationId;
+
     let cancelled = false;
-    void fetch(`/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=50`)
+    void fetch(`/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=20`)
       .then((res) => {
         if (res.status === 401) {
           clearThreadCache();
@@ -194,12 +201,21 @@ export default function ChatView({
           body: {
             messages?: UIMessage[];
             title?: string | null;
+            hasMore?: boolean;
+            oldestSeq?: number;
           } | null,
         ) => {
           if (!body || cancelled) return;
           if (body.messages && body.messages.length > 0) {
             messageCache.set(conversationId, body.messages);
             setMessages(body.messages);
+          }
+          if (body.hasMore !== undefined) {
+            setHasMoreOlder(body.hasMore);
+            threadPagination.set(conversationId, {
+              hasMore: body.hasMore,
+              oldestSeq: body.oldestSeq,
+            });
           }
           // Title comes from the database here, so it must not mark dirty.
           if (body.title) {
@@ -268,7 +284,7 @@ export default function ChatView({
           titleDirtyRef.current = true;
         }
       }
-      await refreshThreads();
+      await queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
       if (cancelled) return;
       setConversationId(slug);
       try {
@@ -285,7 +301,7 @@ export default function ChatView({
     return () => {
       cancelled = true;
     };
-  }, [conversationId, status, messages.length, router, refreshThreads]);
+  }, [conversationId, status, messages.length, router, queryClient]);
 
   const [gated, setGated] = useState<GatedExchange[]>([]);
   // Seed from the sidebar cache so a thread route paints its real name on
@@ -300,6 +316,12 @@ export default function ChatView({
     const cached = messageCache.get(initialConversationId);
     return !cached || cached.length === 0;
   });
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMoreOlder, setHasMoreOlder] = useState(() => {
+    if (!initialConversationId) return false;
+    return Boolean(threadPagination.get(initialConversationId)?.hasMore);
+  });
+  const lastLoadedConvRef = useRef<string | null>(null);
   const pendingRef = useRef<string | null>(null);
   const gatedIdRef = useRef(0);
   const titleReqRef = useRef(0);
@@ -325,14 +347,25 @@ export default function ChatView({
     routeSlugRef.current = initialConversationId ?? null;
     setConversationId(initialConversationId ?? null);
     if (firstMount) return;
-    setMessages([]);
+    const cached = initialConversationId
+      ? messageCache.get(initialConversationId)
+      : undefined;
+    if (cached && cached.length > 0) {
+      setMessages(cached);
+      setLoadingThread(false);
+      const pag = initialConversationId
+        ? threadPagination.get(initialConversationId)
+        : undefined;
+      setHasMoreOlder(pag ? pag.hasMore : false);
+    } else {
+      setMessages([]);
+      setLoadingThread(initialConversationId != null);
+      setHasMoreOlder(false);
+    }
     // Keep the outgoing title out of the incoming thread: use the cached
     // name when we have it, so the bar never flashes "New chat" mid-switch.
     setTitle(findThreadLabel(initialConversationId ?? null));
     titleDirtyRef.current = false;
-    // Thread routes show the skeleton until history lands; the composer
-    // never loads, so it stays false there.
-    setLoadingThread(initialConversationId != null);
   }, [initialConversationId, setMessages]);
 
   const requestTitle = useCallback((prompt: string) => {
@@ -372,7 +405,10 @@ export default function ChatView({
         return;
       }
       if (!title) requestTitle(trimmed);
-      void sendMessage({ text: trimmed });
+      void sendMessage({
+        text: trimmed,
+        metadata: { createdAt: new Date().toISOString() },
+      });
     },
     [connected, sendMessage, title, requestTitle],
   );
@@ -385,7 +421,10 @@ export default function ChatView({
     pendingRef.current = null;
     setGated([]);
     if (!title) requestTitle(next);
-    void sendMessage({ text: next });
+    void sendMessage({
+      text: next,
+      metadata: { createdAt: new Date().toISOString() },
+    });
   }, [connected, sendMessage, title, requestTitle]);
 
   const newChat = useCallback(() => {
@@ -395,6 +434,9 @@ export default function ChatView({
     setGated([]);
     setTitle(null);
     setConversationId(null);
+    setHasMoreOlder(false);
+    setLoadingOlder(false);
+    lastLoadedConvRef.current = null;
     try {
       localStorage.removeItem("myntle-conv");
     } catch {
@@ -438,10 +480,10 @@ export default function ChatView({
         .then((res) => {
           if (!res.ok) throw new Error("rename failed");
         })
-        .then(() => refreshThreads())
-        .catch(() => refreshThreads());
+        .then(() => queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY }))
+        .catch(() => queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY }));
     },
-    [conversationId, refreshThreads],
+    [conversationId, queryClient],
   );
 
   // Delete from a sidebar row. The row collapses first and only then calls
@@ -460,12 +502,12 @@ export default function ChatView({
           messageCache.delete(id);
           prefetchInflight.delete(id);
           if (id === conversationId) newChat();
-          refreshThreads();
-          refreshTrash();
+          void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
+          void queryClient.invalidateQueries({ queryKey: TRASHED_QUERY_KEY });
         })
-        .catch(() => refreshThreads());
+        .catch(() => queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY }));
     },
-    [conversationId, newChat, refreshThreads, refreshTrash],
+    [conversationId, newChat, queryClient],
   );
 
   const openTrash = useCallback(() => {
@@ -482,11 +524,11 @@ export default function ChatView({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ title }),
     })
-      .then(() => refreshThreads())
+      .then(() => queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY }))
       .catch(() => {
         titleDirtyRef.current = true;
       });
-  }, [conversationId, title, refreshThreads]);
+  }, [conversationId, title, queryClient]);
 
   const regenerateTurn = useCallback(
     (messageId?: string) => {
@@ -507,7 +549,11 @@ export default function ChatView({
         openWalletPicker();
         return;
       }
-      void sendMessage({ text: trimmed, messageId });
+      void sendMessage({
+        text: trimmed,
+        messageId,
+        metadata: { createdAt: new Date().toISOString() },
+      });
     },
     [connected, sendMessage],
   );
@@ -535,6 +581,63 @@ export default function ChatView({
     }
   }, [conversationId, title, messages.length, threads]);
 
+  const loadOlderMessages = useCallback(async () => {
+    if (!conversationId || loadingOlder || !hasMoreOlder) return;
+    const pag = threadPagination.get(conversationId);
+    let beforeSeq = pag?.oldestSeq;
+    if (beforeSeq === undefined) {
+      for (const m of messages) {
+        const s = (m.metadata as { seq?: number } | undefined)?.seq;
+        if (s !== undefined && (beforeSeq === undefined || s < beforeSeq)) {
+          beforeSeq = s;
+        }
+      }
+    }
+    if (beforeSeq === undefined) return;
+
+    setLoadingOlder(true);
+    try {
+      const res = await fetch(
+        `/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=20&beforeSeq=${beforeSeq}`,
+      );
+      if (!res.ok) {
+        setLoadingOlder(false);
+        return;
+      }
+      const body = (await res.json()) as {
+        messages?: UIMessage[];
+        hasMore?: boolean;
+        oldestSeq?: number;
+      };
+      if (body.messages && body.messages.length > 0) {
+        const older = body.messages;
+        setMessages((current) => {
+          const existingIds = new Set(current.map((m) => m.id));
+          const uniqueOlder = older.filter((m) => !existingIds.has(m.id));
+          const merged = [...uniqueOlder, ...current];
+          if (conversationId) messageCache.set(conversationId, merged);
+          return merged;
+        });
+        const nextHasMore = Boolean(body.hasMore);
+        setHasMoreOlder(nextHasMore);
+        threadPagination.set(conversationId, {
+          hasMore: nextHasMore,
+          oldestSeq: body.oldestSeq ?? beforeSeq,
+        });
+      } else {
+        setHasMoreOlder(false);
+        threadPagination.set(conversationId, {
+          hasMore: false,
+          oldestSeq: beforeSeq,
+        });
+      }
+    } catch {
+      // Ignore network error; retryable on next scroll
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [conversationId, loadingOlder, hasMoreOlder, messages, setMessages]);
+
   return (
     <Harness
       live={live}
@@ -551,6 +654,9 @@ export default function ChatView({
       trashCount={trashed.length}
       onOpenTrash={openTrash}
       loadingThread={loadingThread}
+      onLoadOlder={loadOlderMessages}
+      hasMoreOlder={hasMoreOlder}
+      loadingOlder={loadingOlder}
       footer={<WalletButton />}
       footerCompact={<WalletButton compact />}
       models={MODELS}

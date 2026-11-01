@@ -44,8 +44,10 @@ export function WalletButton({
 
   // Warm the logo cache long before the dialog opens. The picker itself
   // mounts only on click, which is too late — the fetch would race the
-  // dialog animation and the cards would pop in imageless.
+  // dialog animation and the cards would pop in imageless. Preloading
+  // is guarded so it runs once per session, not on every button remount.
   useEffect(() => {
+    if (walletLogosPreloaded) return;
     if ("requestIdleCallback" in window) {
       const id = (window as unknown as { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback(preloadWalletLogos);
       return () => (window as unknown as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(id);
@@ -563,8 +565,11 @@ const WALLET_LOGO_SOURCES: readonly string[] = [
   ...SOL_CATALOG.map((e) => e.icon),
 ];
 
+let walletLogosPreloaded = false;
+
 function preloadWalletLogos() {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || walletLogosPreloaded) return;
+  walletLogosPreloaded = true;
   for (const src of WALLET_LOGO_SOURCES) {
     const img = new Image();
     img.decoding = "async";

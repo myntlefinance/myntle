@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { UIMessage } from "ai";
 import {
@@ -12,8 +12,15 @@ import SidebarNav from "@/components/primitives/SidebarNav";
 import { WalletButton } from "@/components/app/WalletButton";
 import { LiveResponse } from "@/components/app/LiveResponse";
 import { UserBubble } from "@/components/app/MessageActions";
+import {
+  TimestampPill,
+  computeMessageClusters,
+  getMessageTimestamp,
+} from "@/components/app/TimestampPill";
 import { ConfirmDialog } from "@/components/app/TrashView";
 import { Button } from "@/components/atoms/Button";
+import { useQueryClient } from "@tanstack/react-query";
+import { THREADS_QUERY_KEY, TRASHED_QUERY_KEY } from "@/components/app/threadQueries";
 import {
   fetchThreads,
   fetchTrashed,
@@ -36,6 +43,7 @@ export default function TrashDetailView({ slug }: { slug: string }) {
     window.addEventListener("myntle:sign-out", onSignOut);
     return () => window.removeEventListener("myntle:sign-out", onSignOut);
   }, [router]);
+  const queryClient = useQueryClient();
   const id = decodeURIComponent(slug);
   const [threads, setThreads] = useState<ThreadItem[]>(() => readThreadsCache());
   const [trashed, setTrashed] = useState<TrashedItem[]>(() => readTrashedCache());
@@ -46,14 +54,21 @@ export default function TrashDetailView({ slug }: { slug: string }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  const clusteredMessages = useMemo(
+    () => (messages ? computeMessageClusters(messages, getMessageTimestamp) : []),
+    [messages],
+  );
+
   const refresh = useCallback(async () => {
     const [nextThreads, nextTrashed] = await Promise.all([
       fetchThreads(),
       fetchTrashed(),
     ]);
+    queryClient.setQueryData(THREADS_QUERY_KEY, nextThreads);
+    queryClient.setQueryData(TRASHED_QUERY_KEY, nextTrashed);
     setThreads(nextThreads);
     setTrashed(nextTrashed);
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     void refresh();
@@ -258,27 +273,30 @@ export default function TrashDetailView({ slug }: { slug: string }) {
                       </span>
                     </div>
                   ) : (
-                    messages!.map((message) => {
-                      if (message.role === "user") {
-                        const text = message.parts
-                          .filter((part) => part.type === "text")
-                          .map((part) => part.text)
-                          .join("");
-                        return (
-                          <div key={message.id} className="mx-auto w-full max-w-[720px]">
-                            <UserBubble text={text} />
+                    clusteredMessages.map(({ message, showTimestamp, timestamp }) => (
+                      <Fragment key={message.id}>
+                        {showTimestamp && (
+                          <div className="mx-auto w-full max-w-[720px]">
+                            <TimestampPill timestamp={timestamp} />
                           </div>
-                        );
-                      }
-                      return (
-                        <div key={message.id} className="mx-auto w-full max-w-[720px]">
-                          <LiveResponse
-                            message={message}
-                            status="ready"
-                          />
+                        )}
+                        <div className="mx-auto w-full max-w-[720px]">
+                          {message.role === "user" ? (
+                            <UserBubble
+                              text={message.parts
+                                .filter((part) => part.type === "text")
+                                .map((part) => part.text)
+                                .join("")}
+                            />
+                          ) : (
+                            <LiveResponse
+                              message={message}
+                              status="ready"
+                            />
+                          )}
                         </div>
-                      );
-                    })
+                      </Fragment>
+                    ))
                   )}
                 </div>
               </div>

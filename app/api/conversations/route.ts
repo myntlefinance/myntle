@@ -11,10 +11,6 @@ export async function GET(req: Request) {
   const session = await requireSession(req);
   if (!session) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
-  // Expired trash goes first so a read past the 30-day deadline never
-  // serves a row that should already be gone.
-  void purgeExpiredTrash(session.userId).catch(() => undefined);
-
   const url = new URL(req.url);
   const limit = Math.min(
     Math.max(Number(url.searchParams.get("limit") ?? "20") || 20, 1),
@@ -24,6 +20,8 @@ export async function GET(req: Request) {
   const cursorId = url.searchParams.get("cursorId") ?? undefined;
 
   if (url.searchParams.get("trashed") === "1") {
+    // Expired trash check runs only when viewing trash so normal sidebar reads stay pure.
+    void purgeExpiredTrash(session.userId).catch(() => undefined);
     const items = await listTrashedConversations(session.userId, limit);
     return NextResponse.json({ conversations: items });
   }

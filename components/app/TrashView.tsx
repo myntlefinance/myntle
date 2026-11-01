@@ -19,6 +19,8 @@ import {
   onTooltipEnter,
   onTooltipLeave,
 } from "@/components/app/MessageActions";
+import { useQueryClient } from "@tanstack/react-query";
+import { THREADS_QUERY_KEY, TRASHED_QUERY_KEY } from "@/components/app/threadQueries";
 import {
   fetchThreads,
   fetchTrashed,
@@ -410,6 +412,7 @@ export default function TrashView() {
 
   const [threads, setThreads] = useState<ThreadItem[]>(() => readThreadsCache());
   const [items, setItems] = useState<TrashedItem[]>(() => readTrashedCache());
+  const queryClient = useQueryClient();
   const [loaded, setLoaded] = useState(() => readTrashedCache().length > 0);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -424,6 +427,8 @@ export default function TrashView() {
       fetchTrashed(),
       fetchThreads(),
     ]);
+    queryClient.setQueryData(TRASHED_QUERY_KEY, nextItems);
+    queryClient.setQueryData(THREADS_QUERY_KEY, nextThreads);
     setItems(nextItems);
     setThreads(nextThreads);
     const alive = new Set(nextItems.map((item) => item.id));
@@ -441,7 +446,7 @@ export default function TrashView() {
       return next;
     });
     setLoaded(true);
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     void refresh();
