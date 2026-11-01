@@ -260,9 +260,15 @@ export async function purgeExpiredTrash(userId?: string): Promise<number> {
 export async function getTrashedConversationMessages(
   userId: string,
   conversationIdOrSlug: string,
-  limit = 100,
+  limit = 20,
   beforeSeq?: number,
-): Promise<{ messages: UIMessage[]; title: string | null; deletedAt: string | null }> {
+): Promise<{
+  messages: UIMessage[];
+  title: string | null;
+  deletedAt: string | null;
+  hasMore: boolean;
+  oldestSeq?: number;
+}> {
   const sb = getSupabaseAdmin();
   const { data: conv } = await sb
     .from("conversations")
@@ -271,57 +277,55 @@ export async function getTrashedConversationMessages(
     .not("deleted_at", "is", null)
     .or(conversationFilter(conversationIdOrSlug))
     .single();
-  if (!conv) return { messages: [], title: null, deletedAt: null };
+  if (!conv) return { messages: [], title: null, deletedAt: null, hasMore: false };
   const title = (conv as { title: string }).title ?? null;
   const deletedAt = (conv as { deleted_at: string }).deleted_at ?? null;
+
   let q = sb
     .from("messages")
-    .select("role, parts, client_msg_id, seq")
-    .eq("conversation_id", (conv as { id: string }).id)
-    .order("seq", { ascending: true })
-    .limit(limit);
-  if (beforeSeq !== undefined) q = q.lt("seq", beforeSeq);
-  // For scroll-up we want the newest N before seq; with asc order + limit this
-  // returns oldest. Fetch desc then reverse when paginating backwards.
+    .select("role, parts, client_msg_id, seq, created_at")
+    .eq("conversation_id", (conv as { id: string }).id);
+
   if (beforeSeq !== undefined) {
-    q = sb
-      .from("messages")
-      .select("role, parts, client_msg_id, seq")
-      .eq("conversation_id", (conv as { id: string }).id)
-      .lt("seq", beforeSeq)
-      .order("seq", { ascending: false })
-      .limit(limit);
-    const { data } = await q;
-    if (!data) return { messages: [], title, deletedAt };
-    return {
-      messages: [...data].reverse().map((r) => ({
-        id: (r.client_msg_id as string) || `msg-${r.seq}`,
-        role: r.role as UIMessage["role"],
-        parts: (r.parts as UIMessage["parts"]) ?? [],
-      })),
-      title,
-      deletedAt,
-    };
+    q = q.lt("seq", beforeSeq);
   }
-  const { data } = await q;
-  if (!data) return { messages: [], title, deletedAt };
+
+  const { data } = await q.order("seq", { ascending: false }).limit(limit + 1);
+  if (!data) return { messages: [], title, deletedAt, hasMore: false };
+
+  const hasMore = data.length > limit;
+  const items = hasMore ? data.slice(0, limit) : data;
+  const ordered = [...items].reverse();
+  const oldestSeq = ordered.length > 0 ? (ordered[0].seq as number) : undefined;
+
   return {
-    messages: data.map((r) => ({
+    messages: ordered.map((r) => ({
       id: (r.client_msg_id as string) || `msg-${r.seq}`,
       role: r.role as UIMessage["role"],
       parts: (r.parts as UIMessage["parts"]) ?? [],
+      metadata: {
+        createdAt: (r.created_at as string) || undefined,
+        seq: r.seq as number,
+      },
     })),
     title,
     deletedAt,
+    hasMore,
+    oldestSeq,
   };
 }
 
 export async function getConversationMessages(
   userId: string,
   conversationIdOrSlug: string,
-  limit = 50,
+  limit = 20,
   beforeSeq?: number,
-): Promise<{ messages: UIMessage[]; title: string | null }> {
+): Promise<{
+  messages: UIMessage[];
+  title: string | null;
+  hasMore: boolean;
+  oldestSeq?: number;
+}> {
   const sb = getSupabaseAdmin();
   const { data: conv } = await sb
     .from("conversations")
@@ -330,44 +334,38 @@ export async function getConversationMessages(
     .is("deleted_at", null)
     .or(conversationFilter(conversationIdOrSlug))
     .single();
-  if (!conv) return { messages: [], title: null };
+  if (!conv) return { messages: [], title: null, hasMore: false };
   const title = (conv as { title: string }).title ?? null;
+
   let q = sb
     .from("messages")
-    .select("role, parts, client_msg_id, seq")
-    .eq("conversation_id", (conv as { id: string }).id)
-    .order("seq", { ascending: true })
-    .limit(limit);
-  if (beforeSeq !== undefined) q = q.lt("seq", beforeSeq);
-  // For scroll-up we want the newest N before seq; with asc order + limit this
-  // returns oldest. Fetch desc then reverse when paginating backwards.
+    .select("role, parts, client_msg_id, seq, created_at")
+    .eq("conversation_id", (conv as { id: string }).id);
+
   if (beforeSeq !== undefined) {
-    q = sb
-      .from("messages")
-      .select("role, parts, client_msg_id, seq")
-      .eq("conversation_id", (conv as { id: string }).id)
-      .lt("seq", beforeSeq)
-      .order("seq", { ascending: false })
-      .limit(limit);
-    const { data } = await q;
-    if (!data) return { messages: [], title };
-    return {
-      messages: [...data].reverse().map((r) => ({
-        id: (r.client_msg_id as string) || `msg-${r.seq}`,
-        role: r.role as UIMessage["role"],
-        parts: (r.parts as UIMessage["parts"]) ?? [],
-      })),
-      title,
-    };
+    q = q.lt("seq", beforeSeq);
   }
-  const { data } = await q;
-  if (!data) return { messages: [], title };
+
+  const { data } = await q.order("seq", { ascending: false }).limit(limit + 1);
+  if (!data) return { messages: [], title, hasMore: false };
+
+  const hasMore = data.length > limit;
+  const items = hasMore ? data.slice(0, limit) : data;
+  const ordered = [...items].reverse();
+  const oldestSeq = ordered.length > 0 ? (ordered[0].seq as number) : undefined;
+
   return {
-    messages: data.map((r) => ({
+    messages: ordered.map((r) => ({
       id: (r.client_msg_id as string) || `msg-${r.seq}`,
       role: r.role as UIMessage["role"],
       parts: (r.parts as UIMessage["parts"]) ?? [],
+      metadata: {
+        createdAt: (r.created_at as string) || undefined,
+        seq: r.seq as number,
+      },
     })),
     title,
+    hasMore,
+    oldestSeq,
   };
 }

@@ -15,7 +15,7 @@ export async function GET(
   const { id } = await params;
   const url = new URL(req.url);
   const limit = Math.min(
-    Math.max(Number(url.searchParams.get("limit") ?? "50") || 50, 1),
+    Math.max(Number(url.searchParams.get("limit") ?? "20") || 20, 1),
     100,
   );
   const beforeRaw = url.searchParams.get("beforeSeq");
@@ -24,7 +24,7 @@ export async function GET(
   // Trashed chats are invisible to the normal loader, so the trash preview
   // reads them through this flag instead of restoring first.
   if (url.searchParams.get("trashed") === "1") {
-    const { messages, title, deletedAt } = await getTrashedConversationMessages(
+    const { messages, title, deletedAt, hasMore, oldestSeq } = await getTrashedConversationMessages(
       session.userId,
       decodeURIComponent(id),
       limit,
@@ -32,14 +32,14 @@ export async function GET(
     );
     if (!title && messages.length === 0)
       return NextResponse.json({ error: "Not found." }, { status: 404 });
-    return NextResponse.json({ messages, title, deletedAt });
+    return NextResponse.json({ messages, title, deletedAt, hasMore, oldestSeq });
   }
 
-  const { messages, title } = await getConversationMessages(
+  const { messages, title, hasMore, oldestSeq } = await getConversationMessages(
     session.userId,
     decodeURIComponent(id),
     limit,
     Number.isFinite(beforeSeq) ? beforeSeq : undefined,
   );
-  return NextResponse.json({ messages, title });
+  return NextResponse.json({ messages, title, hasMore, oldestSeq });
 }

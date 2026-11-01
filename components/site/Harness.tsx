@@ -1,6 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import type { UIMessage } from "ai";
 import {
   IconArrowRight,
@@ -22,6 +32,12 @@ import {
 import { LiveResponse } from "@/components/app/LiveResponse";
 import { ConnectGate } from "@/components/app/ConnectGate";
 import { UserBubble, AgentMessageActions } from "@/components/app/MessageActions";
+import {
+  TimestampPill,
+  computeMessageClusters,
+  getMessageTimestamp,
+  shouldShowTimestampPill,
+} from "@/components/app/TimestampPill";
 import AgentScreen from "@/components/primitives/AgentScreen";
 import ApprovalCard from "@/components/primitives/ApprovalCard";
 import ContextCards from "@/components/primitives/ContextCards";
@@ -645,7 +661,9 @@ function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { 
 
 /* ── main ─────────────────────────────────────────────────── */
 
-type Msg = { id: number; role: "user"; text: string } | { id: number; role: "assistant"; scenarioId: ScenarioId };
+type Msg =
+  | { id: number; role: "user"; text: string; timestamp?: number }
+  | { id: number; role: "assistant"; scenarioId: ScenarioId; timestamp?: number };
 
 /* the pane arrives on the same beat as the answer it belongs to */
 /* The pane shell reserves its space as soon as the message is sent, so the
@@ -797,6 +815,9 @@ export type LiveChat = {
   editAndSend?: (messageId: string, nextText: string) => void;
 };
 
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
 export default function Harness({
   live,
   gated,
@@ -817,6 +838,9 @@ export default function Harness({
   footerCompact,
   models,
   onModelChange,
+  onLoadOlder,
+  hasMoreOlder,
+  loadingOlder,
 }: {
   live?: LiveChat;
   /** visitor prompts held at the gate, each answered by the connect reply */
@@ -855,6 +879,12 @@ export default function Harness({
   models?: PromptModel[];
   /** called with the model id whenever the selection changes */
   onModelChange?: (modelId: string) => void;
+  /** triggers loading older history when scrolling to the top */
+  onLoadOlder?: () => void;
+  /** whether there are more older messages to load */
+  hasMoreOlder?: boolean;
+  /** whether an older batch is currently loading */
+  loadingOlder?: boolean;
 } = {}) {
   /* the demo thread is a single conversation — one title, one transcript,
    * no tabs. The live thread is the same shape: `live.messages` plus the
@@ -870,6 +900,29 @@ export default function Harness({
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const [composerH, setComposerH] = useState(150);
+  const messageTimestampsRef = useRef<Map<string, number>>(new Map());
+
+  const resolveTimestamp = (msg: {
+    id: string | number;
+    metadata?: unknown;
+    createdAt?: unknown;
+    timestamp?: unknown;
+  }) => {
+    const key = String(msg.id);
+    const existing = messageTimestampsRef.current.get(key);
+    const resolved = getMessageTimestamp(msg, existing ?? Date.now());
+    messageTimestampsRef.current.set(key, resolved);
+    return resolved;
+  };
+
+  const liveClustered = useMemo(
+    () => (live?.messages ? computeMessageClusters(live.messages, resolveTimestamp) : []),
+    [live?.messages],
+  );
+  const demoClustered = useMemo(
+    () => computeMessageClusters(demoMessages, resolveTimestamp),
+    [demoMessages],
+  );
 
   const displayTitle = live ? title : demoTitle;
   // In live mode the conversation lives in `live.messages`, so the thread is
@@ -902,10 +955,11 @@ export default function Harness({
 
   const send = (text: string, scenarioId: ScenarioId) => {
     setDemoTitle((current) => current ?? (text.length > 30 ? `${text.slice(0, 30).trimEnd()}…` : text));
+    const now = Date.now();
     setDemoMessages((current) => [
       ...current,
-      { id: (msgIdRef.current += 1), role: "user", text },
-      { id: (msgIdRef.current += 1), role: "assistant", scenarioId },
+      { id: (msgIdRef.current += 1), role: "user", text, timestamp: now },
+      { id: (msgIdRef.current += 1), role: "assistant", scenarioId, timestamp: now },
     ]);
   };
 
@@ -913,23 +967,111 @@ export default function Harness({
   const pickRecent = (scenarioId: ScenarioId, label: string, prompt = label) => {
     setDemoTitle(label);
     setPropView(null);
+    const now = Date.now();
     setDemoMessages([
-      { id: (msgIdRef.current += 1), role: "user", text: prompt },
-      { id: (msgIdRef.current += 1), role: "assistant", scenarioId },
+      { id: (msgIdRef.current += 1), role: "user", text: prompt, timestamp: now },
+      { id: (msgIdRef.current += 1), role: "assistant", scenarioId, timestamp: now },
     ]);
   };
 
   const newDemoChat = () => {
+    messageTimestampsRef.current.clear();
     setDemoMessages([]);
     setDemoTitle(null);
     setPropView(null);
   };
 
-  useEffect(() => {
+  const stickRef = useRef(true);
+  const prevActiveChatIdRef = useRef<string | null | undefined>(undefined);
+  const prevFirstMsgIdRef = useRef<string | number | null>(null);
+  const prevMessagesCountRef = useRef(0);
+  const prevScrollHeightRef = useRef(0);
+  const prevScrollTopRef = useRef(0);
+  const isPrependingRef = useRef(false);
+
+  const firstMessage = live ? live.messages?.[0] : demoMessages[0];
+  const firstMsgId = firstMessage ? String(firstMessage.id) : null;
+  const messagesCount = live ? (live.messages?.length ?? 0) : demoMessages.length;
+  const lastMessage = live
+    ? live.messages?.[live.messages.length - 1]
+    : demoMessages[demoMessages.length - 1];
+  const lastMessageRole = lastMessage?.role;
+  const liveStatus = live?.status;
+
+  const scrollToBottom = useCallback((smooth = true) => {
+    stickRef.current = true;
+    const el = scrollRef.current;
+    if (!el) return;
+    if (smooth) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+    requestAnimationFrame(() => {
+      if (scrollRef.current && stickRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    });
+  }, []);
+
+  useIsomorphicLayoutEffect(() => {
     if (!active) return;
     const el = scrollRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [demoMessages, gatedCount, active]);
+    if (!el) return;
+
+    const isChatSwitch = prevActiveChatIdRef.current !== activeChatId;
+
+    if (isChatSwitch) {
+      prevActiveChatIdRef.current = activeChatId;
+      prevFirstMsgIdRef.current = firstMsgId;
+      prevMessagesCountRef.current = messagesCount;
+      stickRef.current = true;
+      el.scrollTop = el.scrollHeight;
+      prevScrollHeightRef.current = el.scrollHeight;
+      prevScrollTopRef.current = el.scrollTop;
+      return;
+    }
+
+    if (isPrependingRef.current) {
+      const heightDiff = el.scrollHeight - prevScrollHeightRef.current;
+      if (heightDiff > 0) {
+        el.scrollTop = prevScrollTopRef.current + heightDiff;
+      }
+      isPrependingRef.current = false;
+      prevFirstMsgIdRef.current = firstMsgId;
+      prevMessagesCountRef.current = messagesCount;
+      prevScrollHeightRef.current = el.scrollHeight;
+      prevScrollTopRef.current = el.scrollTop;
+      return;
+    }
+
+    if (messagesCount !== prevMessagesCountRef.current) {
+      const isNewUserPrompt = lastMessageRole === "user" || liveStatus === "submitted";
+      if (isNewUserPrompt) {
+        scrollToBottom(true);
+      } else if (stickRef.current) {
+        scrollToBottom(false);
+      }
+      prevFirstMsgIdRef.current = firstMsgId;
+      prevMessagesCountRef.current = messagesCount;
+      prevScrollHeightRef.current = el.scrollHeight;
+      prevScrollTopRef.current = el.scrollTop;
+    }
+  }, [
+    active,
+    activeChatId,
+    firstMsgId,
+    messagesCount,
+    lastMessageRole,
+    liveStatus,
+    scrollToBottom,
+  ]);
+
+  useEffect(() => {
+    if (!loadingOlder && isPrependingRef.current) {
+      isPrependingRef.current = false;
+    }
+  }, [loadingOlder]);
 
   /* the composer floats over the thread (ChatGPT-style), so the thread pads its
    * bottom by the composer's height — that lets the last message rest flush with
@@ -955,20 +1097,32 @@ export default function Harness({
     const el = scrollRef.current;
     const content = el?.firstElementChild;
     if (!el || !content) return;
-    let stick = true;
     let raf = 0;
     const onScroll = () => {
-      stick = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      // User manual scroll: if within 120px of bottom, stick is true; otherwise false.
+      stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      if (
+        el.scrollTop < 80 &&
+        hasMoreOlder &&
+        !loadingOlder &&
+        onLoadOlder &&
+        !isPrependingRef.current
+      ) {
+        isPrependingRef.current = true;
+        prevScrollHeightRef.current = el.scrollHeight;
+        prevScrollTopRef.current = el.scrollTop;
+        onLoadOlder();
+      }
     };
     const pin = () => {
-      // Re-evaluate if user is actually near the bottom before auto-scrolling
-      stick = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-      if (!stick) return;
+      if (!stickRef.current) return;
       // Do not auto-scroll if an interactive component is undergoing a user-initiated height transition
       if (content.querySelector("[data-prevent-scroll-pin='true']")) return;
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
       });
     };
     el.addEventListener("scroll", onScroll, { passive: true });
@@ -984,7 +1138,7 @@ export default function Harness({
       mutate.disconnect();
       cancelAnimationFrame(raf);
     };
-  }, [active]);
+  }, [active, hasMoreOlder, loadingOlder, onLoadOlder]);
 
   /* the title bar rides the top of the main pane in both layouts. The type
    * matches the sidebar's "New chat" row: 14px medium ink-2. Hovering the
@@ -1064,43 +1218,61 @@ export default function Harness({
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-slim [scrollbar-gutter:stable]"
       >
         <div
+          key={activeChatId ?? "thread"}
           className={`flex flex-col gap-8 pt-8 ${narrow ? "px-4" : "px-4 sm:px-8 lg:px-12"}`}
           /* pad the bottom by the floating composer's height so the last message
              can rest flush with the bar and older content scrolls behind it */
-          style={{ paddingBottom: composerH + 16 }}
+          style={{ animation: "fade-in 150ms ease both", paddingBottom: composerH + 16 }}
         >
+          {loadingOlder && (
+            <div className="flex justify-center py-2" aria-hidden="true">
+              <div className="size-4 animate-spin rounded-full border-2 border-line border-t-ink-3" />
+            </div>
+          )}
           {live ? (
             <>
-              {live.messages.map((message) => {
+              {liveClustered.map(({ message, showTimestamp, timestamp }) => {
                 const text = message.parts
                   .filter((part) => part.type === "text")
                   .map((part) => part.text)
                   .join("");
+                const isLastAssistant =
+                  message.role === "assistant" &&
+                  message.id === live.messages[live.messages.length - 1]?.id;
+                const messageStatus = isLastAssistant ? live.status : "ready";
                 return (
-                  <div key={message.id} className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
-                    {message.role === "user" ? (
-                      <UserBubble
-                        text={text}
-                        onEdit={(next) => {
-                          if (live.editAndSend) {
-                            live.editAndSend(message.id, next);
-                          } else {
-                            live.send(next);
-                          }
-                        }}
-                      />
-                    ) : (
-                      <LiveResponse
-                        message={message}
-                        status={live.status}
-                        onRegenerate={
-                          live.regenerate
-                            ? () => live.regenerate?.(message.id)
-                            : undefined
-                        }
-                      />
+                  <Fragment key={message.id}>
+                    {showTimestamp && (
+                      <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+                        <TimestampPill timestamp={timestamp} />
+                      </div>
                     )}
-                  </div>
+                    <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+                      {message.role === "user" ? (
+                        <UserBubble
+                          text={text}
+                          onEdit={(next) => {
+                            scrollToBottom(true);
+                            if (live.editAndSend) {
+                              live.editAndSend(message.id, next);
+                            } else {
+                              live.send(next);
+                            }
+                          }}
+                        />
+                      ) : (
+                        <LiveResponse
+                          message={message}
+                          status={messageStatus}
+                          onRegenerate={
+                            live.regenerate
+                              ? () => live.regenerate?.(message.id)
+                              : undefined
+                          }
+                        />
+                      )}
+                    </div>
+                  </Fragment>
                 );
               })}
               {(gated ?? []).map((exchange) => (
@@ -1113,31 +1285,40 @@ export default function Harness({
               ))}
             </>
           ) : (
-            demoMessages.map((message) => {
+            demoClustered.map(({ message, showTimestamp, timestamp }) => {
               const full = !narrow && message.role === "assistant" && SCENARIOS[message.scenarioId].fullBleed;
               return (
-                <div key={message.id} className={narrow || full ? "w-full" : "mx-auto w-full max-w-[720px]"}>
-                  {message.role === "user" ? (
-                    <UserBubble
-                      text={message.text}
-                      onEdit={(next) => {
-                        setDemoMessages((current) =>
-                          current.map((m) =>
-                            m.id === message.id ? { ...m, text: next } : m,
-                          ),
-                        );
-                      }}
-                    />
-                  ) : (
-                    <AssistantResponse key={message.id} scenarioId={message.scenarioId} />
+                <Fragment key={message.id}>
+                  {showTimestamp && (
+                    <div className={narrow || full ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+                      <TimestampPill timestamp={timestamp} />
+                    </div>
                   )}
-                </div>
+                  <div className={narrow || full ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+                    {message.role === "user" ? (
+                      <UserBubble
+                        text={message.text}
+                        onEdit={(next) => {
+                          setDemoMessages((current) =>
+                            current.map((m) =>
+                              m.id === message.id ? { ...m, text: next } : m,
+                            ),
+                          );
+                        }}
+                      />
+                    ) : (
+                      <AssistantResponse key={message.id} scenarioId={message.scenarioId} />
+                    )}
+                  </div>
+                </Fragment>
               );
             })
           )}
           {/* the round trip from send to the first stream chunk has no
               assistant message to attach to, so the loader sits on its own */}
-          {live?.status === "submitted" ? (
+          {(live?.status === "submitted" || live?.status === "streaming") &&
+          (!live.messages.length ||
+            live.messages[live.messages.length - 1].role !== "assistant") ? (
             <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
               <LoadingState variant="Drive" />
             </div>
@@ -1168,7 +1349,11 @@ export default function Harness({
             models={models}
             onModelChange={onModelChange}
             placeholder="Reply"
-            onSend={(text) => (live ? live.send(text) : send(text, matchScenario(text)))}
+            onSend={(text) => {
+              scrollToBottom(true);
+              if (live) live.send(text);
+              else send(text, matchScenario(text));
+            }}
           />
         </div>
       </div>

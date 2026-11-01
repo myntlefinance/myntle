@@ -109,6 +109,7 @@ export async function POST(req: Request) {
     stream: result.stream,
     originalMessages: messages,
     generateMessageId: generateId,
+    messageMetadata: () => ({ createdAt: new Date().toISOString() }),
     onFinish: ({ messages: finalMessages, outcome, responseMessage }) => {
       if (!conv) return;
       const conversationIdForSave = conv.id;

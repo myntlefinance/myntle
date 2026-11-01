@@ -309,7 +309,7 @@ export function UserMessageActions({
       <MessageActionButton
         icon={IconCopy}
         activeIcon={IconCheck}
-        label="Copy message"
+        label="Copy"
         activeLabel="Copied!"
         active={copied}
         onClick={handleCopy}
@@ -317,7 +317,7 @@ export function UserMessageActions({
       <MessageActionButton
         icon={IconShare2}
         activeIcon={IconCheck}
-        label="Share message"
+        label="Share"
         activeLabel="Shared!"
         active={shared}
         onClick={handleShare}
@@ -325,7 +325,7 @@ export function UserMessageActions({
       {onEdit && (
         <MessageActionButton
           icon={IconPencil}
-          label="Edit message"
+          label="Edit"
           onClick={onEdit}
         />
       )}
@@ -397,7 +397,7 @@ export function AgentMessageActions({
       <MessageActionButton
         icon={IconCopy}
         activeIcon={IconCheck}
-        label="Copy response"
+        label="Copy"
         activeLabel="Copied!"
         active={copied}
         onClick={handleCopy}
@@ -405,7 +405,7 @@ export function AgentMessageActions({
       {onRegenerate && (
         <MessageActionButton
           icon={IconRefresh}
-          label="Try again"
+          label="Retry"
           onClick={onRegenerate}
         />
       )}
@@ -428,7 +428,7 @@ export function AgentMessageActions({
       <MessageActionButton
         icon={IconShare2}
         activeIcon={IconCheck}
-        label="Share response"
+        label="Share"
         activeLabel="Shared!"
         active={shared}
         onClick={handleShare}
