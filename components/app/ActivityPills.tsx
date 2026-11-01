@@ -39,6 +39,7 @@ const REASONING_LINE = 12.5 * 1.625;
 
 const ICONS: Record<string, ReactNode> = {
   think: <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z" />,
+  write: <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" /></g>,
   run: <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 17l6-5-6-5M12 19h8" /></g>,
   read: <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></g>,
 };
@@ -211,9 +212,18 @@ function ToolsPill({
   settled: boolean;
 }) {
   const [manual, setManual] = useState<boolean | null>(null);
+  const [openRows, setOpenRows] = useState<Set<number>>(new Set());
   /* two tool calls read at a glance; more than that collapses the run */
   const open = manual ?? (!settled && steps.length <= 2);
   const count = steps.length;
+
+  const toggleRow = (index: number) =>
+    setOpenRows((current) => {
+      const next = new Set(current);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
 
   return (
     <div className="w-full max-w-95">
@@ -235,32 +245,80 @@ function ToolsPill({
       </PillButton>
       <PillBody open={open}>
         <div className="mt-1 flex flex-col gap-1 py-0.5">
-          {steps.map((row, index) => (
-            <div
-              key={index}
-              style={{ animation: "fade-up 300ms cubic-bezier(0.23,1,0.32,1) both" }}
-              className="flex h-7 min-w-0 items-center gap-2 rounded-control px-1.5 text-left"
-            >
-              <span className="flex size-4 shrink-0 items-center justify-center text-ink-3">
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill={row.icon === "think" ? "currentColor" : "none"}
-                  stroke="currentColor"
-                >
-                  {ICONS[row.icon]}
-                </svg>
-              </span>
-              <span className="shrink-0 text-[12.5px] font-medium text-ink">{row.label}</span>
-              <span
-                className={`inline-flex h-5.5 min-w-0 flex-1 items-center truncate rounded-chip bg-field px-1.5
-                  text-[11.5px] text-ink-2 shadow-hairline ${row.mono ? "font-mono" : ""}`}
+          {steps.map((row, index) => {
+            const expandable = row.detail.length > 0;
+            const rowOpen = openRows.has(index);
+            return (
+              <div
+                key={index}
+                style={{ animation: "fade-up 300ms cubic-bezier(0.23,1,0.32,1) both" }}
               >
-                {row.chip}
-              </span>
-            </div>
-          ))}
+                <button
+                  type="button"
+                  aria-expanded={expandable ? rowOpen : undefined}
+                  disabled={!expandable}
+                  onClick={expandable ? () => toggleRow(index) : undefined}
+                  className={`group/row flex h-7 min-w-0 items-center gap-2 rounded-control px-1.5 text-left ${
+                    expandable
+                      ? "transition-colors duration-100 hover:bg-hover-2"
+                      : "cursor-default"
+                  }`}
+                >
+                  <span className="relative flex size-4 shrink-0 items-center justify-center text-ink-3">
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill={row.icon === "think" ? "currentColor" : "none"}
+                      stroke="currentColor"
+                      className={`transition-opacity duration-100 ${expandable ? "group-hover/row:opacity-0" : ""} ${rowOpen ? "opacity-0" : ""}`}
+                    >
+                      {ICONS[row.icon]}
+                    </svg>
+                    {expandable && (
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden
+                        className={`absolute transition-[opacity,transform] duration-150 ${rowOpen ? "opacity-100" : "opacity-0 group-hover/row:opacity-100"}`}
+                        style={{ transform: rowOpen ? "rotate(0deg)" : "rotate(-90deg)" }}
+                      >
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                    )}
+                  </span>
+                  <span className="shrink-0 text-[12.5px] font-medium text-ink">{row.label}</span>
+                  <span
+                    className={`inline-flex h-5.5 min-w-0 flex-1 items-center truncate rounded-chip bg-field px-1.5
+                      text-[11.5px] text-ink-2 shadow-hairline ${row.mono ? "font-mono" : ""}`}
+                  >
+                    {row.chip}
+                  </span>
+                </button>
+
+                {expandable && (
+                  <PillBody open={rowOpen}>
+                    <div className="mt-0.5 mb-1 ml-2 flex flex-col gap-0.5 border-l border-line py-0.5 pl-3.5">
+                      {row.detail.map((line) => (
+                        <span
+                          key={line.text}
+                          className={`truncate text-[11.5px] leading-[1.6] ${row.detailMono ? "font-mono" : ""} ${line.tone === "add" ? "text-green" : "text-ink-2"}`}
+                        >
+                          {line.text}
+                        </span>
+                      ))}
+                    </div>
+                  </PillBody>
+                )}
+              </div>
+            );
+          })}
         </div>
       </PillBody>
     </div>

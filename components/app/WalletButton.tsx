@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { IconChartBar, IconCheck, IconChevronDown, IconCopy, IconLoader2, IconLogout, IconUser, IconWallet, IconX } from "@tabler/icons-react";
+import { IconChartBar, IconCheck, IconChevronDown, IconCopy, IconLoader2, IconLogout, IconUser, IconUserCircle, IconWallet, IconX } from "@tabler/icons-react";
 import { Button } from "@/components/atoms/Button";
 import { ThemeToggle } from "@/components/site/ThemeToggle";
 import { OPEN_WALLET_EVENT } from "@/components/app/ConnectGate";
@@ -19,9 +19,12 @@ import { useWallet } from "@/lib/wallet/registry";
 export function WalletButton({
   onProfile,
   onUsage,
+  compact = false,
 }: {
   onProfile?: () => void;
   onUsage?: () => void;
+  /** icon-only rail control for the collapsed sidebar */
+  compact?: boolean;
 } = {}) {
   const wallet = useWallet();
   const { account, connected, pendingChain, authStage, isPending } = wallet;
@@ -29,12 +32,15 @@ export function WalletButton({
   const [menuOpen, setMenuOpen] = useState(false);
 
   // The gated assistant reply carries its own inline connect action, so the
-  // footer control listens for the same open request.
+  // footer control listens for the same open request. Only the full-size
+  // control takes the request: the rail copy of it is mounted alongside for
+  // the collapse cross-fade and would otherwise open a second picker.
   useEffect(() => {
+    if (compact) return;
     const open = () => setPickerOpen(true);
     window.addEventListener(OPEN_WALLET_EVENT, open);
     return () => window.removeEventListener(OPEN_WALLET_EVENT, open);
-  }, []);
+  }, [compact]);
 
   // Warm the logo cache long before the dialog opens. The picker itself
   // mounts only on click, which is too late — the fetch would race the
@@ -53,19 +59,38 @@ export function WalletButton({
   // popup early. One wallet instance is shared with the picker so the busy
   // and stage flags are the same object the connection updates.
   const busy = isPending || pendingChain !== null || authStage !== null;
+
+  // The rail has room for one 32px glyph, so every state collapses into the
+  // same account icon instead of a button that would clip its own label.
+  const railTrigger = (onClick: () => void, label: string) => (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="flex size-8 items-center justify-center rounded-[8px] text-ink-2 transition-[background-color,color,transform] duration-150 hover:bg-hover-2 hover:text-ink active:scale-[0.96]"
+    >
+      <IconUserCircle size={21} stroke={1.7} />
+    </button>
+  );
+
+  const connectButton = (
+    <Button
+      type="button"
+      variant="primary"
+      size="md"
+      className="w-full active:scale-[0.99]"
+      onClick={() => setPickerOpen(true)}
+    >
+      <IconWallet size={15} stroke={1.8} className="shrink-0" />
+      Connect Wallet
+    </Button>
+  );
+
   if (pickerOpen) {
     return (
       <>
-        <Button
-          type="button"
-          variant="primary"
-          size="md"
-          className="w-full active:scale-[0.99]"
-          onClick={() => setPickerOpen(true)}
-        >
-          <IconWallet size={15} stroke={1.8} className="shrink-0" />
-          Connect Wallet
-        </Button>
+        {compact ? railTrigger(() => setPickerOpen(true), "Connecting a wallet") : connectButton}
         <ConnectPicker
           wallet={wallet}
           onClose={() => {
@@ -79,6 +104,7 @@ export function WalletButton({
   if (connected && account) {
     return (
       <AccountMenu
+        compact={compact}
         address={account.address}
         open={menuOpen}
         onToggle={() => setMenuOpen((v) => !v)}
@@ -90,18 +116,9 @@ export function WalletButton({
     );
   }
 
-  return (
-    <Button
-      type="button"
-      variant="primary"
-      size="md"
-      className="w-full active:scale-[0.99]"
-      onClick={() => setPickerOpen(true)}
-    >
-      <IconWallet size={15} stroke={1.8} className="shrink-0" />
-      Connect Wallet
-    </Button>
-  );
+  return compact
+    ? railTrigger(() => setPickerOpen(true), "Connect a wallet")
+    : connectButton;
 }
 
 function truncateAddress(address: string): string {
@@ -117,6 +134,7 @@ function AccountMenu({
   onDisconnect,
   onProfile,
   onUsage,
+  compact = false,
 }: {
   address: string;
   open: boolean;
@@ -125,14 +143,28 @@ function AccountMenu({
   onDisconnect: () => void;
   onProfile?: () => void;
   onUsage?: () => void;
+  /** rail form: an account icon whose menu opens beside the 52px shell */
+  compact?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
+  const [armedSignOut, setArmedSignOut] = useState(false);
+  // The sidebar clips anything drawn outside its shell, so the rail menu is
+  // portalled and pinned to the trigger's edge instead of the rail's.
+  const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(null);
+
+  useEffect(() => {
+    if (!open) setArmedSignOut(false);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const close = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) onClose();
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      onClose();
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -144,6 +176,34 @@ function AccountMenu({
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [open, onClose]);
+
+  useEffect(() => {
+    if (!compact || !open) return;
+    const place = () => {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setAnchor({
+        left: Math.min(rect.right + 8, window.innerWidth - 240),
+        bottom: Math.max(8, window.innerHeight - rect.bottom),
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [compact, open]);
+
+  const toggle = () => {
+    if (compact && !open) {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (rect) {
+        setAnchor({
+          left: Math.min(rect.right + 8, window.innerWidth - 240),
+          bottom: Math.max(8, window.innerHeight - rect.bottom),
+        });
+      }
+    }
+    onToggle();
+  };
 
   useEffect(() => {
     if (!copied) return;
@@ -163,45 +223,78 @@ function AccountMenu({
   };
 
   const itemClass =
-    "flex h-9 w-full items-center gap-1.5 rounded-[8px] px-2 text-left text-[13.5px] text-ink hover:bg-hover-2";
+    "flex h-9 w-full items-center gap-1.5 rounded-[8px] px-2 text-left text-[13.5px] text-ink hover:bg-hover-2 active:scale-[0.97] transition-[background-color,color,transform] duration-150 ease-out";
 
-  return (
-    <div ref={rootRef} className="relative">
-      <Button
-        type="button"
-        variant="secondary"
-        size="md"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={onToggle}
-        className="w-full font-mono text-[12px] active:scale-[0.99]"
-      >
-        <IconUser size={14} stroke={1.8} className="shrink-0 text-ink-3" />
-        <span className="min-w-0 flex-1 truncate text-left">
-          {truncateAddress(address)}
-        </span>
-        <IconChevronDown size={14} stroke={1.8} className="shrink-0 text-ink-3" />
-      </Button>
-
-      {open ? (
-        <div
-          role="menu"
-          className="absolute bottom-full left-0 z-20 mb-1.5 w-full rounded-[14px] bg-surface p-1.5 shadow-overlay"
-          style={{
-            animation: "pop-in 180ms cubic-bezier(0.23,1,0.32,1) both",
-            transformOrigin: "bottom center",
-          }}
-        >
+  const items = (
+    <>
           <button
             type="button"
             role="menuitem"
             className={itemClass}
             onClick={copyAddress}
           >
-            <span className="flex size-5 shrink-0 items-center justify-center text-ink-2">
-              {copied ? <IconCheck size={16} stroke={1.8} /> : <IconCopy size={16} stroke={1.8} />}
+            <span className="relative flex size-5 shrink-0 items-center justify-center">
+              <span
+                aria-hidden={copied}
+                className="absolute inset-0 flex items-center justify-center text-ink-2"
+                style={{
+                  opacity: copied ? 0 : 1,
+                  filter: copied ? "blur(2.5px)" : "blur(0px)",
+                  transform: copied ? "scale(0.85)" : "scale(1)",
+                  pointerEvents: copied ? "none" : "auto",
+                  transition:
+                    "opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms cubic-bezier(0.16, 1, 0.3, 1), transform 240ms cubic-bezier(0.16, 1, 0.3, 1)",
+                  willChange: "transform, opacity, filter",
+                }}
+              >
+                <IconCopy size={16} stroke={1.8} strokeWidth={1.8} />
+              </span>
+              <span
+                aria-hidden={!copied}
+                className="absolute inset-0 flex items-center justify-center text-green"
+                style={{
+                  opacity: copied ? 1 : 0,
+                  filter: copied ? "blur(0px)" : "blur(2.5px)",
+                  transform: copied ? "scale(1)" : "scale(0.85)",
+                  pointerEvents: copied ? "auto" : "none",
+                  transition:
+                    "opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms cubic-bezier(0.16, 1, 0.3, 1), transform 240ms cubic-bezier(0.16, 1, 0.3, 1)",
+                  willChange: "transform, opacity, filter",
+                }}
+              >
+                <IconCheck size={16} stroke={2.6} strokeWidth={2.6} />
+              </span>
             </span>
-            <span className="min-w-0 flex-1 truncate">{copied ? "Copied" : "Copy address"}</span>
+            <span className="relative min-w-0 flex-1 h-5 overflow-hidden">
+              <span
+                aria-hidden={copied}
+                className="absolute inset-0 flex items-center"
+                style={{
+                  opacity: copied ? 0 : 1,
+                  filter: copied ? "blur(2px)" : "blur(0px)",
+                  pointerEvents: copied ? "none" : "auto",
+                  transition:
+                    "opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms cubic-bezier(0.16, 1, 0.3, 1)",
+                  willChange: "opacity, filter",
+                }}
+              >
+                <span className="truncate">Copy address</span>
+              </span>
+              <span
+                aria-hidden={!copied}
+                className="absolute inset-0 flex items-center text-green font-medium"
+                style={{
+                  opacity: copied ? 1 : 0,
+                  filter: copied ? "blur(0px)" : "blur(2px)",
+                  pointerEvents: copied ? "auto" : "none",
+                  transition:
+                    "opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms cubic-bezier(0.16, 1, 0.3, 1)",
+                  willChange: "opacity, filter",
+                }}
+              >
+                <span className="truncate">Copied</span>
+              </span>
+            </span>
           </button>
           <button
             type="button"
@@ -245,19 +338,109 @@ function AccountMenu({
           <button
             type="button"
             role="menuitem"
-            className={`${itemClass} text-red hover:bg-red-tint`}
+            aria-label={armedSignOut ? "Confirm sign out" : "Sign out"}
             onClick={() => {
-              onClose();
-              onDisconnect();
+              if (armedSignOut) {
+                onClose();
+                onDisconnect();
+              } else {
+                setArmedSignOut(true);
+              }
             }}
+            className={`chat-menu-morph flex h-9 w-full items-center gap-1.5 rounded-[8px] px-2 text-left text-[13.5px] active:scale-[0.98] ${
+              armedSignOut
+                ? "is-armed bg-red text-white hover:bg-red"
+                : "text-red hover:bg-red-tint"
+            }`}
           >
             <span className="flex size-5 shrink-0 items-center justify-center">
               <IconLogout size={16} stroke={1.8} />
             </span>
-            <span className="min-w-0 flex-1 truncate">Sign out</span>
+            <span className="relative min-w-0 flex-1">
+              <span
+                className={`chat-menu-label truncate ${armedSignOut ? "is-exiting" : ""}`}
+              >
+                Sign out
+              </span>
+              <span
+                className={`chat-menu-label absolute inset-0 truncate ${armedSignOut ? "" : "is-exiting"}`}
+              >
+                Confirm
+              </span>
+            </span>
+          </button>
+    </>
+  );
+
+  const panel = (
+    <div
+      ref={panelRef}
+      role="menu"
+      className={
+        compact
+          ? "fixed z-[90] w-[232px] rounded-[14px] bg-surface p-1.5 shadow-overlay"
+          : "absolute bottom-full left-0 z-20 mb-1.5 w-full rounded-[14px] bg-surface p-1.5 shadow-overlay"
+      }
+      style={
+        compact
+          ? {
+              left: anchor?.left ?? 0,
+              bottom: anchor?.bottom ?? 0,
+              animation: "pop-in 180ms cubic-bezier(0.23,1,0.32,1) both",
+              transformOrigin: "bottom left",
+            }
+          : {
+              animation: "pop-in 180ms cubic-bezier(0.23,1,0.32,1) both",
+              transformOrigin: "bottom center",
+            }
+      }
+    >
+      {items}
+    </div>
+  );
+
+  if (compact) {
+    return (
+      <>
+        <div ref={rootRef}>
+          <button
+            type="button"
+            aria-label="Account"
+            title="Account"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onClick={toggle}
+            className="flex size-8 items-center justify-center rounded-[8px] text-ink-2 transition-[background-color,color,transform] duration-150 hover:bg-hover-2 hover:text-ink active:scale-[0.96]"
+          >
+            <IconUserCircle size={21} stroke={1.7} />
           </button>
         </div>
-      ) : null}
+        {open && anchor && typeof document !== "undefined"
+          ? createPortal(panel, document.body)
+          : null}
+      </>
+    );
+  }
+
+  return (
+    <div ref={rootRef} className="relative">
+      <Button
+        type="button"
+        variant="secondary"
+        size="md"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={toggle}
+        className="w-full font-mono text-[12px] active:scale-[0.99]"
+      >
+        <IconUser size={14} stroke={1.8} className="shrink-0 text-ink-3" />
+        <span className="min-w-0 flex-1 truncate text-left">
+          {truncateAddress(address)}
+        </span>
+        <IconChevronDown size={14} stroke={1.8} className="shrink-0 text-ink-3" />
+      </Button>
+
+      {open ? panel : null}
     </div>
   );
 }
