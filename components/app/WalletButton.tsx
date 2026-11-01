@@ -36,6 +36,17 @@ export function WalletButton({
     return () => window.removeEventListener(OPEN_WALLET_EVENT, open);
   }, []);
 
+  // Warm the logo cache long before the dialog opens. The picker itself
+  // mounts only on click, which is too late — the fetch would race the
+  // dialog animation and the cards would pop in imageless.
+  useEffect(() => {
+    if ("requestIdleCallback" in window) {
+      const id = (window as unknown as { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback(preloadWalletLogos);
+      return () => (window as unknown as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(id);
+    }
+    preloadWalletLogos();
+  }, []);
+
   // The picker must stay mounted through approval AND signature. The wallet
   // account appears as soon as the connection is approved, which is before
   // the verification signature lands — unmounting here is what closed the
@@ -294,13 +305,20 @@ function WalletIcon({ src, name }: { src: string; name: string }) {
   }
   return (
     // Logos are static files the operator saves into `public/wallets/`.
+    // They are preloaded on mount (see WALLET_LOGO_SOURCES) so the card
+    // never waits on the network. The tint behind the image keeps the slot
+    // from flashing empty on a cold cache.
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={src}
       alt=""
       aria-hidden
+      loading="eager"
+      fetchPriority="high"
+      decoding="async"
+      draggable={false}
       onError={() => setFailed(true)}
-      className="size-7 shrink-0 rounded-[7px] object-contain"
+      className="size-7 shrink-0 rounded-[7px] bg-accent-tint object-contain"
     />
   );
 }
@@ -319,55 +337,143 @@ type SuggestEntry = {
   id: string;
   name: string;
   match: string;
-  flag?: string;
+  flags?: readonly string[];
+  rdns?: string;
   icon: string;
+  installUrl: string;
 };
 
 const EVM_CATALOG: SuggestEntry[] = [
-  { id: "metamask", name: "MetaMask", match: "metamask", flag: "isMetaMask", icon: "/wallets/metamask.webp" },
-  { id: "coinbase", name: "Coinbase Wallet", match: "coinbase", flag: "isCoinbaseWallet", icon: "/wallets/coinbase.webp" },
-  { id: "rainbow", name: "Rainbow", match: "rainbow", flag: "isRainbow", icon: "/wallets/rainbow.webp" },
-  { id: "rabby", name: "Rabby", match: "rabby", flag: "isRabby", icon: "/wallets/rabby.webp" },
-  { id: "okx", name: "OKX Wallet", match: "okx", flag: "isOKExWallet", icon: "/wallets/okx.webp" },
-  { id: "tokenpocket", name: "TokenPocket", match: "tokenpocket", flag: "isTokenPocket", icon: "/wallets/tokenpocket.webp" },
-  { id: "ambire", name: "Ambire", match: "ambire", icon: "/wallets/ambire.webp" },
-  { id: "safepal", name: "SafePal", match: "safepal", icon: "/wallets/safepal.webp" },
-  { id: "bitget", name: "Bitget Wallet", match: "bitget", icon: "/wallets/bitget.webp" },
-  { id: "gate", name: "Gate Wallet", match: "gate", icon: "/wallets/gate.webp" },
-  { id: "pelagus", name: "Pelagus", match: "pelagus", icon: "/wallets/pelagus.webp" },
-  { id: "subwallet", name: "SubWallet", match: "subwallet", icon: "/wallets/subwallet.webp" },
-  { id: "talisman", name: "Talisman", match: "talisman", icon: "/wallets/talisman.webp" },
+  { id: "metamask", name: "MetaMask", match: "metamask", flags: ["isMetaMask"], rdns: "io.metamask", icon: "/wallets/metamask.webp", installUrl: "https://www.alchemy.com/dapps/metamask" },
+  { id: "coinbase", name: "Coinbase Wallet", match: "coinbase", flags: ["isCoinbaseWallet", "isCoinbaseBrowser"], rdns: "com.coinbase.wallet", icon: "/wallets/coinbase.webp", installUrl: "https://www.alchemy.com/dapps/coinbase-wallet" },
+  { id: "rainbow", name: "Rainbow", match: "rainbow", flags: ["isRainbow"], rdns: "me.rainbow", icon: "/wallets/rainbow.webp", installUrl: "https://www.alchemy.com/dapps/rainbow-wallet" },
+  { id: "rabby", name: "Rabby", match: "rabby", flags: ["isRabby"], rdns: "io.rabby", icon: "/wallets/rabby.webp", installUrl: "https://www.alchemy.com/dapps/rabby-wallet" },
+  { id: "hot", name: "HOT Wallet", match: "hot", flags: ["isHotWallet", "isHOTWallet", "isHot", "isHOT"], icon: "/wallets/hot.webp", installUrl: "https://hot-labs.org/wallet" },
+  { id: "ambire", name: "Ambire", match: "ambire", flags: ["isAmbire", "isAmbireWallet"], icon: "/wallets/ambire.webp", installUrl: "https://www.ambire.com" },
+  { id: "okx", name: "OKX Wallet", match: "okx", flags: ["isOKExWallet", "isOkxWallet", "isOKXWallet"], rdns: "com.okx.wallet", icon: "/wallets/okx.webp", installUrl: "https://www.alchemy.com/dapps/okx-wallet" },
+  { id: "tokenpocket", name: "TokenPocket", match: "tokenpocket", flags: ["isTokenPocket"], icon: "/wallets/tokenpocket.webp", installUrl: "https://www.alchemy.com/dapps/tokenpocket" },
+  { id: "safepal", name: "SafePal", match: "safepal", icon: "/wallets/safepal.webp", installUrl: "https://www.alchemy.com/dapps/safepal" },
+  { id: "bitget", name: "Bitget Wallet", match: "bitget", icon: "/wallets/bitget.webp", installUrl: "https://www.alchemy.com/dapps/bitget-wallet" },
+  { id: "gate", name: "Gate Wallet", match: "gate", icon: "/wallets/gate.webp", installUrl: "https://web3.gate.com" },
+  { id: "pelagus", name: "Pelagus", match: "pelagus", icon: "/wallets/pelagus.webp", installUrl: "https://www.pelaguswallet.io" },
+  { id: "subwallet", name: "SubWallet", match: "subwallet", icon: "/wallets/subwallet.webp", installUrl: "https://www.alchemy.com/dapps/subwallet" },
+  { id: "talisman", name: "Talisman", match: "talisman", icon: "/wallets/talisman.webp", installUrl: "https://www.alchemy.com/dapps/talisman-wallet" },
 ];
 
 const SOL_CATALOG: SuggestEntry[] = [
-  { id: "phantom", name: "Phantom", match: "phantom", icon: "/wallets/phantom.webp" },
-  { id: "solflare", name: "Solflare", match: "solflare", icon: "/wallets/solflare.webp" },
-  { id: "backpack", name: "Backpack", match: "backpack", icon: "/wallets/backpack.webp" },
-  { id: "jupiter", name: "Jupiter", match: "jupiter", icon: "/wallets/jupiter.webp" },
-  { id: "nightly", name: "Nightly", match: "nightly", icon: "/wallets/nightly.webp" },
+  { id: "phantom", name: "Phantom", match: "phantom", icon: "/wallets/phantom.webp", installUrl: "https://www.alchemy.com/dapps/phantom" },
+  { id: "solflare", name: "Solflare", match: "solflare", icon: "/wallets/solflare.webp", installUrl: "https://www.alchemy.com/dapps/solflare" },
+  { id: "backpack", name: "Backpack", match: "backpack", icon: "/wallets/backpack.webp", installUrl: "https://www.alchemy.com/dapps/backpack" },
+  { id: "jupiter", name: "Jupiter", match: "jupiter", icon: "/wallets/jupiter.webp", installUrl: "https://jup.ag" },
+  { id: "nightly", name: "Nightly", match: "nightly", icon: "/wallets/nightly.webp", installUrl: "https://nightly.app" },
 ];
 
-function readInjectedProvider(): {
-  flags: Record<string, unknown>;
-  exists: boolean;
-} {
-  if (typeof window === "undefined") return { flags: {}, exists: false };
+/**
+ * Every logo the picker can show, warmed before the dialog opens.
+ *
+ * The files are 2–3 KB webp, so the cost is one burst of cache fills on
+ * first paint rather than a visible fetch per card when the dialog opens.
+ */
+const WALLET_LOGO_SOURCES: readonly string[] = [
+  ...CHAINS.map((c) => c.icon),
+  ...EVM_CATALOG.map((e) => e.icon),
+  ...SOL_CATALOG.map((e) => e.icon),
+];
+
+function preloadWalletLogos() {
+  if (typeof window === "undefined") return;
+  for (const src of WALLET_LOGO_SOURCES) {
+    const img = new Image();
+    img.decoding = "async";
+    img.src = src;
+  }
+}
+
+function getInjectedProviders(): Record<string, unknown>[] {
+  if (typeof window === "undefined") return [];
   const ethereum = (window as unknown as { ethereum?: unknown }).ethereum as
     | ({ providers?: unknown } & Record<string, unknown>)
     | undefined;
-  if (!ethereum) return { flags: {}, exists: false };
+  if (!ethereum) return [];
   const providers = Array.isArray(ethereum.providers)
     ? (ethereum.providers as Record<string, unknown>[])
     : [ethereum];
-  const flags: Record<string, unknown> = {};
-  for (const provider of providers) {
-    if (provider && typeof provider === "object") {
-      for (const [key, value] of Object.entries(provider)) {
-        if (value) flags[key] = value;
-      }
-    }
+  return providers.filter((p) => p && typeof p === "object");
+}
+
+type Eip6963Detail = {
+  info: { uuid: string; name: string; icon: string; rdns: string };
+  provider: unknown;
+};
+
+/** Direct EIP-6963 discovery, independent of wagmi's MIPD store. */
+function useEip6963Providers(): Eip6963Detail[] {
+  const [providers, setProviders] = useState<Eip6963Detail[]>([]);
+  useEffect(() => {
+    const seen = new Map<string, Eip6963Detail>();
+    const onAnnounce = (event: Event) => {
+      const detail = (event as CustomEvent<Eip6963Detail>).detail;
+      if (!detail?.info?.uuid || seen.has(detail.info.uuid)) return;
+      seen.set(detail.info.uuid, detail);
+      setProviders([...seen.values()]);
+    };
+    window.addEventListener("eip6963:announceProvider", onAnnounce);
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+    // Late-injecting wallets announce after load; ask once more.
+    const timer = window.setTimeout(
+      () => window.dispatchEvent(new Event("eip6963:requestProvider")),
+      500,
+    );
+    return () => {
+      window.removeEventListener("eip6963:announceProvider", onAnnounce);
+      window.clearTimeout(timer);
+    };
+  }, []);
+  return providers;
+}
+
+// Wallets that set `isMetaMask` for compatibility without being MetaMask.
+// A provider only counts as MetaMask when none of these are present.
+const METAMASK_IMPOSTER_FLAGS = [
+  "isApexWallet",
+  "isAvalanche",
+  "isBitKeep",
+  "isBlockWallet",
+  "isBraveWallet",
+  "isCoinbaseWallet",
+  "isKuCoinWallet",
+  "isMathWallet",
+  "isOkxWallet",
+  "isOKExWallet",
+  "isOneInchIOSWallet",
+  "isOneInchAndroidWallet",
+  "isOpera",
+  "isPhantom",
+  "isPortal",
+  "isRabby",
+  "isRainbow",
+  "isTokenPocket",
+  "isTokenary",
+  "isUniswapWallet",
+  "isZerion",
+  "isAmbire",
+  "isAmbireWallet",
+  "isHotWallet",
+  "isHOTWallet",
+];
+
+function providerHasFlag(
+  provider: Record<string, unknown>,
+  entry: SuggestEntry,
+): boolean {
+  if (!entry.flags?.length) return false;
+  // MetaMask is claimed by several wallets for compatibility. Only a
+  // provider with `isMetaMask` and none of the imposter flags counts.
+  if (entry.id === "metamask") {
+    if (!provider["isMetaMask"]) return false;
+    return !METAMASK_IMPOSTER_FLAGS.some((flag) => provider[flag]);
   }
-  return { flags, exists: true };
+  return entry.flags.some((flag) => !!provider[flag]);
 }
 
 function ConnectPicker({
@@ -389,6 +495,7 @@ function ConnectPicker({
   } = wallet;
   const [mounted, setMounted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [installLink, setInstallLink] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [chain, setChain] = useState<"evm" | "solana">("evm");
   const [pendingKey, setPendingKey] = useState<string | null>(null);
@@ -414,6 +521,11 @@ function ConnectPicker({
     if (authStage) stageRef.current = authStage;
   }, [authStage]);
 
+  // Direct EIP-6963 announcements supplement wagmi, so a wallet that
+  // announced late still counts as detected for ordering. Hooks stay above
+  // the mount gate.
+  const eip6963Providers = useEip6963Providers();
+
   if (!mounted) return null;
 
   const busy = isPending || pendingChain !== null || authStage !== null;
@@ -427,7 +539,6 @@ function ConnectPicker({
         ? "Sign message to verify ownership…"
         : "Approve connection in your wallet…"
       : null;
-  const notice = error ?? success ?? pendingNotice;
 
   const choose = (key: string, run: () => Promise<unknown>) => {
     if (closeTimer.current) {
@@ -435,6 +546,7 @@ function ConnectPicker({
       closeTimer.current = null;
     }
     setError(null);
+    setInstallLink(null);
     setSuccess(null);
     setPendingKey(key);
     stageRef.current = null;
@@ -469,12 +581,58 @@ function ConnectPicker({
       />
     ) : null;
 
-  const notInstalled = (name: string) =>
-    setError(`${name} was not detected. Install it to continue.`);
+  const notInstalled = (entry: SuggestEntry) => {
+    setError(`${entry.name} not detected.`);
+    setInstallLink(entry.installUrl);
+  };
 
-  // Connectors with icons (such as a WalletConnect QR option) join the cards.
-  const evmCards = evmConnectors.filter((connector) => connector.icon);
-  const { flags: injectedFlags, exists: hasInjected } = readInjectedProvider();
+  // Wagmi discovers EIP-6963 wallets as one connector per wallet (the id
+  // is the rdns, for example `io.rabby`). Match a catalog entry by rdns
+  // first, then by wallet name, so a card always targets its own wallet.
+  const findConnectorForEntry = (entry: SuggestEntry) =>
+    evmConnectors.find((connector) => {
+      if (entry.rdns && connector.id.toLowerCase() === entry.rdns.toLowerCase())
+        return true;
+      return connector.name.toLowerCase().includes(entry.match);
+    });
+  const injectedProviders =
+    typeof window === "undefined" ? [] : getInjectedProviders();
+  const hasInjected = injectedProviders.length > 0;
+  const hasInjectedFlag = (entry: SuggestEntry) =>
+    injectedProviders.some((provider) => providerHasFlag(provider, entry));
+  const hasEip6963Entry = (entry: SuggestEntry) =>
+    eip6963Providers.some(
+      (detail) =>
+        (entry.rdns &&
+          detail.info.rdns.toLowerCase() === entry.rdns.toLowerCase()) ||
+        detail.info.name.toLowerCase().includes(entry.match),
+    );
+  const isEntryDetected = (entry: SuggestEntry) =>
+    !!findConnectorForEntry(entry) ||
+    hasEip6963Entry(entry) ||
+    hasInjectedFlag(entry);
+  // Installed wallets first in catalog order, then at most three
+  // undetected suggestions, each with an install link.
+  const detectedCatalog = EVM_CATALOG.filter(isEntryDetected);
+  const suggestedCatalog = EVM_CATALOG.filter((e) => !isEntryDetected(e)).slice(
+    0,
+    3,
+  );
+  const visibleCatalog = [...detectedCatalog, ...suggestedCatalog];
+  // Rare or unlisted wallets still surface through their own EIP-6963
+  // connector instead of hiding behind the generic Injected button.
+  const extraConnectors = evmConnectors.filter(
+    (connector) =>
+      connector.icon &&
+      connector.id !== "injected" &&
+      connector.id !== "walletConnect" &&
+      !EVM_CATALOG.some(
+        (entry) =>
+          (entry.rdns &&
+            connector.id.toLowerCase() === entry.rdns.toLowerCase()) ||
+          connector.name.toLowerCase().includes(entry.match),
+      ),
+  );
 
   return createPortal(
     <div
@@ -527,7 +685,11 @@ function ConnectPicker({
                   src={item.icon}
                   alt=""
                   aria-hidden
-                  className="size-6 shrink-0 rounded-[6px] object-contain"
+                  loading="eager"
+                  fetchPriority="high"
+                  decoding="async"
+                  draggable={false}
+                  className="size-6 shrink-0 rounded-[6px] bg-accent-tint object-contain"
                 />
                 <span className="min-w-0 flex-1 truncate">{item.label}</span>
                 {item.id === "near" ? spin("near") : null}
@@ -539,7 +701,31 @@ function ConnectPicker({
             {chain === "evm" ? (
               <>
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                  {evmCards.map((connector) => {
+                  {visibleCatalog.map((entry) => {
+                    const key = `evm:${entry.id}`;
+                    return (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          const target = findConnectorForEntry(entry);
+                          if (target) choose(key, () => connectEvm(target.id));
+                          else if (hasInjectedFlag(entry))
+                            choose(key, () => connectEvm());
+                          else notInstalled(entry);
+                        }}
+                        className={cardClass}
+                      >
+                        <WalletIcon src={entry.icon} name={entry.name} />
+                        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
+                          {entry.name}
+                        </span>
+                        {spin(key)}
+                      </button>
+                    );
+                  })}
+                  {extraConnectors.map((connector) => {
                     const key = `evm:${connector.id}`;
                     return (
                       <button
@@ -556,47 +742,15 @@ function ConnectPicker({
                             src={connector.icon}
                             alt=""
                             aria-hidden
-                            className="size-7 shrink-0 rounded-[7px]"
+                            loading="eager"
+                            fetchPriority="high"
+                            decoding="async"
+                            draggable={false}
+                            className="size-7 shrink-0 rounded-[7px] bg-accent-tint"
                           />
                         ) : null}
                         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
                           {connector.name}
-                        </span>
-                        {spin(key)}
-                      </button>
-                    );
-                  })}
-                  {EVM_CATALOG.filter(
-                    (entry) =>
-                      !evmConnectors.some(
-                        (connector) =>
-                          connector.icon &&
-                          connector.name.toLowerCase().includes(entry.match),
-                      ),
-                  )
-                    // Detected wallets render above; three suggestions at most.
-                    .slice(0, 3)
-                    .map((entry) => {
-                    const key = `evm:${entry.id}`;
-                    return (
-                      <button
-                        key={entry.id}
-                        type="button"
-                        disabled={busy}
-                        onClick={() => {
-                          const target = evmConnectors.find((connector) =>
-                            connector.name.toLowerCase().includes(entry.match),
-                          );
-                          if (target) choose(key, () => connectEvm(target.id));
-                          else if (entry.flag && injectedFlags[entry.flag])
-                            choose(key, () => connectEvm());
-                          else notInstalled(entry.name);
-                        }}
-                        className={cardClass}
-                      >
-                        <WalletIcon src={entry.icon} name={entry.name} />
-                        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
-                          {entry.name}
                         </span>
                         {spin(key)}
                       </button>
@@ -643,7 +797,11 @@ function ConnectPicker({
                           src={wallet.icon}
                           alt=""
                           aria-hidden
-                          className="size-7 shrink-0 rounded-[7px]"
+                          loading="eager"
+                          fetchPriority="high"
+                          decoding="async"
+                          draggable={false}
+                          className="size-7 shrink-0 rounded-[7px] bg-accent-tint"
                         />
                       ) : null}
                       <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
@@ -666,7 +824,7 @@ function ConnectPicker({
                     key={entry.id}
                     type="button"
                     disabled={busy}
-                    onClick={() => notInstalled(entry.name)}
+                    onClick={() => notInstalled(entry)}
                     className={cardClass}
                   >
                     <WalletIcon src={entry.icon} name={entry.name} />
@@ -683,18 +841,34 @@ function ConnectPicker({
         <div
           className="grid shrink-0"
           style={{
-            gridTemplateRows: notice ? "1fr" : "0fr",
+            gridTemplateRows: error ?? success ?? pendingNotice ? "1fr" : "0fr",
             transition: "grid-template-rows 240ms var(--ease-out-strong)",
           }}
         >
           <div className="min-h-0 overflow-hidden">
             <div className="border-t border-line px-4 py-3">
               <p
-                key={notice}
+                key={error ?? success ?? pendingNotice}
                 className={`text-center text-[12.5px] leading-relaxed ${error ? "text-red" : "text-ink"}`}
                 style={{ animation: "fade-in 180ms ease-out both" }}
               >
-                {notice}
+                {error && installLink ? (
+                  <>
+                    {error}{" "}
+                    <a
+                      href={installLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium underline underline-offset-2 hover:opacity-80"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      Install
+                    </a>{" "}
+                    and try again.
+                  </>
+                ) : (
+                  (error ?? success ?? pendingNotice)
+                )}
               </p>
             </div>
           </div>
