@@ -281,7 +281,7 @@ export function PeleDiagram({ code, isIncomplete = false }: PeleDiagramProps) {
           <span className="size-1.5 animate-pulse rounded-full bg-accent" />
           <span>Rendering diagram</span>
         </div>
-        <pre className="mt-2 font-mono text-[12px] text-ink-2 whitespace-pre-wrap">{code}</pre>
+        <pre className="mt-2 font-mono text-[12.5px] leading-[23px] text-ink-2 whitespace-pre-wrap">{code}</pre>
       </div>
     );
   }
@@ -301,7 +301,7 @@ export function PeleDiagram({ code, isIncomplete = false }: PeleDiagramProps) {
             <span>{copied ? "Copied" : "Copy"}</span>
           </button>
         </div>
-        <pre className="mt-2 font-mono text-[12px] text-ink-2 whitespace-pre-wrap">{code}</pre>
+        <pre className="mt-2 font-mono text-[12.5px] leading-[23px] text-ink-2 whitespace-pre-wrap">{code}</pre>
       </div>
     );
   }
@@ -455,14 +455,16 @@ export function PeleDiagram({ code, isIncomplete = false }: PeleDiagramProps) {
                 dangerouslySetInnerHTML={{ __html: svg ?? "" }}
               />
             ) : (
-              <div className="overflow-x-auto py-3 font-mono text-[12px] leading-[1.65] text-ink-2 bg-field/30 scroll-slim">
-                <div className="relative">
-                  <span className="pointer-events-none absolute inset-y-0 left-5 w-px bg-line" />
+              <div className="overflow-x-auto py-3.5 font-mono text-[12.5px] leading-[23px] text-ink-2 bg-field/30 scroll-slim">
+                <div className="relative min-w-full">
+                  <span className="pointer-events-none absolute inset-y-0 left-[44px] w-px bg-line" />
                   {lines.map((line, i) => (
-                    <div key={i} className="grid grid-cols-[20px_minmax(0,1fr)] items-start">
-                      <span className="select-none text-center text-[10.5px] text-ink-3">{i + 1}</span>
-                      <code className="pr-4 pl-2 break-words whitespace-pre-wrap font-mono text-[11.5px] text-ink">
-                        {line}
+                    <div key={i} className="grid grid-cols-[44px_minmax(0,1fr)] items-baseline">
+                      <span className="select-none px-2 text-center text-[11px] leading-[23px] tabular-nums text-ink-3">
+                        {i + 1}
+                      </span>
+                      <code className="pl-3.5 pr-4 break-words whitespace-pre-wrap font-mono text-[12.5px] leading-[23px] text-ink">
+                        {line.length === 0 ? "\u00A0" : line}
                       </code>
                     </div>
                   ))}

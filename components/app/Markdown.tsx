@@ -2,12 +2,12 @@
 
 import { useMemo } from "react";
 import { Streamdown, type Components, type CustomRenderer } from "streamdown";
-import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
 import { PeleDiagram } from "@/components/app/PeleDiagram";
 import { MarkdownLink } from "@/components/app/MarkdownLink";
+import { MarkdownCode } from "@/components/app/MarkdownCode";
 
 const peleRenderer: CustomRenderer = {
   language: "mermaid",
@@ -15,7 +15,6 @@ const peleRenderer: CustomRenderer = {
 };
 
 const streamdownPlugins = {
-  code,
   math,
   renderers: [peleRenderer],
 };
@@ -54,6 +53,7 @@ export function Markdown({
   const mergedComponents = useMemo(
     () => ({
       a: MarkdownLink,
+      code: MarkdownCode,
       ...components,
     }),
     [components],
@@ -64,7 +64,7 @@ export function Markdown({
       plugins={streamdownPlugins}
       linkSafety={{ enabled: false }}
       isAnimating={isAnimating}
-      caret={caret ? "block" : undefined}
+      caret={caret && isAnimating ? "block" : undefined}
       className={cn("md-prose text-[14px] leading-[1.6] text-ink", className)}
       components={mergedComponents}
     >
