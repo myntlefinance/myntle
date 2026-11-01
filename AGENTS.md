@@ -229,6 +229,12 @@ This rule exists because the alternative is invisible to the person writing it. 
 
 The order of preference when a label does not fit is: a shorter label, then a wider button, then a different button. A smaller font is not on the list.
 
+### The Sourced-Design Rule
+
+*Short version: never invent interface design on your own. Every animation, component, and style is either reused from what the product already renders or taken from an installed skill, and anything that fits neither is proposed to the person in charge before it is built.*
+
+No motion, component, or style is designed from scratch in a working session. The product's own foundation comes first: the keyframes, easing tokens, radii, shadows, and primitives in `app/globals.css`, `components/atoms/`, and `components/primitives/`. Where the foundation has no answer, the installed skills do: Emil Kowalski's design engineering skill (`emil-design-eng`) for motion and interaction craft, Jakub Linowski's *Less is More* for copy and restraint. A new keyframe, a new easing curve, or a new component pattern that fits neither source is not committed directly; it is prototyped in the lab and proposed to the person in charge first.
+
 ## Context documents
 
 Read these before changing anything. They contain verified facts, not opinions, and several of them contradict the original brief.

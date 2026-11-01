@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createShader, playSweep, accentChain, ACCENTS } from "glimm";
 
 /* The built-in "prism" palette is only cyan→indigo→magenta, so a sweep
@@ -96,16 +97,101 @@ const COMMANDS = [
   { key: "summarize", name: "/summarize", desc: "Digest the thread so far" },
 ];
 
-export type PromptModel = { key: string; name: string; tag: string };
+export type PromptModel = {
+  key: string;
+  name: string;
+  /** What the model is for, in the interface's own words. */
+  tag?: string;
+  /** Whether the model can be selected right now. */
+  enabled?: boolean;
+};
 
 const MODELS: PromptModel[] = [
-  { key: "openai/gpt-6-luna", name: "GPT-6 Luna", tag: "Default" },
-  { key: "Qwen/Qwen3.8-27B", name: "Qwen 3.8 27B", tag: "Cheapest" },
-  { key: "anthropic/claude-sonnet-5-5", name: "Claude Sonnet 5.5", tag: "Strongest" },
-  { key: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash", tag: "Fast" },
+  { key: "openai/gpt-6-luna", name: "GPT-6 Luna", tag: "Default", enabled: false },
+  { key: "Qwen/Qwen3.8-27B", name: "Qwen 3.8 27B", tag: "Cheapest", enabled: false },
+  { key: "anthropic/claude-sonnet-5-5", name: "Claude Sonnet 5.5", tag: "Strongest", enabled: false },
+  { key: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash", tag: "Fast", enabled: true },
 ];
 
-const FILES = ["flavor-chart.png", "summer-menu.pdf", "pos-export.csv"];
+export type AttachedFile = {
+  id: string;
+  name: string;
+  ext: string;
+  size: number;
+  type: string;
+  /** object URL for local preview; revoked on remove/send */
+  url: string;
+  kind: "image" | "svg" | "file";
+};
+
+const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "avif", "bmp", "ico", "heic", "heif"]);
+
+function getExtension(name: string): string {
+  const i = name.lastIndexOf(".");
+  return i >= 0 ? name.slice(i + 1).toLowerCase() : "";
+}
+
+function classifyFile(name: string, type: string): AttachedFile["kind"] {
+  const ext = getExtension(name);
+  if (ext === "svg" || type === "image/svg+xml") return "svg";
+  if (type.startsWith("image/") || IMAGE_EXTS.has(ext)) return "image";
+  return "file";
+}
+
+/** extension → branded icon; missing files fall back to file.webp, then the generic glyph */
+function iconSrcFor(ext: string): string {
+  return `/file-icons/${ext || "file"}.webp`;
+}
+
+function AttachmentThumb({ file }: { file: AttachedFile }) {
+  const [failed, setFailed] = useState(false);
+  const [fallbackFailed, setFallbackFailed] = useState(false);
+  if (file.kind === "image" || file.kind === "svg") {
+    return (
+      <img
+        src={file.url}
+        alt=""
+        draggable={false}
+        className="size-4 shrink-0 rounded-[4px] object-cover"
+      />
+    );
+  }
+  if (!failed) {
+    return (
+      <img
+        src={iconSrcFor(file.ext)}
+        alt=""
+        draggable={false}
+        onError={() => setFailed(true)}
+        className="size-4 shrink-0 rounded-[4px] object-cover"
+      />
+    );
+  }
+  if (!fallbackFailed && file.ext !== "file") {
+    return (
+      <img
+        src="/file-icons/file.webp"
+        alt=""
+        draggable={false}
+        onError={() => setFallbackFailed(true)}
+        className="size-4 shrink-0 rounded-[4px] object-cover"
+      />
+    );
+  }
+  return (
+    <Icon size={12}>
+      <g>
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <path d="M14 2v6h6" />
+      </g>
+    </Icon>
+  );
+}
+
+const ATTACH_ACCEPT =
+  ".png,.jpg,.jpeg,.webp,.gif,.avif,.svg,.bmp,.ico,.heic,.heif,.pdf,.doc,.docx,.odt,.rtf,.txt,.md,.log,.xls,.xlsx,.csv,.tsv,.ods,.ppt,.pptx,.odp,.zip,.rar,.7z,.tar,.gz,.json,.mp3,.wav,.m4a,.mp4,.mov,.webm";
+const MAX_ATTACHMENTS = 10;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const DICTATION = "Compare pistachio weekends to last summer";
 
 /* self-running demo: walk the @ menu, then the / menu, and repeat.
@@ -161,7 +247,7 @@ export default function PromptBar({
   /** hero sizing: a multi-line input with controls on their own row */
   tall?: boolean;
   placeholder?: string;
-  onSend?: (text: string) => void;
+  onSend?: (text: string, files: AttachedFile[]) => void;
   /** the models offered in the picker */
   models?: PromptModel[];
   /** called with the model id whenever the selection changes */
@@ -173,7 +259,9 @@ export default function PromptBar({
   const [plusOpen, setPlusOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [model, setModel] = useState<PromptModel>(models[0] ?? MODELS[0]);
-  const [attachments, setAttachments] = useState<string[]>([]);
+  const [soonTip, setSoonTip] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<AttachedFile[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [connected, setConnected] = useState(false);
   const [active, setActive] = useState(0);
   const [listening, setListening] = useState(false);
@@ -187,6 +275,9 @@ export default function PromptBar({
   const [modelHovered, setModelHovered] = useState<number | null>(null);
   const [modelMenuLeft, setModelMenuLeft] = useState(0);
   const [modelMenuBottom, setModelMenuBottom] = useState(0);
+  const [modelMenuTop, setModelMenuTop] = useState(0);
+  const [modelMenuBelow, setModelMenuBelow] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const composerAnchorRef = useRef<HTMLDivElement>(null);
   const controlsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -204,6 +295,50 @@ export default function PromptBar({
     setAuto(false);
     if (auto && event.target === inputRef.current) setDraft("");
   };
+
+  const openFilePicker = () => fileInputRef.current?.click();
+
+  const addFiles = (list: FileList | File[]) => {
+    const incoming = Array.from(list);
+    if (incoming.length === 0) return;
+    setAttachments((current) => {
+      const next = [...current];
+      for (const file of incoming) {
+        if (next.length >= MAX_ATTACHMENTS) break;
+        if (file.size > MAX_FILE_BYTES) continue;
+        next.push({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          name: file.name,
+          ext: getExtension(file.name),
+          size: file.size,
+          type: file.type,
+          url: URL.createObjectURL(file),
+          kind: classifyFile(file.name, file.type),
+        });
+      }
+      return next;
+    });
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments((current) => {
+      const target = current.find((a) => a.id === id);
+      if (target) URL.revokeObjectURL(target.url);
+      return current.filter((a) => a.id !== id);
+    });
+  };
+
+  /* revoke object URLs on unmount — read from a ref so the cleanup
+   * doesn't call setState after unmount */
+  const attachmentsRef = useRef<AttachedFile[]>([]);
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+  useEffect(() => {
+    return () => {
+      for (const a of attachmentsRef.current) URL.revokeObjectURL(a.url);
+    };
+  }, []);
 
   const token = dismissed ? null : parseToken(draft);
   const menu: "at" | "slash" | null = plusOpen ? "at" : token?.kind ?? null;
@@ -237,15 +372,42 @@ export default function PromptBar({
     if (target) setModelBox({ top: target.offsetTop, height: target.offsetHeight });
   }, [modelOpen, modelHovered, modelIndex]);
 
-  /* The menu is outside the clipped composer, so align it to the model
-   * trigger by measurement instead of pinning it to the far-right edge. */
+  /* The menu portals to the body with viewport-fixed coordinates, so it
+   * always paints above surrounding content. An absolutely-positioned menu
+   * stays trapped in the composer's stacking context (the entrance reveal
+   * leaves a transform on the wrapper), and later siblings — like the
+   * suggestion list under the empty-state composer — paint over it.
+   * It drops below the trigger whenever the viewport has room for it and
+   * only flips above when it must; scroll and resize re-measure. */
   useLayoutEffect(() => {
-    if (!modelOpen || !composerAnchorRef.current || !modelRef.current) return;
-    const anchorRect = composerAnchorRef.current.getBoundingClientRect();
-    const triggerRect = modelRef.current.getBoundingClientRect();
-    setModelMenuLeft(Math.max(0, Math.min(triggerRect.left - anchorRect.left, anchorRect.width - 176)));
-    setModelMenuBottom(anchorRect.bottom - triggerRect.top + 8);
-  }, [modelOpen, wide, model.name]);
+    if (!modelOpen || !modelRef.current) return;
+    const measure = () => {
+      const trigger = modelRef.current;
+      if (!trigger) return;
+      const triggerRect = trigger.getBoundingClientRect();
+      setModelMenuLeft(Math.max(8, Math.min(triggerRect.left, window.innerWidth - 176 - 8)));
+      // Rows are 30px tall inside 4px of padding.
+      const menuHeight = models.length * 30 + 8;
+      const below = triggerRect.bottom + 8 + menuHeight <= window.innerHeight;
+      setModelMenuBelow(below);
+      if (below) {
+        setModelMenuTop(triggerRect.bottom + 8);
+      } else {
+        setModelMenuBottom(window.innerHeight - triggerRect.top + 8);
+      }
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [modelOpen, wide, model.name, models.length]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!modelOpen) setModelHovered(null);
@@ -367,11 +529,12 @@ export default function PromptBar({
     input.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
   }, [draft, expanded]);
 
-  /* clicking anywhere outside the composer closes the open menus */
+  /* clicking anywhere outside the composer closes the open menus —
+   * the model menu lives in a portal, so it opts back in explicitly */
   useEffect(() => {
     if (!modelOpen && !plusOpen) return;
     const close = (event: PointerEvent) => {
-      if (!(event.target as Element).closest("[data-promptbar]")) {
+      if (!(event.target as Element).closest("[data-promptbar],[data-model-menu]")) {
         setModelOpen(false);
         setPlusOpen(false);
       }
@@ -388,8 +551,11 @@ export default function PromptBar({
   const pick = (row: { key: string; name: string }) => {
     const source = SOURCES.find((s) => s.key === row.key);
     if (source?.attach) {
-      setAttachments((current) => [...current, FILES[current.length % FILES.length]]);
       if (token) setDraft(draft.slice(0, token.start));
+      setPlusOpen(false);
+      setDismissed(false);
+      openFilePicker();
+      return;
     } else if (menu === "at") {
       setDraft(`${token ? draft.slice(0, token.start) : draft}@${row.name} `);
     } else {
@@ -403,9 +569,11 @@ export default function PromptBar({
   const canSend = draft.trim().length > 0 || attachments.length > 0;
   const send = () => {
     if (!canSend) return;
-    onSend?.(draft.trim());
+    onSend?.(draft.trim(), attachments);
+    for (const a of attachments) URL.revokeObjectURL(a.url);
     setDraft("");
     setAttachments([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
     closeMenus();
   };
 
@@ -493,12 +661,19 @@ export default function PromptBar({
       )}
 
       {/* ── model menu ─────────────────────────────────── */}
-      {modelOpen && (
-        <div
-          onMouseLeave={() => setModelHovered(null)}
-          className="absolute z-10 w-44 rounded-[10px] bg-surface p-1 shadow-raised"
-          style={{ left: modelMenuLeft, bottom: modelMenuBottom, animation: "pop-in 180ms cubic-bezier(0.23,1,0.32,1) both", transformOrigin: "bottom left" }}
-        >
+      {modelOpen && mounted
+        ? createPortal(
+            <div
+              data-model-menu
+              onMouseLeave={() => setModelHovered(null)}
+              className="fixed z-[100] w-44 rounded-[10px] bg-surface p-1 shadow-raised"
+              style={{
+                left: modelMenuLeft,
+                ...(modelMenuBelow ? { top: modelMenuTop } : { bottom: modelMenuBottom }),
+                animation: "pop-in 180ms cubic-bezier(0.23,1,0.32,1) both",
+                transformOrigin: modelMenuBelow ? "top left" : "bottom left",
+              }}
+            >
           {/* single gliding highlight — floats to the hovered / selected row */}
           <span
             aria-hidden
@@ -519,22 +694,37 @@ export default function PromptBar({
                 modelRowRefs.current[i] = el;
               }}
               onMouseDown={(event) => event.preventDefault()}
-              onMouseEnter={() => setModelHovered(i)}
               onClick={() => {
+                if (m.enabled === false) {
+                  setSoonTip(m.key);
+                  setTimeout(() => setSoonTip(null), 1200);
+                  return;
+                }
                 selectModel(m);
                 inputRef.current?.focus();
               }}
-              className="relative z-10 flex h-7.5 w-full items-center gap-2 rounded-[6px] px-2 text-left"
+              disabled={m.enabled === false}
+              title={m.enabled === false ? "Coming soon" : undefined}
+              onMouseEnter={() => setModelHovered(i)}
+              className={`relative z-10 flex h-7.5 w-full items-center gap-2 rounded-[6px] px-2 text-left ${
+                m.enabled === false ? "cursor-not-allowed opacity-40" : ""
+              }`}
             >
               <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink">{m.name}</span>
-              <span className="shrink-0 text-[11px] text-ink-3">{m.tag}</span>
+              {soonTip === m.key ? (
+                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-[4px] bg-ink px-1.5 py-0.5 text-[10px] font-medium text-page">
+                  soon
+                </span>
+              ) : null}
               <span className={`shrink-0 text-ink ${m.key === model.key ? "" : "invisible"}`}>
                 <Icon size={13} strokeWidth={2.5}><path d="M20 6L9 17l-5-5" /></Icon>
               </span>
             </button>
           ))}
-        </div>
-      )}
+            </div>,
+            document.body,
+          )
+        : null}
 
       {/* ── composer ───────────────────────────────────── */}
       <div
@@ -563,20 +753,20 @@ export default function PromptBar({
 
         {attachments.length > 0 && (
           <div className={`flex flex-wrap gap-1.5 pt-0.5 ${pill ? "px-1" : "px-0.5"}`}>
-            {attachments.map((file, i) => (
+            {attachments.map((file) => (
               <span
-                key={`${file}-${i}`}
+                key={file.id}
                 className={`flex h-6.5 items-center gap-1.5 bg-field py-1 pr-1 pl-1.5 text-[11.5px] text-ink-2 shadow-hairline ${
                   pill ? "rounded-full" : "rounded-chip"
                 }`}
                 style={{ animation: "pop-in 200ms cubic-bezier(0.23,1,0.32,1) both" }}
               >
-                <Icon size={12}><g><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></g></Icon>
-                <span className="max-w-36 truncate">{file}</span>
+                <AttachmentThumb file={file} />
+                <span className="max-w-36 truncate">{file.name}</span>
                 <button
                   type="button"
-                  aria-label={`Remove ${file}`}
-                  onClick={() => setAttachments((current) => current.filter((_, j) => j !== i))}
+                  aria-label={`Remove ${file.name}`}
+                  onClick={() => removeAttachment(file.id)}
                   className={`-my-1 flex size-6 items-center justify-center text-ink-3 transition-colors duration-100 hover:bg-line/70 hover:text-ink ${
                     pill ? "rounded-full" : "rounded-[5px]"
                   }`}
@@ -587,6 +777,21 @@ export default function PromptBar({
             ))}
           </div>
         )}
+
+        {/* real file picker — opened from the + menu's Add photos & files row */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept={ATTACH_ACCEPT}
+          className="hidden"
+          aria-hidden="true"
+          tabIndex={-1}
+          onChange={(event) => {
+            addFiles(event.target.files ?? []);
+            event.target.value = "";
+          }}
+        />
 
         <div
           ref={controlsRef}
@@ -647,7 +852,7 @@ export default function PromptBar({
             }}
             placeholder={listening ? "Listening…" : placeholder ?? "Write a message…"}
             aria-label="Prompt"
-            className={`${tall ? "min-h-[68px] px-2 py-2 text-[14px] leading-5" : "min-h-7 px-1 py-[5px] text-[13px] leading-[18px]"} min-w-0 w-full resize-none bg-transparent text-ink outline-none [overflow-wrap:anywhere] placeholder:text-ink-3 ${
+            className={`${tall ? "min-h-[68px] px-2 py-2 text-[14px] leading-5" : "min-h-7 px-1 py-[5px] text-[13px] leading-[18px]"} scroll-slim min-w-0 w-full resize-none bg-transparent text-ink outline-none [overflow-wrap:anywhere] placeholder:text-ink-3 ${
               wide ? "col-span-full col-start-1 row-start-1" : "col-start-2 row-start-1"
             }`}
           />

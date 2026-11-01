@@ -8,8 +8,9 @@ import QuotePreview from "@/components/lab/samples/QuotePreview";
 import ApprovalRow from "@/components/lab/samples/ApprovalRow";
 
 export const metadata = {
-  title: "Lab — Myntle",
+  title: "Lab",
   description: "Prototypes, isolated from the product.",
+  robots: { index: false, follow: false },
 };
 
 /**

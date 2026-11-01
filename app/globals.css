@@ -4,6 +4,10 @@
  * below build on those values so the whole app picks up the smooth shadows. */
 @import "shadow-plugin/unprefixed";
 
+/* Streamdown renders the assistant's markdown and carries its styles as
+ * Tailwind classes inside its own bundle, so the scanner has to read them. */
+@source "../node_modules/streamdown/dist/*.js";
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* GENERIC FOUNDATION — tokens, @theme, base rules, the primitive-*
@@ -145,6 +149,19 @@
   --color-red: var(--red);
   --color-red-tint: var(--red-tint);
 
+  /* the shadcn token names streamdown's defaults read, aliased onto the
+   * ramp above so its code blocks, tables, links and controls sit in this
+   * design system's colors in both themes */
+  --color-background: var(--surface);
+  --color-foreground: var(--ink);
+  --color-muted: var(--inset);
+  --color-muted-foreground: var(--ink-3);
+  --color-primary: var(--accent-ink);
+  --color-primary-foreground: var(--surface);
+  --color-border: var(--line);
+  --color-ring: var(--accent);
+  --color-sidebar: var(--inset);
+
   /* shadows */
   --shadow-hairline: var(--shadow-hairline);
   --shadow-btn: var(--shadow-btn);
@@ -242,6 +259,27 @@ a {
     background: transparent;
     color: var(--ink-2);
   }
+}
+
+/* Slim token-tinted scrollbars for dense surfaces (composer input, menus).
+ * Firefox honors scrollbar-*, Chromium honors the pseudo-elements. */
+
+.scroll-slim {
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: var(--line-strong) transparent; /* Firefox */
+}
+.scroll-slim::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-slim::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 
 /* Keep the component nav scrollable but hide its scrollbar. */
@@ -1510,10 +1548,56 @@ th.is-colsel .records-header-icon {
   }
 }
 
+/* ══════════════════════════════════════════════════════════
+ * COMPONENT-SPECIFIC — Markdown (the assistant's reply)
+ * Streamdown carries its defaults as Tailwind tokens read from the
+ * aliases above. This block only restyles what the token mapping
+ * cannot reach: headings step down to reply scale and links
+ * underline the way every other link in this product does.
+ * ══════════════════════════════════════════════════════════ */
+.md-prose [data-streamdown="heading-1"] {
+  font-size: 17px;
+}
+
+.md-prose [data-streamdown="heading-2"] {
+  font-size: 15.5px;
+}
+
+.md-prose [data-streamdown="heading-3"] {
+  font-size: 14.5px;
+}
+
+.md-prose [data-streamdown="heading-4"],
+.md-prose [data-streamdown="heading-5"] {
+  font-size: 14px;
+}
+
+.md-prose [data-streamdown="heading-6"] {
+  font-size: 12.5px;
+}
+
+.md-prose [data-streamdown="link"] {
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
 @keyframes pop-in {
   from {
     opacity: 0;
     transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Centred dialogs enter from 90% scale with the strong ease-out, so the
+ * easing graph reads instead of morphing near-linearly from 95%. */
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
   }
   to {
     opacity: 1;

@@ -265,6 +265,7 @@ The components are compact, precise, and quiet. They read as instruments set int
 - **Ghost:** Graphite Wash fill with Graphite text, for a dense toolbar or action row where a filled button would be loud.
 - **Quiet:** no fill at all until it is hovered, for the least important action in a row.
 - **Hover / Focus:** opacity and background shift over 100 to 150 milliseconds. Pressing scales the button to 96 percent, which is the only motion a control gets.
+- **The Tactile Press Rule.** Large buttons never take the full press scale. Any full-width or `md`-and-up button presses to 99 percent (`active:scale-[0.99]`), which reads as tactile rather than animated. The 96 percent press is reserved for compact and icon-only controls.
 - **Sizes:** 28 pixels tall for a toolbar pill, 27 pixels for the canonical action, and 9 pixels of vertical padding for the standard button.
 
 ### Chips and Pills

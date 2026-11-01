@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 type GlideMenuProps = {
   children: ReactNode;
@@ -17,28 +17,66 @@ export default function GlideMenu({
   rowSelector = "[data-menu-row]",
 }: GlideMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const rowRef = useRef<HTMLElement | null>(null);
+  const boxRef = useRef<{ top: number; height: number } | null>(null);
   const [box, setBox] = useState<{ top: number; height: number } | null>(null);
   const [visible, setVisible] = useState(false);
 
-  const moveTo = (target: EventTarget | null) => {
+  const syncBox = (row: HTMLElement) => {
     const container = ref.current;
-    if (!(target instanceof Element) || !container) return;
-    const row = target.closest(rowSelector);
-    if (!(row instanceof HTMLElement) || !container.contains(row)) return;
+    if (!container || !container.contains(row)) return;
+    // Never sync to a pressed rect. Rows shrink slightly while :active and
+    // focus lands mid-press, so measuring then would leave the highlight
+    // a pixel short after the press springs back.
+    if (row.matches(":active")) {
+      rowRef.current = row;
+      setVisible(true);
+      return;
+    }
     const containerRect = container.getBoundingClientRect();
     const rowRect = row.getBoundingClientRect();
-    setBox({ top: rowRect.top - containerRect.top, height: rowRect.height });
+    const next = { top: rowRect.top - containerRect.top, height: rowRect.height };
+    const prev = boxRef.current;
+    rowRef.current = row;
+    if (!prev || Math.abs(prev.top - next.top) > 0.5 || Math.abs(prev.height - next.height) > 0.5) {
+      boxRef.current = next;
+      setBox(next);
+    }
     setVisible(true);
   };
+
+  const moveTo = (target: EventTarget | null) => {
+    if (!(target instanceof Element)) return;
+    const row = target.closest(rowSelector);
+    if (!(row instanceof HTMLElement)) return;
+    syncBox(row);
+  };
+
+  const hide = () => {
+    rowRef.current = null;
+    setVisible(false);
+  };
+
+  // The highlight is positioned from cached pixels, so re-sync (or hide)
+  // whenever the row list changes — a new chat added above the hovered row
+  // shifts every offset, and a search filter can remove the row entirely.
+  // The epsilon guard in syncBox keeps this from re-rendering when the
+  // parent updates for unrelated reasons.
+  useEffect(() => {
+    const row = rowRef.current;
+    if (row && row.isConnected) syncBox(row);
+    else if (rowRef.current || visible) hide();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [children]);
 
   return (
     <div
       ref={ref}
       onMouseOver={(event) => moveTo(event.target)}
-      onMouseLeave={() => setVisible(false)}
+      onMouseLeave={hide}
       onFocusCapture={(event) => moveTo(event.target)}
       onBlurCapture={(event) => {
-        if (!ref.current?.contains(event.relatedTarget as Node | null)) setVisible(false);
+        if (!ref.current?.contains(event.relatedTarget as Node | null)) hide();
       }}
       className={`group/glide-menu relative ${className}`}
     >
