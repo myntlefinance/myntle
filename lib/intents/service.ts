@@ -25,7 +25,10 @@ export type Quote = {
   amountInFormatted: string;
   amountOut: string;
   amountOutFormatted: string;
+  /** Minimum accepted output, formatted in whole units for display. */
   minAmountOut: string;
+  /** The same minimum in the smallest unit, for exact comparison and signing. */
+  minAmountOutRaw: string;
   amountOutUsd: string;
   feeBps: number;
   rate: number;
@@ -98,20 +101,23 @@ export async function findAssets(symbol: string): Promise<Asset[]> {
   return assets.filter((a) => a.symbol.toLowerCase() === wanted);
 }
 
-export async function quote(params: {
+export type ExecutionQuote = Quote & { depositAddress: string };
+
+async function requestQuote(params: {
   fromAssetId: string;
   toAssetId: string;
   amount: string;
   recipient: string;
   slippageBps?: number;
-}): Promise<Quote> {
+  dry: boolean;
+}): Promise<{ formatted: Quote; raw: { depositAddress?: string } }> {
   const deadline = new Date(Date.now() + 30 * 60_000).toISOString();
 
   const res = await fetch(`${BASE}/v0/quote`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      dry: true,
+      dry: params.dry,
       swapType: "EXACT_INPUT",
       originAsset: params.fromAssetId,
       destinationAsset: params.toAssetId,
@@ -139,6 +145,7 @@ export async function quote(params: {
       amountOutFormatted: string;
       minAmountOut: string;
       amountOutUsd: string;
+      depositAddress?: string;
     };
   };
 
@@ -146,7 +153,7 @@ export async function quote(params: {
   const amountIn = Number(q.amountIn);
   const amountOut = Number(q.amountOut);
 
-  return {
+  const formatted: Quote = {
     engine: "intents",
     fromAssetId: params.fromAssetId,
     toAssetId: params.toAssetId,
@@ -154,13 +161,87 @@ export async function quote(params: {
     amountInFormatted: q.amountInFormatted,
     amountOut: q.amountOut,
     amountOutFormatted: q.amountOutFormatted,
-    minAmountOut: q.minAmountOut,
+    minAmountOut: formatUnits(q.minAmountOut, await decimalsOf(params.toAssetId)),
+    minAmountOutRaw: q.minAmountOut,
     amountOutUsd: q.amountOutUsd,
     feeBps: 0,
     rate: amountIn > 0 ? amountOut / amountIn : 0,
     expiresAt: deadline,
     warnings: [],
   };
+
+  return { formatted, raw: { depositAddress: q.depositAddress } };
+}
+
+/** Decimals for an asset id from the catalogue. Falls back to 0 (raw). */
+async function decimalsOf(assetId: string): Promise<number> {
+  try {
+    const assets = await getAssets();
+    return assets.find((a) => a.assetId === assetId)?.decimals ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Raw smallest-unit integer to whole units, truncated, never rounded up. */
+function formatUnits(raw: string, decimals: number): string {
+  if (decimals <= 0) return raw;
+  let digits = raw.trim();
+  if (!/^\d+$/.test(digits)) return raw;
+  digits = digits.replace(/^0+(?=\d)/, "");
+  const padded = digits.padStart(decimals + 1, "0");
+  const head = padded.slice(0, -decimals);
+  const tail = padded.slice(-decimals).replace(/0+$/, "").slice(0, 6);
+  return tail ? `${head}.${tail}` : head;
+}
+
+export async function quote(params: {
+  fromAssetId: string;
+  toAssetId: string;
+  amount: string;
+  recipient: string;
+  slippageBps?: number;
+}): Promise<Quote> {
+  const { formatted } = await requestQuote({ ...params, dry: true });
+  return formatted;
+}
+
+/** A live execution quote. Returns the one-time deposit address the user funds. */
+export async function createExecutionQuote(params: {
+  fromAssetId: string;
+  toAssetId: string;
+  amount: string;
+  recipient: string;
+  slippageBps?: number;
+}): Promise<ExecutionQuote> {
+  const { formatted, raw } = await requestQuote({ ...params, dry: false });
+  if (!raw.depositAddress) {
+    throw new Error("The trade could not start. Please try again.");
+  }
+  return { ...formatted, depositAddress: raw.depositAddress };
+}
+
+/** Tells 1Click which on-chain deposit funds the trade, so polling can begin. */
+export async function submitDepositTx(params: {
+  depositAddress: string;
+  txHash: string;
+}): Promise<void> {
+  const res = await fetch(`${BASE}/v0/deposit/submit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      depositAddress: params.depositAddress,
+      txHash: params.txHash,
+    }),
+  });
+  // A 404 means this build of 1Click tracks deposits without an explicit
+  // submit call; the status poll below is still authoritative.
+  if (!res.ok && res.status !== 404) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(
+      `The deposit could not be registered: ${detail.slice(0, 160)}`,
+    );
+  }
 }
 
 const TERMINAL: Record<string, SwapStatus["state"]> = {

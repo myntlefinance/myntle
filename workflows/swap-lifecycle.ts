@@ -1,79 +1,181 @@
 import { FatalError, sleep } from "workflow";
 
 export type SwapInput = {
-  fromAssetId: string;
-  toAssetId: string;
-  amount: string;
+  transactionId: string;
+  depositAddress: string;
+  txHash?: string;
+  expectedOut?: string;
 };
 
 export type SwapOutcome = {
   status: "settled" | "refunded" | "failed";
   amountOut: string;
   depositAddress: string;
+  explorerUrls: string[];
 };
 
+type StatusSnapshot = {
+  state: string;
+  amountOut?: string;
+  explorerUrls: string[];
+};
+
+const BASE = "https://1click.chaindefuser.com";
+
+/**
+ * The durable swap lifecycle.
+ *
+ * The workflow holds no state of its own. Every check writes through to
+ * Postgres, so a refresh, a dropped connection, or a redeploy resumes from
+ * the record rather than from memory. A step that throws is retried; a
+ * step that throws FatalError is terminal.
+ */
 export async function swapLifecycle(input: SwapInput): Promise<SwapOutcome> {
   "use workflow";
 
-  const quote = await fetchQuoteStep(input);
-
-  await sleep("2s");
-
-  const outcome = await checkStatusStep({
-    depositAddress: quote.depositAddress,
-    expectedOut: quote.amountOut,
-  });
-
-  if (outcome.status === "failed") {
-    throw new FatalError("The settlement failed on chain");
+  if (input.txHash) {
+    await notifyDepositStep({
+      depositAddress: input.depositAddress,
+      txHash: input.txHash,
+    });
   }
 
-  return outcome;
+  await markStateStep({ transactionId: input.transactionId, state: "pending" });
+
+  // Roughly five minutes of polling with a short head and a longer tail.
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    await sleep(attempt < 10 ? "3s" : "6s");
+
+    const snapshot = await pollStatusStep(input.depositAddress);
+
+    if (snapshot.state === "settled") {
+      await markStateStep({
+        transactionId: input.transactionId,
+        state: "settled",
+        outcome: {
+          amountOut: snapshot.amountOut ?? input.expectedOut ?? "",
+          explorerUrls: snapshot.explorerUrls,
+        },
+      });
+      return {
+        status: "settled",
+        amountOut: snapshot.amountOut ?? input.expectedOut ?? "",
+        depositAddress: input.depositAddress,
+        explorerUrls: snapshot.explorerUrls,
+      };
+    }
+
+    if (snapshot.state === "refunded") {
+      await markStateStep({
+        transactionId: input.transactionId,
+        state: "refunded",
+        outcome: { explorerUrls: snapshot.explorerUrls },
+      });
+      return {
+        status: "refunded",
+        amountOut: "0",
+        depositAddress: input.depositAddress,
+        explorerUrls: snapshot.explorerUrls,
+      };
+    }
+
+    if (snapshot.state === "failed" || snapshot.state === "incomplete_deposit") {
+      await markStateStep({
+        transactionId: input.transactionId,
+        state: snapshot.state === "failed" ? "failed" : "incomplete_deposit",
+        outcome: { explorerUrls: snapshot.explorerUrls },
+      });
+      throw new FatalError(`Settlement ended with state: ${snapshot.state}`);
+    }
+
+    await markStateStep({
+      transactionId: input.transactionId,
+      state: snapshot.state === "processing" ? "processing" : "pending",
+    });
+  }
+
+  await markStateStep({
+    transactionId: input.transactionId,
+    state: "needs_reconciliation",
+  });
+  throw new FatalError("Settlement timed out and was marked for reconciliation");
 }
 
-async function fetchQuoteStep(input: SwapInput) {
+async function notifyDepositStep(input: {
+  depositAddress: string;
+  txHash: string;
+}) {
   "use step";
 
-  const res = await fetch("https://1click.chaindefuser.com/v0/quote", {
+  const res = await fetch(`${BASE}/v0/deposit/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      dry: false,
-      swapType: "EXACT_INPUT",
-      originAsset: input.fromAssetId,
-      destinationAsset: input.toAssetId,
-      amount: input.amount,
-      recipient: "test.near",
-      refundTo: "test.near",
-      depositType: "ORIGIN_CHAIN",
-      recipientType: "DESTINATION_CHAIN",
-      refundType: "ORIGIN_CHAIN",
-      slippageTolerance: 100,
-      deadline: new Date(Date.now() + 30 * 60_000).toISOString(),
+      depositAddress: input.depositAddress,
+      txHash: input.txHash,
     }),
   });
-
-  const body = await res.json();
-  return {
-    depositAddress: body.quote.depositAddress as string,
-    amountOut: body.quote.amountOutFormatted as string,
-  };
+  // Some 1Click builds track deposits without an explicit submit call.
+  if (!res.ok && res.status !== 404) {
+    throw new Error("The deposit registration failed and will be retried");
+  }
 }
 
-async function checkStatusStep(input: {
-  depositAddress: string;
-  expectedOut: string;
-}): Promise<SwapOutcome> {
+async function pollStatusStep(depositAddress: string): Promise<StatusSnapshot> {
   "use step";
 
   const res = await fetch(
-    `https://1click.chaindefuser.com/v0/status?depositAddress=${input.depositAddress}`,
+    `${BASE}/v0/status?depositAddress=${encodeURIComponent(depositAddress)}`,
   );
-  const body = await res.json();
+  if (!res.ok) throw new Error("The status poll failed and will be retried");
+
+  const body = (await res.json()) as {
+    status: string;
+    swapDetails?: {
+      amountOutFormatted?: string;
+      originChainTxHashes?: Array<{ explorerUrl?: string }>;
+      destinationChainTxHashes?: Array<{ explorerUrl?: string }>;
+    };
+  };
+  const details = body.swapDetails ?? {};
+
+  const TERMINAL: Record<string, string> = {
+    SUCCESS: "settled",
+    FAILED: "failed",
+    REFUNDED: "refunded",
+    INCOMPLETE_DEPOSIT: "incomplete_deposit",
+    PENDING_DEPOSIT: "pending",
+    KNOWN_DEPOSIT_TX: "pending",
+    PROCESSING: "processing",
+  };
 
   return {
-    status: body.status === "SUCCESS" ? "settled" : "refunded",
-    amountOut: input.expectedOut,
-    depositAddress: input.depositAddress,
+    state: TERMINAL[body.status] ?? "pending",
+    amountOut: details.amountOutFormatted,
+    explorerUrls: [
+      ...(details.originChainTxHashes ?? []),
+      ...(details.destinationChainTxHashes ?? []),
+    ]
+      .map((h) => h.explorerUrl)
+      .filter((u): u is string => !!u),
   };
+}
+
+async function markStateStep(input: {
+  transactionId: string;
+  state: string;
+  outcome?: Record<string, unknown>;
+}) {
+  "use step";
+
+  const { getSupabaseAdmin } = await import("@/lib/db/client");
+  const sb = getSupabaseAdmin();
+  const patch: Record<string, unknown> = { state: input.state };
+  if (input.outcome) patch.outcome = input.outcome;
+  await sb.from("transactions").update(patch).eq("id", input.transactionId);
+  await sb.from("transaction_events").insert({
+    transaction_id: input.transactionId,
+    state: input.state,
+    meta: input.outcome ?? {},
+  });
 }
