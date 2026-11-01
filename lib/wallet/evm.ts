@@ -43,8 +43,24 @@ export function useEvmWallet() {
     isPending,
     connectors,
     connect: async (connectorId?: string): Promise<string> => {
+      // Connector ids for EIP-6963 wallets are rdns values (for example
+      // `io.rabby`), while the picker works with short catalog ids (for
+      // example `rabby`). Match exactly first, then by name or rdns, so a
+      // card always targets the wallet it names instead of falling back to
+      // whichever provider won the `window.ethereum` race.
+      const needle = connectorId?.toLowerCase();
       const connector =
-        connectors.find((c) => c.id === connectorId) ?? connectors[0];
+        (needle
+          ? (connectors.find((c) => c.id === connectorId) ??
+            connectors.find(
+              (c) =>
+                c.id.toLowerCase() === needle ||
+                c.name.toLowerCase().includes(needle) ||
+                needle.includes(c.name.toLowerCase()),
+            ))
+          : undefined) ??
+        connectors.find((c) => c.id === "injected") ??
+        connectors[0];
       if (!connector) throw new Error("No EVM wallet is available");
       // connectAsync waits for the wallet's approval. The plain `connect`
       // returns void immediately, which is what made the picker report

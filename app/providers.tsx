@@ -37,7 +37,10 @@ const wagmiConfig = createConfig({
     [arbitrum.id]: http(),
     [polygon.id]: http(),
   },
-  ssr: true,
+  // The provider tree is client-only (see providers-loader), so SSR
+  // discovery is off. With `ssr: true` wagmi defers EIP-6963 (MIPD)
+  // connectors until after hydration, which hides per-wallet cards.
+  ssr: false,
 });
 
 export function Providers({ children }: { children: React.ReactNode }) {
