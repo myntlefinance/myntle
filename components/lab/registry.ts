@@ -16,8 +16,10 @@ export type LabEntry = {
   caption: string;
   /** File name inside `components/lab/samples/` */
   file: string;
-  /** The variants to render side by side */
+  /** The variants to render */
   variants?: string[];
+  /** Layout of variants: 'row' (side by side) or 'stack' (one card per row) */
+  layout?: "row" | "stack";
 };
 
 export const LAB: LabEntry[] = [
@@ -28,6 +30,7 @@ export const LAB: LabEntry[] = [
       "A button with the three weights the product needs, checked against the approval flow where the primary action has to be unmistakable.",
     file: "ActionButton.tsx",
     variants: ["Primary", "Secondary", "Ghost", "Danger"],
+    layout: "row",
   },
   {
     id: "quote-preview",
@@ -36,6 +39,7 @@ export const LAB: LabEntry[] = [
       "A draft of the quote card, working out which numbers belong on screen and which are padding.",
     file: "QuotePreview.tsx",
     variants: ["Default", "Compact"],
+    layout: "stack",
   },
   {
     id: "approval-row",
@@ -44,5 +48,15 @@ export const LAB: LabEntry[] = [
       "How the destination, the amount and the deadline read together at the moment a user decides.",
     file: "ApprovalRow.tsx",
     variants: ["Approved", "Denied", "Pending"],
+    layout: "stack",
+  },
+  {
+    id: "asset-matrix",
+    title: "Asset Matrix",
+    caption:
+      "A grouped multi-row matrix for balances, positions, and DeFi holdings. The network or venue spans multiple rows as a single cell, with filter chips and no metric counters.",
+    file: "AssetMatrix.tsx",
+    variants: ["Balances", "Positions & Perps"],
+    layout: "stack",
   },
 ];

@@ -6,6 +6,7 @@ import { ThemeToggle } from "@/components/site/ThemeToggle";
 import ActionButton from "@/components/lab/samples/ActionButton";
 import QuotePreview from "@/components/lab/samples/QuotePreview";
 import ApprovalRow from "@/components/lab/samples/ApprovalRow";
+import AssetMatrix from "@/components/lab/samples/AssetMatrix";
 
 export const metadata = {
   title: "Lab",
@@ -24,6 +25,7 @@ const PROTOTYPES: Record<string, React.ComponentType<{ variant?: string }>> = {
   "action-button": ActionButton,
   "quote-preview": QuotePreview,
   "approval-row": ApprovalRow,
+  "asset-matrix": AssetMatrix,
 };
 
 /** Sources are read at build time so each frame can offer its own file. */
@@ -74,6 +76,7 @@ export default function LabPage() {
                 variants={entry.variants ?? ["Default"]}
                 code={readSource(entry.file)}
                 Component={Component}
+                layout={entry.layout}
               />
             );
           })}

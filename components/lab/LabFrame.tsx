@@ -2,13 +2,14 @@
 
 import { useState, type ComponentType } from "react";
 import CodeBlock from "@/components/primitives/CodeBlock";
+import { cn } from "@/lib/utils";
 
 /**
  * The frame around one prototype.
  *
- * It renders every variant of the prototype side by side, and shows the
- * source underneath so the finished markup can be copied straight into the
- * application.
+ * It renders every variant of the prototype, either stacked (one per row) or
+ * side-by-side, and shows the source underneath so the finished markup can be
+ * copied straight into the application.
  */
 export function LabFrame({
   title,
@@ -17,6 +18,7 @@ export function LabFrame({
   code,
   file,
   Component,
+  layout = "row",
 }: {
   title: string;
   caption: string;
@@ -24,8 +26,10 @@ export function LabFrame({
   code: string;
   file: string;
   Component: ComponentType<{ variant?: string }>;
+  layout?: "row" | "stack";
 }) {
   const [showSource, setShowSource] = useState(false);
+  const isStack = layout === "stack";
 
   return (
     <section className="border-t border-line px-6 py-7 first:border-t-0">
@@ -45,10 +49,22 @@ export function LabFrame({
         </button>
       </header>
 
-      <div className="mt-4 flex flex-wrap items-start gap-3 rounded-[10px] border border-dashed border-line bg-inset p-4">
+      <div
+        className={cn(
+          "mt-4 rounded-[10px] border border-dashed border-line bg-inset p-4",
+          isStack
+            ? "flex flex-col items-stretch gap-6"
+            : "flex flex-wrap items-start gap-3",
+        )}
+      >
         {variants.map((variant) => (
-          <div key={variant} className="flex flex-col gap-1.5">
-            <span className="text-[11px] text-ink-3">{variant}</span>
+          <div
+            key={variant}
+            className={cn("flex flex-col gap-1.5", isStack && "w-full")}
+          >
+            <span className="text-[11.5px] font-medium text-ink-3">
+              {variant}
+            </span>
             <Component variant={variant} />
           </div>
         ))}
