@@ -1,7 +1,24 @@
 "use client";
 
-import { Streamdown, type Components } from "streamdown";
+import { useMemo } from "react";
+import { Streamdown, type Components, type CustomRenderer } from "streamdown";
+import { code } from "@streamdown/code";
+import { math } from "@streamdown/math";
+import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
+import { PeleDiagram } from "@/components/app/PeleDiagram";
+import { MarkdownLink } from "@/components/app/MarkdownLink";
+
+const peleRenderer: CustomRenderer = {
+  language: "mermaid",
+  component: PeleDiagram,
+};
+
+const streamdownPlugins = {
+  code,
+  math,
+  renderers: [peleRenderer],
+};
 
 /* Markdown — the assistant's reply.
  *
@@ -34,12 +51,22 @@ export function Markdown({
   /** streamdown element overrides, passed straight through */
   components?: Components;
 }) {
+  const mergedComponents = useMemo(
+    () => ({
+      a: MarkdownLink,
+      ...components,
+    }),
+    [components],
+  );
+
   return (
     <Streamdown
+      plugins={streamdownPlugins}
+      linkSafety={{ enabled: false }}
       isAnimating={isAnimating}
       caret={caret ? "block" : undefined}
       className={cn("md-prose text-[14px] leading-[1.6] text-ink", className)}
-      components={components}
+      components={mergedComponents}
     >
       {children}
     </Streamdown>

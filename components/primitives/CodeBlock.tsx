@@ -176,15 +176,71 @@ export default function CodeBlock({
             aria-label="Copy code"
             onClick={copy}
             className={`-mr-1 ml-auto flex h-6 items-center gap-1 rounded-[6px] px-1.5 text-[12px]
-              font-medium transition-colors duration-100 hover:bg-hover
+              font-medium transition-[background-color,color,transform] duration-150 ease-out hover:bg-hover active:scale-[0.97]
               ${copied ? "text-green" : "text-ink-3 hover:text-ink"}`}
           >
-            {copied ? (
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-            ) : (
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2.5" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
-            )}
-            {copied ? text.copied : text.copy}
+            <span className="relative flex size-3.5 items-center justify-center">
+              <span
+                aria-hidden={copied}
+                className="absolute inset-0 flex items-center justify-center"
+                style={{
+                  opacity: copied ? 0 : 1,
+                  filter: copied ? "blur(2.5px)" : "blur(0px)",
+                  transform: copied ? "scale(0.85)" : "scale(1)",
+                  pointerEvents: copied ? "none" : "auto",
+                  transition:
+                    "opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms cubic-bezier(0.16, 1, 0.3, 1), transform 240ms cubic-bezier(0.16, 1, 0.3, 1)",
+                  willChange: "transform, opacity, filter",
+                }}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2.5" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+              </span>
+              <span
+                aria-hidden={!copied}
+                className="absolute inset-0 flex items-center justify-center text-green"
+                style={{
+                  opacity: copied ? 1 : 0,
+                  filter: copied ? "blur(0px)" : "blur(2.5px)",
+                  transform: copied ? "scale(1)" : "scale(0.85)",
+                  pointerEvents: copied ? "auto" : "none",
+                  transition:
+                    "opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms cubic-bezier(0.16, 1, 0.3, 1), transform 240ms cubic-bezier(0.16, 1, 0.3, 1)",
+                  willChange: "transform, opacity, filter",
+                }}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+              </span>
+            </span>
+            <span className="relative h-4 min-w-[34px] overflow-hidden">
+              <span
+                aria-hidden={copied}
+                className="absolute inset-0 flex items-center"
+                style={{
+                  opacity: copied ? 0 : 1,
+                  filter: copied ? "blur(2px)" : "blur(0px)",
+                  pointerEvents: copied ? "none" : "auto",
+                  transition:
+                    "opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms cubic-bezier(0.16, 1, 0.3, 1)",
+                  willChange: "opacity, filter",
+                }}
+              >
+                {text.copy}
+              </span>
+              <span
+                aria-hidden={!copied}
+                className="absolute inset-0 flex items-center text-green font-medium"
+                style={{
+                  opacity: copied ? 1 : 0,
+                  filter: copied ? "blur(0px)" : "blur(2px)",
+                  pointerEvents: copied ? "auto" : "none",
+                  transition:
+                    "opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms cubic-bezier(0.16, 1, 0.3, 1)",
+                  willChange: "opacity, filter",
+                }}
+              >
+                {text.copied}
+              </span>
+            </span>
           </button>
         )}
       </div>
