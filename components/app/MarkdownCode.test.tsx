@@ -1,7 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
 import { Markdown } from "@/components/app/Markdown";
+
+vi.mock("@/lib/wallet/registry", () => ({
+  useWallet: () => ({
+    account: null,
+    isConnected: false,
+    isPending: false,
+    connect: async () => {},
+    disconnect: async () => {},
+  }),
+}));
 
 describe("MarkdownCode integration with Beautiful UI CodeBlock", () => {
   it("renders inline code as a monospace chip", () => {
@@ -13,6 +23,16 @@ describe("MarkdownCode integration with Beautiful UI CodeBlock", () => {
     expect(html).toContain("font-mono");
     // Ensure it is not wrapped in a full card
     expect(html).not.toContain("shadow-card");
+  });
+
+  it("renders blockchain address as TechDataChip with thin Myntle blue border outline", () => {
+    const md = "Connected wallet: `0x32596df10ff2ac5acde8406e6adcc8d047921073`";
+    const html = ReactDOMServer.renderToString(<Markdown>{md}</Markdown>);
+
+    expect(html).toContain("0x32596df10ff2ac5acde8406e6adcc8d047921073");
+    expect(html).toContain("group/chip");
+    expect(html).toContain("border-accent/40");
+    expect(html).toContain("Copy EVM address: 0x32596df10ff2ac5acde8406e6adcc8d047921073");
   });
 
   it("renders fenced code block with Beautiful UI CodeBlock and language pill", () => {

@@ -3,6 +3,8 @@
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import CodeBlock from "@/components/primitives/CodeBlock";
 import { PeleDiagram } from "@/components/app/PeleDiagram";
+import { useWallet } from "@/lib/wallet/registry";
+import { detectTechData, TechDataChip } from "@/components/atoms/TechDataChip";
 
 type HastNode = {
   properties?: {
@@ -77,10 +79,17 @@ export function MarkdownCode({
   metastring,
   ...props
 }: MarkdownCodeProps) {
+  const { account } = useWallet();
   const isBlock = Boolean(dataBlock);
 
-  // 1. Inline code: render clean monospace chip
+  // 1. Inline code: check for tech data (address, tx hash) or render clean monospace chip
   if (!isBlock) {
+    const raw = extractCodeString(children).trim();
+    const techData = detectTechData(raw, account);
+    if (techData) {
+      return <TechDataChip data={techData} />;
+    }
+
     return (
       <code
         className="rounded-md bg-inset px-1.5 py-0.5 font-mono text-[12.5px] text-ink-2 align-baseline"

@@ -66,7 +66,7 @@ export function ExternalLinkDialog({
         className="relative flex w-full max-w-md flex-col overflow-hidden rounded-window border border-line bg-surface shadow-overlay"
         style={{ animation: "dialog-in 240ms var(--ease-out-strong) both" }}
       >
-        <div className="flex h-11 shrink-0 items-center justify-between border-b border-line pl-4 pr-2.5">
+        <div className="flex h-11 shrink-0 items-center justify-between pl-4 pr-2.5">
           <div className="flex items-center gap-2 text-ink">
             <IconWorld size={16} className="text-ink-2" />
             <span className="text-[13px] font-semibold">External Resource</span>
@@ -81,7 +81,7 @@ export function ExternalLinkDialog({
           </button>
         </div>
 
-        <div className="p-4">
+        <div className="px-4 pb-4 pt-1">
           <p className="text-[13px] leading-relaxed text-ink-2">
             You are about to visit an external website. Make sure you trust the destination before proceeding.
           </p>
@@ -92,7 +92,7 @@ export function ExternalLinkDialog({
           </div>
         </div>
 
-        <div className="flex items-center justify-between border-t border-line bg-surface px-4 py-3">
+        <div className="flex items-center justify-between bg-surface px-4 pb-3.5 pt-0">
           <Button
             type="button"
             variant="quiet"
