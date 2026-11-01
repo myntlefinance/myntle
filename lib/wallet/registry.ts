@@ -337,6 +337,8 @@ export function useWallet() {
     connectNear,
     disconnect,
     signMessage,
+    /** NEP-413 signing for NEAR approvals, with caller-chosen recipient. */
+    signNEP413: near.signNEP413,
     pendingChain,
     authStage,
     isPending:
