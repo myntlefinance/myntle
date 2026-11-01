@@ -7,6 +7,8 @@
 /* Streamdown renders the assistant's markdown and carries its styles as
  * Tailwind classes inside its own bundle, so the scanner has to read them. */
 @source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/math/dist/*.js";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -72,6 +74,11 @@
   --shadow-raised: 0 0 0 1px var(--line), var(--shadow-md);
   --shadow-overlay: 0 0 0 1px var(--line), var(--shadow-lg);
   --shadow-inset-field: inset 0 1px 2px oklch(0 0 0 / 0.12);
+
+  /* easing tokens — defined on :root so all CSS rules can resolve them */
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-link: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .dark {
@@ -281,6 +288,35 @@ a {
   border: 2px solid transparent;
   background-clip: content-box;
 }
+.scroll-slim::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-3);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* Global scrollbar styling to prevent intrusive OS-native scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-3);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
 
 /* Keep the component nav scrollable but hide its scrollbar. */
 .component-nav-scroll {
@@ -466,7 +502,7 @@ a:focus-visible .animated-underline::after {
  * generic foundation above.
  * ══════════════════════════════════════════════════════════ */
 .sidebar-row {
-  width: 208px;
+  width: 219px;
   transition-duration: var(--sidebar-copy-duration);
   transition-timing-function: var(--sidebar-easing);
 }
@@ -477,6 +513,157 @@ a:focus-visible .animated-underline::after {
   transition:
     opacity var(--sidebar-copy-duration) ease-out,
     transform var(--sidebar-copy-duration) var(--sidebar-easing);
+}
+
+/* A chat title has no ellipsis: the last few pixels fade out, so the only
+ * dots on a row are the actions button. The mask is relative to the label's
+ * own box, so a title that fits is untouched. */
+.sidebar-label-fade {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    oklch(0 0 0) calc(100% - 24px),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    oklch(0 0 0) calc(100% - 24px),
+    transparent
+  );
+}
+
+/* Chat row action overlay on hover: smooth gradient from transparent to solid
+ * hover background, cleanly masking text underneath before the ellipsis icon. */
+.sidebar-actions-overlay {
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    var(--hover-2) 24px,
+    var(--hover-2) 100%
+  );
+}
+
+/* A newly persisted chat grows from zero height so the rows below it glide
+ * down instead of jumping. The inner row stays full-height and is clipped
+ * while the wrapper grows, keeping the label from squishing mid-reveal. */
+@keyframes sidebar-chat-in {
+  from {
+    height: 0;
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    height: 2rem;
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sidebar-chat-enter {
+  overflow: hidden;
+  animation: sidebar-chat-in 275ms var(--ease-out-strong) both;
+  will-change: height, opacity, transform;
+}
+
+.sidebar-chat-enter > button,
+.sidebar-chat-enter > input {
+  height: 2rem;
+}
+
+/* Deleting mirrors the insert exactly in reverse: the row collapses toward
+ * zero height so the rows below it glide up instead of jumping. The inner
+ * row stays full-height and is clipped while the wrapper collapses, keeping
+ * the label from squishing mid-reveal. */
+@keyframes sidebar-chat-out {
+  from {
+    height: 2rem;
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    height: 0;
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+.sidebar-chat-exit {
+  overflow: hidden;
+  animation: sidebar-chat-out 275ms var(--ease-out-strong) both;
+  will-change: height, opacity, transform;
+}
+
+.sidebar-chat-exit > button,
+.sidebar-chat-exit > input {
+  height: 2rem;
+}
+
+/* Trash rows collapse the same way chat rows do: the wrapper locks to its
+ * measured height, then eases to zero once the database confirms. */
+.trash-row-collapse {
+  overflow: hidden;
+  transition:
+    height 220ms var(--ease-out-strong),
+    opacity 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trash-row-collapse {
+    transition: opacity 150ms ease-out;
+  }
+}
+
+/* The Delete row arms itself into Confirm in place: the same button morphs
+ * via crossfade transition (not keyframes, so a rapid arm/disarm retargets
+ * smoothly instead of restarting). Arming is the deliberate direction at
+ * 240ms with a soft blur masking the label swap; disarming snaps back at
+ * 150ms. The icon stays put as the anchor while only the label crossfades. */
+.chat-menu-morph {
+  transition:
+    background-color 150ms var(--ease-out-strong),
+    color 150ms var(--ease-out-strong),
+    transform 150ms var(--ease-out-strong),
+    scale 150ms var(--ease-out-strong);
+}
+
+.chat-menu-morph.is-armed {
+  transition-duration: 240ms;
+}
+
+.chat-menu-label {
+  display: block;
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    opacity 150ms var(--ease-out-strong),
+    filter 150ms var(--ease-out-strong);
+}
+
+.chat-menu-morph.is-armed .chat-menu-label {
+  transition-duration: 240ms;
+}
+
+.chat-menu-label.is-exiting {
+  opacity: 0;
+  filter: blur(2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-chat-enter,
+  .sidebar-chat-exit {
+    animation: none;
+  }
+  /* Reduced motion keeps the fade that aids comprehension, minus the blur. */
+  .chat-menu-label,
+  .chat-menu-morph,
+  .chat-menu-morph.is-armed .chat-menu-label {
+    transition:
+      opacity 150ms ease-out,
+      background-color 150ms ease-out,
+      color 150ms ease-out;
+  }
+  .chat-menu-label.is-exiting {
+    filter: none;
+  }
 }
 
 .sidebar-logo,
@@ -491,9 +678,48 @@ a:focus-visible .animated-underline::after {
   opacity: 0;
 }
 
-.sidebar-glide-highlight {
-  right: 8px;
-  left: 8px;
+/* the footer keeps its hairline in both states and narrows to the rail width */
+.sidebar-foot {
+  width: 219px;
+  transition: width var(--sidebar-copy-duration) var(--sidebar-easing);
+}
+
+/* the icon-only footer control, shown once the copy is gone */
+.sidebar-rail-foot {
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--sidebar-copy-duration) ease-out;
+}
+
+/* the chat history belongs to the expanded tree only */
+.sidebar-chats {
+  opacity: 1;
+  transition: opacity var(--sidebar-copy-duration) ease-out;
+}
+
+/* trash sits above the footer and belongs to the expanded tree as well */
+.sidebar-trash {
+  opacity: 1;
+  transition: opacity var(--sidebar-copy-duration) ease-out;
+}
+
+[data-sidebar-collapsed="true"] .sidebar-foot {
+  width: 36px;
+}
+
+[data-sidebar-collapsed="true"] .sidebar-chats {
+  pointer-events: none;
+  opacity: 0;
+}
+
+[data-sidebar-collapsed="true"] .sidebar-trash {
+  pointer-events: none;
+  opacity: 0;
+}
+
+[data-sidebar-collapsed="true"] .sidebar-rail-foot {
+  pointer-events: auto;
+  opacity: 1;
 }
 
 [data-sidebar-collapsed="true"] .sidebar-row {
@@ -519,11 +745,6 @@ a:focus-visible .animated-underline::after {
 [data-sidebar-collapsed="true"] .sidebar-expand-control {
   pointer-events: auto;
   opacity: 1;
-}
-
-[data-sidebar-collapsed="true"] .sidebar-glide-highlight {
-  right: auto;
-  width: 36px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1576,9 +1797,126 @@ th.is-colsel .records-header-icon {
   font-size: 12.5px;
 }
 
-.md-prose [data-streamdown="link"] {
+.md-prose a,
+.md-prose [data-streamdown="link"],
+.md-prose [data-footnote-ref],
+.md-prose [data-footnote-backref],
+.md-prose .footnotes a {
+  color: #00A6FF;
   text-underline-offset: 3px;
   text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, #00A6FF 35%, transparent);
+  transition: color 150ms ease, text-decoration-color 150ms ease;
+}
+
+.md-prose a:hover,
+.md-prose [data-streamdown="link"]:hover,
+.md-prose [data-footnote-ref]:hover,
+.md-prose [data-footnote-backref]:hover,
+.md-prose .footnotes a:hover {
+  color: #0092e0;
+  text-decoration-color: #00A6FF;
+}
+
+.dark .md-prose a:hover,
+.dark .md-prose [data-streamdown="link"]:hover,
+.dark .md-prose [data-footnote-ref]:hover,
+.dark .md-prose [data-footnote-backref]:hover,
+.dark .md-prose .footnotes a:hover {
+  color: #38bdf8;
+  text-decoration-color: #38bdf8;
+}
+
+/* Pele Mermaid diagrams (obsidianmd/pele) */
+.pele-diagram {
+  --pele-bg: var(--surface);
+  --pele-fg: var(--ink);
+  --pele-muted: var(--ink-2);
+  --pele-line: var(--line-strong);
+  --pele-surface: var(--inset);
+  --pele-surface-alt: var(--hover);
+  --pele-border: var(--line);
+  --pele-accent: var(--accent-ink);
+  --pele-font: var(--font-sans);
+  --pele-radius: 6px;
+  --pele-series-1: var(--accent);
+  --pele-series-2: var(--green);
+  --pele-series-3: var(--orange);
+  --pele-series-4: var(--red);
+  --pele-series-5: oklch(0.65 0.18 300);
+  --pele-series-6: oklch(0.62 0.16 200);
+  --pele-series-7: oklch(0.70 0.15 100);
+  --pele-series-8: var(--ink-3);
+}
+
+.pele-diagram svg {
+  display: block;
+  margin: 0 auto;
+}
+
+/* ──────────────────────────────────────────────────────────
+ * Emil Kowalski — Blur state crossfade (tip #7)
+ * Masks micro-imperfections during icon & label state transitions
+ * with a subtle 2px blur and snappy easing curve.
+ * ────────────────────────────────────────────────────────── */
+
+.blur-crossfade-container {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.blur-crossfade-item {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    opacity 240ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 240ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity, filter;
+}
+
+.blur-crossfade-visible {
+  opacity: 1;
+  filter: blur(0px);
+  transform: scale(1);
+  pointer-events: auto;
+}
+
+.blur-crossfade-hidden {
+  opacity: 0;
+  filter: blur(2.5px);
+  transform: scale(0.85);
+  pointer-events: none;
+}
+
+.blur-crossfade-text-item {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  transform-origin: left center;
+  transition:
+    opacity 240ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, filter;
+}
+
+.blur-crossfade-text-visible {
+  opacity: 1;
+  filter: blur(0px);
+  pointer-events: auto;
+}
+
+.blur-crossfade-text-hidden {
+  opacity: 0;
+  filter: blur(2px);
+  pointer-events: none;
 }
 
 @keyframes pop-in {
@@ -1631,5 +1969,10 @@ th.is-colsel .records-header-icon {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+  .blur-crossfade-hidden,
+  .blur-crossfade-text-hidden {
+    filter: none !important;
+    transform: none !important;
   }
 }
