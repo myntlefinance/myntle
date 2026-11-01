@@ -79,7 +79,7 @@ export async function POST(req: Request) {
       { status: 401 },
     );
   }
-  const pending = consumeChallenge(nonce, chain, address);
+  const pending = await consumeChallenge(nonce, chain, address);
   if (!pending) {
     return NextResponse.json(
       { error: "Verification expired. Please try again." },
@@ -147,7 +147,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const { id, expiresAt } = createSession(chain, address);
+  const { id, expiresAt } = await createSession(chain, address);
   const res = NextResponse.json({ ok: true });
   res.cookies.set(SESSION_COOKIE, id, {
     httpOnly: true,

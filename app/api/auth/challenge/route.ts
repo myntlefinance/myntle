@@ -35,6 +35,6 @@ export async function POST(req: Request) {
   if (!validAddress(chain, address)) {
     return NextResponse.json({ error: "Invalid address." }, { status: 400 });
   }
-  const challenge = createChallenge(chain, address, recipient);
+  const challenge = await createChallenge(chain, address, recipient);
   return NextResponse.json(challenge);
 }

@@ -1,34 +1,9 @@
 import { randomBytes } from "node:crypto";
+import { getSupabaseAdmin } from "@/lib/db/client";
 
 export type AuthChain = "evm" | "solana" | "near";
 
 export const CHALLENGE_TTL_MS = 5 * 60 * 1000;
-
-type PendingChallenge = {
-  chain: AuthChain;
-  /** Normalised address (EVM lower-cased, others as sent). */
-  address: string;
-  expiresAt: number;
-  /** NEP-413 recipient the signature is bound to (NEAR only). */
-  recipient?: string;
-};
-
-const globalStore = globalThis as unknown as {
-  __myntle_challenges?: Map<string, PendingChallenge>;
-};
-
-function store(): Map<string, PendingChallenge> {
-  if (!globalStore.__myntle_challenges) {
-    globalStore.__myntle_challenges = new Map();
-  }
-  return globalStore.__myntle_challenges;
-}
-
-function purgeExpired(now: number): void {
-  for (const [nonce, pending] of store()) {
-    if (pending.expiresAt <= now) store().delete(nonce);
-  }
-}
 
 export function normalizeAddress(chain: AuthChain, address: string): string {
   return chain === "evm" ? address.toLowerCase() : address;
@@ -50,21 +25,38 @@ export function buildMessage(args: {
   );
 }
 
-export function createChallenge(
+export async function createChallenge(
   chain: AuthChain,
   address: string,
   recipient?: string,
-): { message: string; nonce: string; expiresAt: number; recipient?: string } {
+): Promise<{
+  message: string;
+  nonce: string;
+  expiresAt: number;
+  recipient?: string;
+}> {
   const now = Date.now();
-  purgeExpired(now);
   const nonceHex = randomBytes(32).toString("hex");
   const expiresAt = now + CHALLENGE_TTL_MS;
-  store().set(nonceHex, {
+  const normalized = normalizeAddress(chain, address);
+
+  const sb = getSupabaseAdmin();
+  const { error } = await sb.from("challenges").insert({
+    nonce_hex: nonceHex,
     chain,
-    address: normalizeAddress(chain, address),
-    expiresAt,
-    ...(chain === "near" && recipient ? { recipient } : {}),
+    address: normalized,
+    recipient: chain === "near" ? (recipient ?? null) : null,
+    expires_at: new Date(expiresAt).toISOString(),
   });
+  if (error) throw new Error("The sign-in request could not start.");
+
+  // Best-effort cleanup of old challenges. Never blocks login.
+  void sb
+    .from("challenges")
+    .delete()
+    .lt("expires_at", new Date(now - 60_000).toISOString())
+    .then(() => undefined);
+
   return {
     message: buildMessage({ chain, address, nonceHex, expiresAt }),
     nonce: nonceHex,
@@ -73,17 +65,36 @@ export function createChallenge(
   };
 }
 
-export function consumeChallenge(
+export async function consumeChallenge(
   nonceHex: string,
   chain: AuthChain,
   address: string,
-): { expiresAt: number; recipient?: string } | null {
-  purgeExpired(Date.now());
-  const pending = store().get(nonceHex);
-  if (!pending) return null;
-  store().delete(nonceHex);
-  if (pending.chain !== chain) return null;
-  if (pending.address !== normalizeAddress(chain, address)) return null;
-  if (pending.expiresAt <= Date.now()) return null;
-  return { expiresAt: pending.expiresAt, recipient: pending.recipient };
+): Promise<{ expiresAt: number; recipient?: string } | null> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from("challenges")
+    .select("chain, address, recipient, expires_at, consumed_at")
+    .eq("nonce_hex", nonceHex)
+    .single();
+  if (error || !data) return null;
+  if (data.consumed_at) return null;
+  if (data.chain !== chain) return null;
+  if (data.address !== normalizeAddress(chain, address)) return null;
+
+  const expiresAt = new Date(data.expires_at).getTime();
+  if (expiresAt <= Date.now()) return null;
+
+  const { data: claimed, error: claimError } = await sb
+    .from("challenges")
+    .update({ consumed_at: new Date().toISOString() })
+    .eq("nonce_hex", nonceHex)
+    .is("consumed_at", null)
+    .select("nonce_hex")
+    .single();
+  if (claimError || !claimed) return null;
+
+  return {
+    expiresAt,
+    ...(data.recipient ? { recipient: data.recipient as string } : {}),
+  };
 }
