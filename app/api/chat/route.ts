@@ -10,7 +10,7 @@ import {
 } from "ai";
 import { nearAI, DEFAULT_MODEL } from "@/lib/ai/provider";
 import { SYSTEM_INSTRUCTIONS } from "@/lib/ai/prompts";
-import { tools } from "@/lib/ai/tools";
+import { createTools } from "@/lib/ai/tools";
 import { getSession, SESSION_COOKIE } from "@/lib/auth/session";
 import {
   ensureConversation,
@@ -27,16 +27,35 @@ type ChatBody = {
   model?: string;
   conversationId?: string;
   title?: string;
+  walletAddress?: string;
+  walletChain?: string;
 };
 
 export async function POST(req: Request) {
-  const { messages, model, conversationId, title }: ChatBody = await req.json();
+  const {
+    messages,
+    model,
+    conversationId,
+    title,
+    walletAddress,
+    walletChain,
+  }: ChatBody = await req.json();
 
   if (!process.env.NEAR_AI_CLOUD_API_KEY) {
     return Response.json(
       {
         error:
           "The assistant is not configured. Add NEAR_AI_CLOUD_API_KEY to .env.local.",
+      },
+      { status: 503 },
+    );
+  }
+
+  if (!process.env.TOOL_APPROVAL_SECRET) {
+    return Response.json(
+      {
+        error:
+          "Approvals are not configured. Set TOOL_APPROVAL_SECRET to a non-empty value in .env.local and restart.",
       },
       { status: 503 },
     );
@@ -88,11 +107,22 @@ export async function POST(req: Request) {
     }
   }
 
+  const activeAddress = session?.address || walletAddress || null;
+  const activeChain = session?.chain || walletChain || null;
+
+  const baseInstructions =
+    process.env.SYSTEM_INSTRUCTIONS || SYSTEM_INSTRUCTIONS;
+  const walletContext = activeAddress
+    ? `\n\nConnected wallet:\n- Address: ${activeAddress}${activeChain ? `\n- Chain: ${activeChain}` : ""}\nUse this address as the default recipient when calling get_quote and prepare_swap unless the user specifies a different recipient.`
+    : `\n\nConnected wallet: None (no wallet connected).`;
+
+  const instructions = `${baseInstructions}${walletContext}`;
+
   const result = streamText({
     model: nearAI(model ?? DEFAULT_MODEL),
-    instructions: SYSTEM_INSTRUCTIONS,
+    instructions,
     messages: await convertToModelMessages(messages),
-    tools,
+    tools: createTools({ activeAddress, activeChain }),
     // The default is one step, which would end the assistant after a single
     // tool round and leave a question like "swap some and tell me my balance"
     // half answered.

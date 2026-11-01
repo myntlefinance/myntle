@@ -1,63 +1,208 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { getAssets, type Asset } from "@/lib/intents/service";
+import { getAssets } from "@/lib/intents/service";
+import {
+  getConnectedWalletBalances,
+  groupBalancesByNetwork,
+  isPhishingToken,
+  type SupportedNetwork,
+  type AssetCategory,
+  type TokenBalance,
+} from "@/lib/wallet/balances";
+import { getIntentsLedgerBalances } from "@/lib/intents/balances";
+
+export const SupportedNetworkEnum = z.enum([
+  "arbitrum",
+  "base",
+  "ethereum",
+  "optimism",
+  "polygon",
+  "solana",
+  "near",
+]);
+
+export const SupportedChainEnum = z.enum(["evm", "solana", "near"]);
 
 /**
- * The tools the assistant can reach.
- *
- * Five of them read. One proposes. None of them sign, and none of them
- * return an address, so the model never touches the wallet.
+ * Context passed to the tools from the active chat turn.
  */
+export type ToolContext = {
+  activeAddress?: string | null;
+  activeChain?: string | null;
+  authToken?: string | null;
+};
 
-export async function readBalances(accountId: string) {
-  const assets = await getAssets();
-
-  // The settlement ledger is what a trade can actually spend. The on-chain
-  // balance is the user's own wallet, and is reported separately so the two
-  // are never confused.
-  return {
-    accountId,
-    assets: assets
-      .filter((a) => a.chain === "near" || a.chain === "eth" || a.chain === "sol")
-      .slice(0, 40)
-      .map((a) => ({
-        assetId: a.assetId,
-        symbol: a.symbol,
-        chain: a.chain,
-        decimals: a.decimals,
-        price: a.price,
-      })),
-  };
+/**
+ * Reads token balances for an account.
+ */
+export async function readBalances(accountId: string, chain = "near") {
+  return getConnectedWalletBalances(chain, accountId);
 }
 
-export const getWalletBalances = tool({
-  description:
-    "List the assets that are available to trade, with their chain, their decimals, " +
-    "and their current price. This is the catalogue of tradeable assets, not the " +
-    "user's personal balances, which are shown separately in the interface.",
-  inputSchema: z.object({}),
-  execute: async () => {
-    const assets = await getAssets();
-    // Only the major assets per chain. The full catalogue is 205 entries and
-    // would take the model too long to read and summarise.
-    const major = ["near", "eth", "sol", "arb", "base"];
-    const seen = new Set<string>();
-    const picked: Array<{ assetId: string; symbol: string; chain: string }> = [];
-    for (const chain of major) {
-      const chainAssets = assets
-        .filter((a) => a.chain === chain)
-        .sort((a, b) => b.price - a.price)
-        .slice(0, 4);
-      for (const a of chainAssets) {
-        if (!seen.has(a.assetId)) {
-          seen.add(a.assetId);
-          picked.push({ assetId: a.assetId, symbol: a.symbol, chain: a.chain });
+export function createWalletBalancesTool(context?: ToolContext) {
+  return tool({
+    description:
+      "Read the user's token balances. Returns on-chain balances in their connected wallet " +
+      "(EVM, Solana, or NEAR) and their NEAR Intents settlement ledger balance. " +
+      "Use this whenever the user asks about their balances, portfolio, or what they have available to trade.",
+    inputSchema: z.object({
+      address: z
+        .string()
+        .optional()
+        .describe(
+          "The wallet address to check. Defaults to the connected wallet if omitted.",
+        ),
+      chain: SupportedChainEnum.optional().describe(
+        "The blockchain network family (evm, solana, near). Defaults to the connected wallet chain.",
+      ),
+      networks: z
+        .array(SupportedNetworkEnum)
+        .optional()
+        .describe(
+          "Specific networks to query (e.g. ['arbitrum'], ['base', 'ethereum']). " +
+          "When the user asks for a single network like 'my arbitrum balances', pass ['arbitrum'].",
+        ),
+      category: z
+        .enum(["all", "stables", "dust", "native"])
+        .optional()
+        .describe(
+          "Filter by asset category: 'stables' for stablecoins (USDC, USDT, USDS, AUSD, DAI), " +
+          "'dust' for balances under $1, 'native' for gas tokens (ETH, SOL, NEAR).",
+        ),
+      symbol: z
+        .string()
+        .optional()
+        .describe("Specific token symbol to filter by (e.g. 'USDC', 'ETH')."),
+      includeZeroValue: z
+        .boolean()
+        .optional()
+        .describe(
+          "Whether to include zero-value or unpriced tokens. Defaults to false (hidden by default). " +
+          "Only set to true if the user explicitly asks to see zero-value tokens, unpriced assets, or fresh airdrops.",
+        ),
+      includeSettlementLedger: z
+        .boolean()
+        .optional()
+        .describe(
+          "Whether to include the NEAR Intents settlement ledger. Defaults to false when specific non-NEAR networks are queried, or true for general portfolio queries.",
+        ),
+    }),
+    execute: async ({
+      address,
+      chain,
+      networks,
+      category,
+      symbol,
+      includeZeroValue,
+      includeSettlementLedger,
+    }) => {
+      const targetAddress = address || context?.activeAddress;
+      const targetChain = chain || context?.activeChain;
+
+      if (!targetAddress || !targetChain) {
+        return {
+          connected: false,
+          message:
+            "No wallet is connected. Please connect a wallet to view balances.",
+        };
+      }
+
+      const shouldIncludeLedger =
+        includeSettlementLedger ??
+        (networks && networks.length > 0 && !networks.includes("near")
+          ? false
+          : true);
+
+      const [walletRes, intentsRes] = await Promise.all([
+        getConnectedWalletBalances(targetChain, targetAddress, {
+          networks: networks as SupportedNetwork[] | undefined,
+          category: category as AssetCategory | undefined,
+          symbol,
+          includeZeroValue,
+        }),
+        shouldIncludeLedger
+          ? getIntentsLedgerBalances(
+              targetAddress,
+              context?.authToken ?? undefined,
+            )
+          : Promise.resolve(null),
+      ]);
+
+      const allBalances: TokenBalance[] = [...walletRes.balances];
+      if (intentsRes?.balances) {
+        const allowZero = Boolean(includeZeroValue || symbol);
+        for (const b of intentsRes.balances) {
+          if (isPhishingToken(b.symbol, b.symbol)) continue;
+          if (!allowZero && (!b.valueUsd || b.valueUsd <= 0)) continue;
+
+          allBalances.push({
+            chain: "near",
+            network: "intents",
+            symbol: b.symbol,
+            name: b.symbol,
+            contractAddress: b.assetId,
+            decimals: b.decimals,
+            balance: b.balance,
+            rawBalance: b.rawBalance,
+            priceUsd: b.priceUsd,
+            valueUsd: b.valueUsd,
+          });
         }
       }
-    }
-    return { assets: picked };
-  },
-});
+
+      const singleNetwork =
+        networks && networks.length === 1 ? networks[0] : null;
+
+      let suggestedTitle = "Portfolio balances";
+      if (singleNetwork) {
+        suggestedTitle = `${singleNetwork.charAt(0).toUpperCase() + singleNetwork.slice(1)} balances`;
+      } else if (category === "stables") {
+        suggestedTitle = "Stablecoin balances";
+      } else if (category === "dust") {
+        suggestedTitle = "Dust balances";
+      } else if (targetChain === "evm" && (!networks || networks.length > 1)) {
+        suggestedTitle = "EVM balances";
+      }
+
+      // If user specifically asked for one network (like Arbitrum) or a specific category (like Stables),
+      // we disable the filter bar since they are already focused on that view.
+      const showFilters = !singleNetwork && (!category || category === "all");
+      const initialFilter = category && category !== "all" ? category : "all";
+      const totalCombinedUsd =
+        (walletRes.totalValueUsd ?? 0) + (intentsRes?.totalValueUsd ?? 0);
+
+      const groups = groupBalancesByNetwork(allBalances);
+
+      return {
+        connected: true,
+        address: targetAddress,
+        chain: targetChain,
+        title: suggestedTitle,
+        showFilters,
+        initialFilter,
+        singleNetwork,
+        category: category ?? "all",
+        totalValueUsd: Number.parseFloat(totalCombinedUsd.toFixed(2)),
+        groups,
+        wallet: {
+          balances: walletRes.balances.slice(0, 30),
+          totalValueUsd: walletRes.totalValueUsd,
+          error: walletRes.error,
+        },
+        settlementLedger: intentsRes
+          ? {
+              balances: intentsRes.balances,
+              totalValueUsd: intentsRes.totalValueUsd,
+              status: intentsRes.status,
+              message: intentsRes.message,
+            }
+          : null,
+      };
+    },
+  });
+}
+
+export const getWalletBalances = createWalletBalancesTool();
 
 export const getSupportedAssets = tool({
   description:
@@ -68,7 +213,9 @@ export const getSupportedAssets = tool({
     symbol: z
       .string()
       .optional()
-      .describe("Ticker to look for, such as USDC or NEAR. Leave empty for everything."),
+      .describe(
+        "Ticker to look for, such as USDC or NEAR. Leave empty for everything.",
+      ),
   }),
   execute: async ({ symbol }) => {
     const assets = await getAssets();
@@ -96,11 +243,18 @@ export const getQuote = tool({
   inputSchema: z.object({
     fromAssetId: z.string().describe("Full asset id of the token being sold"),
     toAssetId: z.string().describe("Full asset id of the token being bought"),
-    amount: z.string().describe("Amount in the smallest unit of the token being sold"),
+    amount: z
+      .string()
+      .describe("Amount in the smallest unit of the token being sold"),
     recipient: z.string().describe("The account that receives the output"),
     slippageBps: z.number().int().min(1).max(300).default(100),
   }),
   execute: async ({ fromAssetId, toAssetId, amount, recipient, slippageBps }) => {
+    if (fromAssetId === toAssetId) {
+      throw new Error(
+        "The two assets are the same. Pick two different asset ids before pricing.",
+      );
+    }
     const { quote } = await import("@/lib/intents/service");
     const q = await quote({
       fromAssetId,
@@ -115,6 +269,7 @@ export const getQuote = tool({
       amountIn: q.amountInFormatted,
       amountOut: q.amountOutFormatted,
       minAmountOut: q.minAmountOut,
+      minAmountOutRaw: q.minAmountOutRaw,
       rate: q.rate,
       amountOutUsd: q.amountOutUsd,
       expiresAt: q.expiresAt,
@@ -127,7 +282,9 @@ export const getTransactionStatus = tool({
     "Check the authoritative status of a trade that has already been submitted. " +
     "Returns whether it settled, is still processing, was refunded, or failed.",
   inputSchema: z.object({
-    depositAddress: z.string().describe("The deposit address the trade was given"),
+    depositAddress: z
+      .string()
+      .describe("The deposit address the trade was given"),
   }),
   execute: async ({ depositAddress }) => {
     const { getStatus } = await import("@/lib/intents/service");
@@ -144,8 +301,6 @@ export const getTransactionHistory = tool({
   description: "List the trades this account has already made.",
   inputSchema: z.object({}),
   execute: async () => {
-    // The history endpoint needs a user session, which is not wired yet.
-    // Returning an honest empty result beats inventing trades.
     return { trades: [], note: "History is not available yet." };
   },
 });
@@ -158,18 +313,24 @@ export const prepareSwap = tool({
   inputSchema: z.object({
     fromAssetId: z.string().describe("Full asset id of the token being sold"),
     toAssetId: z.string().describe("Full asset id of the token being bought"),
-    amount: z.string().describe("Amount in the smallest unit of the token being sold"),
+    amount: z
+      .string()
+      .describe("Amount in the smallest unit of the token being sold"),
     recipient: z.string().describe("The account that receives the output"),
     slippageBps: z.number().int().min(1).max(300).default(100),
   }),
   // No execute function. The tool waits for the user to approve it.
 });
 
-export const tools = {
-  get_wallet_balances: getWalletBalances,
-  get_supported_assets: getSupportedAssets,
-  get_quote: getQuote,
-  get_transaction_status: getTransactionStatus,
-  get_transaction_history: getTransactionHistory,
-  prepare_swap: prepareSwap,
-};
+export function createTools(context?: ToolContext) {
+  return {
+    get_wallet_balances: createWalletBalancesTool(context),
+    get_supported_assets: getSupportedAssets,
+    get_quote: getQuote,
+    get_transaction_status: getTransactionStatus,
+    get_transaction_history: getTransactionHistory,
+    prepare_swap: prepareSwap,
+  };
+}
+
+export const tools = createTools();
