@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import LoadingState from "@/components/primitives/LoadingState";
 import type { ToolStep } from "@/components/primitives/ToolChips";
 import { Markdown } from "@/components/app/Markdown";
 
@@ -11,21 +10,18 @@ import { Markdown } from "@/components/app/Markdown";
  *
  * A pill is one phase of the turn:
  *   thinking pill — one reasoning segment. It streams
- *     expanded, collapses by itself once the prose passes
- *     three visual lines, and settles into
- *     "Thought for n seconds" with the segment's own
- *     duration, frozen at the moment its phase ended.
- *   tools pill — one run of consecutive tool calls. It stays
- *     expanded for up to two steps and collapses beyond that.
+ *     expanded and settles into "Thought for n seconds"
+ *     with the segment's own duration, frozen at the moment
+ *     its phase ended.
+ *   tools pill — one run of consecutive tool calls. It streams
+ *     expanded and settles into "Ran n tools".
  *   text — the reply itself, streamed as markdown through
  *     `components/app/Markdown`, which settles unterminated
  *     syntax while the reply is still arriving.
  *
  * The global rule: only the last phase of an in-flight turn
- * is active. The moment a newer pill arrives — a tool call
- * interrupting the thinking, new thinking after the tool
- * result, or the turn simply ending — every earlier pill
- * collapses to its settled chip and keeps what it reached.
+ * is active. A settled pill stays collapsed so a revisited
+ * chat reads as its answers, not its old runs.
  * Opening a pill by hand wins over the automatic rules.
  * ───────────────────────────────────────────────────────── */
 
@@ -33,9 +29,6 @@ export type ActivityBlock =
   | { kind: "reasoning"; text: string }
   | { kind: "tools"; steps: ToolStep[] }
   | { kind: "text"; text: string };
-
-/* 12.5px text at leading 1.625 — the reasoning pill's line height */
-const REASONING_LINE = 12.5 * 1.625;
 
 const ICONS: Record<string, ReactNode> = {
   think: <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z" />,
@@ -149,25 +142,18 @@ function ThinkingPill({
   durationMs: number | null;
 }) {
   const [manual, setManual] = useState<boolean | null>(null);
-  const [long, setLong] = useState(false);
   const [ruleHeight, setRuleHeight] = useState(0);
   const bodyRef = useRef<HTMLDivElement>(null);
-
-  /* collapse the pill once the prose passes three visual lines;
-   * measured while it is expanded, so the skip guard matters */
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (!el || long) return;
-    const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || REASONING_LINE;
-    if (Math.ceil(el.clientHeight / lineHeight) > 3) setLong(true);
-  }, [text, long]);
 
   /* the vertical rule beside the prose, redrawn as it grows */
   useEffect(() => {
     if (bodyRef.current) setRuleHeight(Math.max(0, bodyRef.current.offsetHeight - 2));
-  }, [text, manual, settled, long]);
+  }, [text, manual, settled]);
 
-  const open = manual ?? (!settled && !long);
+  /* Hold it open while the phase streams: flipping shut mid-stream
+   * while stuck to the bottom bounces the thread. Once settled the
+   * run is done, so the pill stays collapsed and the answer leads. */
+  const open = manual ?? !settled;
 
   return (
     <div className="w-full max-w-95">
@@ -213,8 +199,11 @@ function ToolsPill({
 }) {
   const [manual, setManual] = useState<boolean | null>(null);
   const [openRows, setOpenRows] = useState<Set<number>>(new Set());
-  /* two tool calls read at a glance; more than that collapses the run */
-  const open = manual ?? (!settled && steps.length <= 2);
+  /* Hold it open while the run streams: flipping shut the moment a new
+   * step lands collapses the pill mid-turn, and stuck to the bottom that
+   * reads as the thread bouncing up then down. Once settled the run is
+   * done, so the pill stays collapsed and the answer leads. */
+  const open = manual ?? !settled;
   const count = steps.length;
 
   const toggleRow = (index: number) =>
