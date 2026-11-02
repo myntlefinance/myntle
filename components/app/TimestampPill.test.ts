@@ -26,7 +26,7 @@ describe("Timestamp clustering & formatting", () => {
 
   describe("computeMessageClusters (< 5 chats merge rule)", () => {
     it("returns empty array when no messages", () => {
-      expect(computeMessageClusters([], (m: any) => m.time)).toEqual([]);
+      expect(computeMessageClusters<{ time: number }>([], (m) => m.time)).toEqual([]);
     });
 
     it("shows timestamp on first message", () => {

@@ -106,13 +106,13 @@ export function typeToFocusComposer(
   const next = prev.slice(0, start) + char + prev.slice(end);
   const nextPos = start + char.length;
 
-  const nativeSetter =
+  const proto =
     typeof window !== "undefined"
-      ? Object.getOwnPropertyDescriptor(
-          window.HTMLTextAreaElement?.prototype,
-          "value",
-        )?.set
+      ? window.HTMLTextAreaElement?.prototype
       : undefined;
+  const nativeSetter = proto
+    ? Object.getOwnPropertyDescriptor(proto, "value")?.set
+    : undefined;
 
   if (nativeSetter) {
     nativeSetter.call(input, next);

@@ -39,7 +39,7 @@ export function useSolanaWallets() {
     // The registry is imported inside the effect rather than at the top of
     // the file, because the package reaches for `indexedDB` when it is
     // evaluated and that does not exist on the server.
-    let cleanups: (() => void)[] = [];
+    const cleanups: (() => void)[] = [];
     let cancelled = false;
 
     void import("@wallet-standard/app").then(({ getWallets }) => {

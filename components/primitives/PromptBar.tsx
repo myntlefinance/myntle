@@ -554,7 +554,6 @@ export default function PromptBar({
       shaderRef.current?.destroy();
       shaderRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const celebrate = () => {
@@ -600,11 +599,15 @@ export default function PromptBar({
     if (step.modelOpen !== undefined) setModelOpen(step.modelOpen);
     if (step.model) {
       const next = models.find((m) => m.key === step.model);
-      if (next) selectModel(next);
+      if (next) {
+        setModel(next);
+        setModelOpen(false);
+        onModelChange?.(next.key);
+      }
     }
     const t = setTimeout(() => setAutoStep((s) => s + 1), step.hold);
     return () => clearTimeout(t);
-  }, [auto, autoStep]);
+  }, [auto, autoStep, models, onModelChange]);
 
   /* dictation resolves after a beat, like a real transcript landing */
   useEffect(() => {

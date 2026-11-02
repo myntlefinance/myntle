@@ -8,6 +8,24 @@ import {
 } from "./composer";
 
 describe("composer utilities", () => {
+  /**
+   * `navigator` is a getter-only own property on globalThis in Node 22, so a
+   * plain assignment throws. Defining it as configurable lets the test put it
+   * back by deleting the own property.
+   */
+  function setGlobal(key: "window" | "navigator", value: unknown): void {
+    Object.defineProperty(globalThis, key, {
+      value,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  function restoreGlobals(): void {
+    delete (globalThis as { window?: unknown }).window;
+    delete (globalThis as { navigator?: unknown }).navigator;
+  }
+
   describe("isDesktop", () => {
     it("returns false during SSR when window or navigator is undefined", () => {
       expect(isDesktop(undefined, undefined)).toBe(false);
@@ -165,14 +183,15 @@ describe("composer utilities", () => {
       expect(isDesktop(mockWin, mockNav)).toBe(true);
 
       // Verify that focusComposer dispatches when executed in desktop context
-      (globalThis as unknown as { window: Window }).window = mockWin;
-      (globalThis as unknown as { navigator: Navigator }).navigator = mockNav;
+      setGlobal("window", mockWin);
+      setGlobal("navigator", mockNav);
 
-      focusComposer({ clearDraft: true });
-      expect(dispatchEvent).toHaveBeenCalled();
-
-      delete (globalThis as unknown as { window?: Window }).window;
-      delete (globalThis as unknown as { navigator?: Navigator }).navigator;
+      try {
+        focusComposer({ clearDraft: true });
+        expect(dispatchEvent).toHaveBeenCalled();
+      } finally {
+        restoreGlobals();
+      }
     });
 
     it("does not dispatch event on mobile to prevent virtual keyboard popup", () => {
@@ -190,14 +209,15 @@ describe("composer utilities", () => {
 
       expect(isDesktop(mockWin, mockNav)).toBe(false);
 
-      (globalThis as unknown as { window: Window }).window = mockWin;
-      (globalThis as unknown as { navigator: Navigator }).navigator = mockNav;
+      setGlobal("window", mockWin);
+      setGlobal("navigator", mockNav);
 
-      focusComposer({ clearDraft: true });
-      expect(dispatchEvent).not.toHaveBeenCalled();
-
-      delete (globalThis as unknown as { window?: Window }).window;
-      delete (globalThis as unknown as { navigator?: Navigator }).navigator;
+      try {
+        focusComposer({ clearDraft: true });
+        expect(dispatchEvent).not.toHaveBeenCalled();
+      } finally {
+        restoreGlobals();
+      }
     });
   });
 

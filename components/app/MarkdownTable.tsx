@@ -535,15 +535,6 @@ export function MarkdownTable({
     [headers, sortedRows, displayTitle],
   );
 
-  // Fallback if empty table
-  if (headers.length === 0 && rows.length === 0) {
-    return (
-      <div className={cn("records-shell my-3", className)}>
-        <table className="records-table !min-w-0 w-full">{children}</table>
-      </div>
-    );
-  }
-
   // Analyze content dimensions across all rows to determine proportional weights and minimum readable widths
   const columnMetrics = useMemo(() => {
     return headers.map((col, colIdx) => {
@@ -605,6 +596,16 @@ export function MarkdownTable({
       };
     });
   }, [headers, columnWidths, columnMetrics]);
+
+  // Fallback if empty table. This must stay below every hook: an early return
+  // above a useMemo changes the hook order when the table gains rows.
+  if (headers.length === 0 && rows.length === 0) {
+    return (
+      <div className={cn("records-shell my-3", className)}>
+        <table className="records-table !min-w-0 w-full">{children}</table>
+      </div>
+    );
+  }
 
   // Render the core table grid
   const renderTableGrid = (isFull: boolean) => (
