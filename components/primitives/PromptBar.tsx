@@ -3,6 +3,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createShader, playSweep, accentChain, ACCENTS } from "glimm";
+import {
+  isDesktop,
+  isEditableElement,
+  FOCUS_COMPOSER_EVENT,
+  type FocusComposerDetail,
+  typeToFocusComposer,
+} from "@/lib/composer";
 
 /* The built-in "prism" palette is only cyan→indigo→magenta, so a sweep
  * reads as blue/purple. Build a true full-spectrum rainbow instead. */
@@ -240,6 +247,7 @@ export default function PromptBar({
   onSend,
   models = MODELS,
   onModelChange,
+  autoFocus = false,
 }: {
   variant?: string;
   /** the self-running walkthrough; turn off when embedding in a real surface */
@@ -252,6 +260,8 @@ export default function PromptBar({
   models?: PromptModel[];
   /** called with the model id whenever the selection changes */
   onModelChange?: (modelId: string) => void;
+  /** activates input on mount on desktop only */
+  autoFocus?: boolean;
 }) {
   const pill = variant === "Pill";
   const [draft, setDraft] = useState("");
@@ -338,6 +348,108 @@ export default function PromptBar({
     return () => {
       for (const a of attachmentsRef.current) URL.revokeObjectURL(a.url);
     };
+  }, []);
+
+  /* desktop auto-focus on mount */
+  useEffect(() => {
+    if (!autoFocus || !isDesktop()) return;
+    const timer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 40);
+    return () => clearTimeout(timer);
+  }, [autoFocus]);
+
+  /* listen for programmatic composer activation (e.g. user clicked "New chat") */
+  useEffect(() => {
+    const handleFocus = (event: Event) => {
+      if (!isDesktop()) return;
+      const custom = event as CustomEvent<FocusComposerDetail>;
+      if (custom.detail?.clearDraft) {
+        setDraft("");
+      }
+      inputRef.current?.focus();
+    };
+
+    window.addEventListener(FOCUS_COMPOSER_EVENT, handleFocus);
+    return () => window.removeEventListener(FOCUS_COMPOSER_EVENT, handleFocus);
+  }, []);
+
+  /* Global "begins typing something" listener on desktop.
+   * If focus is lost or the user begins typing anywhere on desktop,
+   * capture the keystroke, focus the composer textarea, and ensure
+   * nothing is dropped or double-entered. */
+  useEffect(() => {
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if (!isDesktop()) return;
+      if (event.defaultPrevented) return;
+
+      // Handle paste shortcut (Cmd+V or Ctrl+V) when outside editable inputs
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "v" &&
+        !event.altKey
+      ) {
+        const activeEl = document.activeElement;
+        const target = event.target as Element | null;
+        if (isEditableElement(target) || isEditableElement(activeEl)) return;
+        if (
+          document.querySelector(
+            '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-model-menu], [aria-modal="true"]',
+          )
+        ) {
+          return;
+        }
+        inputRef.current?.focus();
+        return;
+      }
+
+      // Disallow any meta/ctrl/alt combinations (e.g. Cmd+R, Alt+Tab, Ctrl+C)
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      // Only single printable characters (letters, numbers, punctuation)
+      if (event.key.length !== 1) return;
+
+      // Ignore IME / composition states
+      if (event.isComposing || event.key === "Process" || event.key === "Dead") return;
+
+      // Check if user is already typing in an editable field
+      const target = event.target as Element | null;
+      const activeEl = document.activeElement;
+      if (isEditableElement(target) || isEditableElement(activeEl)) return;
+
+      // Check if an open modal, alertdialog, or menu is active
+      if (
+        document.querySelector(
+          '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-model-menu], [aria-modal="true"]',
+        )
+      ) {
+        return;
+      }
+
+      // If Space is pressed while a button is focused, allow the button click
+      if (
+        event.key === " " &&
+        (activeEl?.tagName === "BUTTON" || target?.tagName === "BUTTON")
+      ) {
+        return;
+      }
+
+      const input = inputRef.current;
+      if (!input) return;
+
+      // Prevent default to avoid scrolling on Space or double-character entry
+      event.preventDefault();
+      setAuto(false);
+
+      typeToFocusComposer(input, event.key, (nextVal) => {
+        setDraft(nextVal);
+        setDismissed(false);
+        setPlusOpen(false);
+      });
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
   }, []);
 
   const token = dismissed ? null : parseToken(draft);
@@ -569,12 +681,20 @@ export default function PromptBar({
   const canSend = draft.trim().length > 0 || attachments.length > 0;
   const send = () => {
     if (!canSend) return;
-    onSend?.(draft.trim(), attachments);
+    const text = draft.trim();
+    onSend?.(text, attachments);
     for (const a of attachments) URL.revokeObjectURL(a.url);
     setDraft("");
     setAttachments([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
     closeMenus();
+
+    if (isDesktop()) {
+      inputRef.current?.focus();
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
+    }
   };
 
   return (
@@ -907,6 +1027,13 @@ export default function PromptBar({
             type="button"
             aria-label="Send"
             disabled={!canSend}
+            onMouseDown={(event) => {
+              if (isDesktop()) {
+                // Prevent mouse down on the send button from stealing focus
+                // from the textarea, which would blur to body once disabled.
+                event.preventDefault();
+              }
+            }}
             onClick={send}
             className={`flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-200 enabled:active:scale-[0.94] ${
               pill ? "rounded-full" : "rounded-[8px]"

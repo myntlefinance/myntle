@@ -19,6 +19,7 @@ import {
   IconUserPlus,
   IconX,
 } from "@tabler/icons-react";
+import { focusComposer } from "@/lib/composer";
 
 /* ─────────────────────────────────────────────────────────
  * SIDEBAR NAV
@@ -445,6 +446,14 @@ export default function SidebarNav({
     const next = renameDraft.replace(/\s+/g, " ").trim();
     setRenamingId(null);
     if (!next) return;
+    const current = (
+      displayedRecents.find((item) => item.id === id)?.label ??
+      recents.find((item) => item.id === id)?.label ??
+      ""
+    )
+      .replace(/\s+/g, " ")
+      .trim();
+    if (current && next === current) return;
     onRenameChat?.(id, next);
   };
 
@@ -549,6 +558,7 @@ export default function SidebarNav({
               if (activeTitle === undefined) setDemoActiveTitle(null);
               selectNav("chats");
               onNewChat?.();
+              focusComposer({ clearDraft: true });
             }}
           />
           {NAV_ITEMS.map((item) => (
@@ -880,7 +890,13 @@ export default function SidebarNav({
             {footer ?? (
               <button
                 type="button"
-                onClick={onFooterClick ?? onNewChat}
+                onClick={() => {
+                  if (onFooterClick) onFooterClick();
+                  else {
+                    onNewChat?.();
+                    focusComposer({ clearDraft: true });
+                  }
+                }}
                 className="flex h-8 w-full items-center justify-center gap-1.5 rounded-control bg-hover-2 text-[12.5px] font-medium text-ink transition-[background-color,transform] duration-150 hover:bg-line-strong active:scale-[0.98]"
               >
                 {footerIcon}

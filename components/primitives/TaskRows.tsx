@@ -25,26 +25,56 @@ function useTick(intervals: number[]) {
   return tick;
 }
 
-function SpinnerRing({ active, children }: { active?: boolean; children?: React.ReactNode }) {
-  const size = 24, stroke = 2;
+export function SpinnerRing({
+  active,
+  size = 24,
+  stroke = 2,
+  children,
+}: {
+  active?: boolean;
+  size?: number;
+  stroke?: number;
+  children?: React.ReactNode;
+}) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   return (
-    <span className="relative inline-flex shrink-0 items-center justify-center" style={{ width: size, height: size }}>
+    <span
+      className="relative inline-flex shrink-0 items-center justify-center"
+      style={{ width: size, height: size }}
+    >
       <svg
-        width={size} height={size} className="absolute inset-0"
+        width={size}
+        height={size}
+        className="absolute inset-0"
         style={active ? { animation: "spin 1.1s linear infinite" } : undefined}
       >
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--line)" strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="var(--line)"
+          strokeWidth={stroke}
+        />
         {active && (
           <circle
-            cx={size / 2} cy={size / 2} r={r} fill="none"
-            stroke="var(--ink-3)" strokeWidth={stroke} strokeLinecap="round"
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            stroke="var(--ink-3)"
+            strokeWidth={stroke}
+            strokeLinecap="round"
             strokeDasharray={`${c * 0.28} ${c * 0.72}`}
           />
         )}
       </svg>
-      <span className="relative text-[10.5px] font-semibold tabular-nums text-ink">{children}</span>
+      {children ? (
+        <span className="relative text-[10.5px] font-semibold tabular-nums text-ink">
+          {children}
+        </span>
+      ) : null}
     </span>
   );
 }
