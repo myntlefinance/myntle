@@ -9,8 +9,9 @@ import {
   type UIMessage,
 } from "ai";
 import { nearAI, DEFAULT_MODEL } from "@/lib/ai/provider";
-import { SYSTEM_INSTRUCTIONS } from "@/lib/ai/prompts";
+import { buildSystemPrompt } from "@/lib/ai/prompts";
 import { createTools } from "@/lib/ai/tools";
+import { pruneHistoricalToolOutputs } from "@/lib/ai/messages/prune";
 import { getSession, SESSION_COOKIE } from "@/lib/auth/session";
 import {
   ensureConversation,
@@ -110,18 +111,17 @@ export async function POST(req: Request) {
   const activeAddress = session?.address || walletAddress || null;
   const activeChain = session?.chain || walletChain || null;
 
-  const baseInstructions =
-    process.env.SYSTEM_INSTRUCTIONS || SYSTEM_INSTRUCTIONS;
-  const walletContext = activeAddress
-    ? `\n\nConnected wallet:\n- Address: ${activeAddress}${activeChain ? `\n- Chain: ${activeChain}` : ""}\nUse this address as the default recipient when calling get_quote and prepare_swap unless the user specifies a different recipient.`
-    : `\n\nConnected wallet: None (no wallet connected).`;
+  const instructions = buildSystemPrompt({
+    activeAddress,
+    activeChain,
+  });
 
-  const instructions = `${baseInstructions}${walletContext}`;
+  const prunedMessages = pruneHistoricalToolOutputs(messages);
 
   const result = streamText({
     model: nearAI(model ?? DEFAULT_MODEL),
     instructions,
-    messages: await convertToModelMessages(messages),
+    messages: await convertToModelMessages(prunedMessages),
     tools: createTools({ activeAddress, activeChain }),
     // The default is one step, which would end the assistant after a single
     // tool round and leave a question like "swap some and tell me my balance"
