@@ -36,7 +36,23 @@ export function createPrepareSwapTool(_context?: ToolContext) {
       recipient: z.string().describe("The account that receives the output"),
       slippageBps: z.number().int().min(1).max(300).default(100),
     }),
-    // No execute function. The tool waits for the user to approve it.
+    // No settlement happens here. The interface signs the exact parameters
+    // and POSTs them to /api/approve, which starts the durable workflow.
+    // This only acknowledges the decision so the turn — and every later
+    // turn that resends this history — carries a tool result. Without it,
+    // an approved call has no output, the provider rejects the resubmitted
+    // history, and every following message fails.
+    execute: async (input) => {
+      return {
+        acknowledged: true,
+        action: input.action,
+        fromAssetId: input.fromAssetId,
+        toAssetId: input.toAssetId,
+        amount: input.amount,
+        recipient: input.recipient,
+        note: "The user approved this trade in the interface. Settlement is handled separately by the application. Do not call prepare_swap again for it unless the user asks for a new trade.",
+      };
+    },
   });
 }
 

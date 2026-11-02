@@ -1,6 +1,65 @@
 import type { UIMessage } from "ai";
 
 /**
+ * Backfills outputs for approved swaps that never produced one.
+ *
+ * Approvals granted before prepare_swap had an execute function were saved
+ * as approval-responded with no output. Resubmitting that history gives the
+ * provider a tool call with no result, which it rejects — so every message
+ * after an approval fails. This attaches a synthetic acknowledgement to
+ * those historical parts so old conversations recover.
+ *
+ * Only parts before the last user message are touched. Anything at or after
+ * it belongs to the live approval flow and must reach streamText unchanged.
+ */
+export function backfillApprovedSwapOutputs(
+  messages: UIMessage[],
+): UIMessage[] {
+  const lastUserIndex = messages.reduce(
+    (last, m, i) => (m.role === "user" ? i : last),
+    -1,
+  );
+  if (lastUserIndex <= 0) return messages;
+
+  return messages.map((msg, idx) => {
+    if (msg.role !== "assistant" || idx >= lastUserIndex) return msg;
+    if (!Array.isArray(msg.parts)) return msg;
+
+    let changed = false;
+    const parts = msg.parts.map((part) => {
+      const p = part as Record<string, unknown>;
+      const type = typeof p.type === "string" ? p.type : "";
+      const isSwap =
+        type === "tool-prepare_swap" ||
+        (type === "dynamic-tool" &&
+          (p as { toolName?: unknown }).toolName === "prepare_swap");
+      if (!isSwap || p.state !== "approval-responded") return part;
+      const approval = p.approval as { approved?: unknown } | undefined;
+      if (approval?.approved !== true || "output" in p) return part;
+
+      changed = true;
+      const input = (p.input ?? {}) as Record<string, unknown>;
+      return {
+        ...p,
+        state: "output-available",
+        output: {
+          acknowledged: true,
+          action: input.action,
+          fromAssetId: input.fromAssetId,
+          toAssetId: input.toAssetId,
+          amount: input.amount,
+          recipient: input.recipient,
+          note: "The user approved this trade in the interface. Settlement is handled separately by the application.",
+        },
+      };
+    });
+
+    if (!changed) return msg;
+    return { ...msg, parts: parts as typeof msg.parts };
+  });
+}
+
+/**
  * Prunes bulky historical tool results before messages are converted and sent to the LLM.
  *
  * Why this is essential for scalability:

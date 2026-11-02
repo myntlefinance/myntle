@@ -11,7 +11,10 @@ import {
 import { nearAI, DEFAULT_MODEL } from "@/lib/ai/provider";
 import { buildSystemPrompt } from "@/lib/ai/prompts";
 import { createTools } from "@/lib/ai/tools";
-import { pruneHistoricalToolOutputs } from "@/lib/ai/messages/prune";
+import {
+  backfillApprovedSwapOutputs,
+  pruneHistoricalToolOutputs,
+} from "@/lib/ai/messages/prune";
 import { getSession, SESSION_COOKIE } from "@/lib/auth/session";
 import {
   ensureConversation,
@@ -46,7 +49,7 @@ export async function POST(req: Request) {
     return Response.json(
       {
         error:
-          "The assistant is not configured. Add NEAR_AI_CLOUD_API_KEY to .env.local.",
+          "The assistant is not configured. Please check environment keys and try again.",
       },
       { status: 503 },
     );
@@ -56,7 +59,7 @@ export async function POST(req: Request) {
     return Response.json(
       {
         error:
-          "Approvals are not configured. Set TOOL_APPROVAL_SECRET to a non-empty value in .env.local and restart.",
+          "Approvals are not configured. Please check necessary permissions and try again.",
       },
       { status: 503 },
     );
@@ -116,7 +119,9 @@ export async function POST(req: Request) {
     activeChain,
   });
 
-  const prunedMessages = pruneHistoricalToolOutputs(messages);
+  const prunedMessages = backfillApprovedSwapOutputs(
+    pruneHistoricalToolOutputs(messages),
+  );
 
   const result = streamText({
     model: nearAI(model ?? DEFAULT_MODEL),
