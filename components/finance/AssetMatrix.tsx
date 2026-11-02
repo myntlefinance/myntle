@@ -14,12 +14,6 @@ import {
   IconCoin,
   IconCoins,
 } from "@tabler/icons-react";
-import {
-  CHAIN_ICONS,
-  detectTechData,
-  truncateTechData,
-  type SupportedChain,
-} from "@/components/atoms/TechDataChip";
 import { NetworkIcon } from "./NetworkIcon";
 import { TokenAvatar } from "./TokenAvatar";
 import {
@@ -45,11 +39,6 @@ export type AssetMatrixProps = {
   balances?: TokenBalance[];
   /** Title shown in the header bar. Defaults to "Portfolio balances" */
   title?: string;
-  /** Address the figures belong to, shown under the title when the card is
-   * not the connected wallet's own holdings. */
-  address?: string;
-  /** Chain family of that address, for its icon and truncation. */
-  chain?: SupportedChain;
   /** Total value in USD displayed in header bar. If omitted, computed from all items */
   totalValueUsd?: number;
   /** Whether to show the filter bar (All / Stables / Dust chips). Defaults to true */
@@ -74,14 +63,6 @@ const FILTER_CONFIG: Array<{
   { id: "dust", label: "Dust", icon: IconCoins },
 ];
 
-/** The chain family of an attribution address, when the tool did not say. */
-function addressChain(
-  address: string,
-  chain?: SupportedChain,
-): SupportedChain | undefined {
-  return chain ?? detectTechData(address)?.chain;
-}
-
 /**
  * Configurable multi-network asset matrix component.
  * Renders verified holdings with native vector icons, clean numeric hierarchy,
@@ -91,8 +72,6 @@ export function AssetMatrix({
   groups: rawGroups,
   balances,
   title = "Portfolio balances",
-  address,
-  chain,
   totalValueUsd: explicitTotal,
   showFilters = true,
   initialFilter = "all",
@@ -152,8 +131,6 @@ export function AssetMatrix({
   // A single row already states its own chain and its own value, so the header
   // and the filter bar would only repeat it. Binary: both or neither.
   const hasMultipleItems = itemCount > 1;
-  const resolvedChain = address ? addressChain(address, chain) : undefined;
-  const addressIcon = resolvedChain ? CHAIN_ICONS[resolvedChain] : undefined;
 
   // Active items based on selected filter
   const visibleGroups = useMemo(() => {
@@ -242,30 +219,6 @@ export function AssetMatrix({
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
               })}
-            </span>
-          </div>
-        )}
-
-        {/* Attribution: an address the reader did not connect. */}
-        {address && (
-          <div className="flex items-center gap-2 border-b border-[var(--grid-line)] px-3 sm:px-4 py-2">
-            {addressIcon && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={addressIcon}
-                alt=""
-                aria-hidden="true"
-                className="size-4 shrink-0 select-none object-contain"
-              />
-            )}
-            <span
-              className="min-w-0 truncate text-[12.5px] leading-tight text-ink-2"
-              title={address}
-            >
-              <span className="sm:hidden">
-                {truncateTechData(address, resolvedChain)}
-              </span>
-              <span className="hidden sm:inline">{address}</span>
             </span>
           </div>
         )}

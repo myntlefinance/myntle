@@ -36,6 +36,9 @@ describe("MarkdownCode integration with Beautiful UI CodeBlock", () => {
     // The chip reads in the body typeface, with no copy glyph to compete with the address
     expect(html).not.toContain("font-mono");
     expect(html).not.toContain("<svg");
+    // It inherits the reply's size and weight instead of setting its own,
+    // so the address never looks thinner than the sentence around it
+    expect(html).not.toContain("text-[12px]");
   });
 
   it("renders fenced code block with Beautiful UI CodeBlock and language pill", () => {

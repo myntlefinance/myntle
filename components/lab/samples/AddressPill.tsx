@@ -3,11 +3,8 @@
 import AssetMatrix, {
   type AssetGroup,
 } from "@/components/finance/AssetMatrix";
-import {
-  CHAIN_ICONS,
-  truncateTechData,
-  type SupportedChain,
-} from "@/components/atoms/TechDataChip";
+import AddressPill from "@/components/finance/AddressPill";
+import type { SupportedChain } from "@/components/atoms/TechDataChip";
 
 type AddressCase = {
   chain: SupportedChain;
@@ -86,7 +83,7 @@ const CASES: Record<string, AddressCase> = {
  * file. It sits above the card with a gap, aligned to the card's left edge,
  * so it labels the table without becoming part of it.
  */
-export default function AddressPill({
+export default function AddressPillSample({
   variant = "EVM",
 }: {
   variant?: string;
@@ -96,24 +93,7 @@ export default function AddressPill({
   return (
     <div className="w-fit max-w-full rounded-[12px] bg-page p-4">
       <div className="flex w-[392px] max-w-full flex-col items-start gap-2">
-        <span
-          className="inline-flex h-7 max-w-full items-center gap-1 rounded-full bg-inset px-2 text-[12px] font-medium text-ink-2 shadow-btn"
-          title={sample.address}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={CHAIN_ICONS[sample.chain]}
-            alt=""
-            aria-hidden="true"
-            className="size-3.5 shrink-0 object-contain"
-          />
-          <span className="min-w-0 truncate">
-            <span className="sm:hidden">
-              {truncateTechData(sample.address, sample.chain)}
-            </span>
-            <span className="hidden sm:inline">{sample.address}</span>
-          </span>
-        </span>
+        <AddressPill address={sample.address} chain={sample.chain} />
 
         <AssetMatrix
           groups={sample.groups}

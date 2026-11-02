@@ -43,7 +43,7 @@ export const CHAIN_ICONS: Record<SupportedChain, string> = {
  * Standard design tokens for TechDataChip aligned to standard Tailwind scale.
  */
 export const CHIP_LAYOUT_TOKENS = {
-  paddingY: "py-1",
+  paddingY: "py-0.5",
   paddingX: "px-1.5",
   gap: "gap-1.5",
   iconSize: "size-3.5",
@@ -309,7 +309,7 @@ export function TechDataChip({
         onBlur={handleBlur}
         aria-label={`Copy ${data.label ?? "address"}: ${data.raw}`}
         className={cn(
-          "mx-1 inline-flex max-w-full cursor-pointer select-none items-center rounded-[6px] bg-field text-left align-middle text-[12px] leading-tight text-ink transition-[background-color,transform] duration-75 hover:bg-hover active:scale-[0.99]",
+          "mx-1 inline-flex max-w-full cursor-pointer select-none items-center rounded-[6px] bg-field text-left align-middle leading-tight text-ink transition-[background-color,transform] duration-75 hover:bg-hover active:scale-[0.99]",
           CHIP_LAYOUT_TOKENS.paddingY,
           CHIP_LAYOUT_TOKENS.paddingX,
           CHIP_LAYOUT_TOKENS.gap,
@@ -335,7 +335,7 @@ export function TechDataChip({
         )}
 
         {/* Responsive value: middle-truncated on mobile (<640px), full on desktop */}
-        <span className="min-w-0 text-[12px]">
+        <span className="min-w-0">
           {canTruncate ? (
             <>
               <span className="sm:hidden">{truncated}</span>

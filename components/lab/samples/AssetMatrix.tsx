@@ -198,10 +198,6 @@ export default function AssetMatrixLabSample({
     <FinanceAssetMatrix
       groups={groups}
       title={title}
-      address={
-        isSingle ? "0x8d8A6BF26964aF9D7eEd9e03E53415D37aA96045" : undefined
-      }
-      chain={isSingle ? "evm" : undefined}
       showFilters={!isPositions && !isSingle}
     />
   );

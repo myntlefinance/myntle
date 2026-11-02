@@ -124,23 +124,4 @@ describe("AssetMatrix", () => {
     expect(html).toContain("Arbitrum balances");
     expect(html).toContain("$1,250.00");
   });
-
-  it("names the address as plain text with its chain mark", () => {
-    const html = ReactDOMServer.renderToStaticMarkup(
-      <AssetMatrix
-        title="Ethereum balances"
-        groups={MOCK_GROUPS}
-        address="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
-      />,
-    );
-
-    expect(html).toContain("0xd8dA…6045");
-    // No pill and no copy affordance; the full value is the hover title.
-    expect(html).not.toContain("border-accent/40");
-    expect(html).not.toContain("Click to copy");
-    expect(html).toContain(
-      'title="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"',
-    );
-    expect(html).toContain('src="/wallets/evm.webp"');
-  });
 });
