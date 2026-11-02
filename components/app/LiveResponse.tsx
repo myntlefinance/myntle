@@ -9,12 +9,16 @@ import type { ToolDetailLine, ToolStep } from "@/components/primitives/ToolChips
 import { AgentMessageActions } from "@/components/app/MessageActions";
 import SentenceTradeCard from "@/components/finance/SentenceTradeCard";
 import AssetMatrix from "@/components/finance/AssetMatrix";
+import AddressPill from "@/components/finance/AddressPill";
 import type { SupportedChain } from "@/components/atoms/TechDataChip";
 import type { AssetGroup } from "@/lib/wallet/balances";
 import {
   approvalDecision,
+  approvalIdOf,
   collectApprovalAssetIds,
   collectApprovals,
+  settlementCardState,
+  type SettlementSnapshot,
 } from "@/components/app/approvals";
 import { useResolvedAssetMeta } from "@/components/app/useAssetMeta";
 import { useWallet } from "@/lib/wallet/registry";
@@ -59,11 +63,14 @@ export function LiveResponse({
   status,
   onRegenerate,
   onApproval,
+  settlements,
 }: {
   message: UIMessage;
   status: "submitted" | "streaming" | "ready" | "error";
   onRegenerate?: () => void;
   onApproval?: (approvalId: string, approved: boolean) => void;
+  /** Database settlements by tool approval id; terminal ones paint at once. */
+  settlements?: Record<string, SettlementSnapshot>;
 }) {
   const approvalIds = useMemo(
     () => collectApprovalAssetIds(message.parts),
@@ -83,23 +90,39 @@ export function LiveResponse({
     for (const [id, meta] of inTurn) merged.set(id, meta);
     return merged;
   }, [message.parts, resolvedMeta]);
+  // Blocks preserve stream order: consecutive reasoning deltas merge, a tool
+  // part extends the current tools run, text merges until interrupted.
+  // blockOrder records the part index each block started at so landmark
+  // cards can interleave at their own tool index rather than trailing at
+  // the end. A card never splits a sentence: it mounts between two text
+  // blocks at a tool boundary.
   const blocks: ActivityBlock[] = [];
-  for (const part of message.parts) {
+  const blockOrder: number[] = [];
+  message.parts.forEach((part, index) => {
     if (part.type === "reasoning") {
       const last = blocks[blocks.length - 1];
       if (last?.kind === "reasoning") last.text += part.text;
-      else blocks.push({ kind: "reasoning", text: part.text });
+      else {
+        blocks.push({ kind: "reasoning", text: part.text });
+        blockOrder.push(index);
+      }
     } else if (isToolPart(part.type)) {
       const step = describeTool(toolNameOf(part), part, symbols);
       const last = blocks[blocks.length - 1];
       if (last?.kind === "tools") last.steps.push(step);
-      else blocks.push({ kind: "tools", steps: [step] });
+      else {
+        blocks.push({ kind: "tools", steps: [step] });
+        blockOrder.push(index);
+      }
     } else if (part.type === "text" && part.text.length > 0) {
       const last = blocks[blocks.length - 1];
       if (last?.kind === "text") last.text += part.text;
-      else blocks.push({ kind: "text", text: part.text });
+      else {
+        blocks.push({ kind: "text", text: part.text });
+        blockOrder.push(index);
+      }
     }
-  }
+  });
 
   const running = status === "submitted" || status === "streaming";
   const replyText = blocks
@@ -107,10 +130,11 @@ export function LiveResponse({
     .map((b) => b.text)
     .join("\n\n");
 
-  /* Approval cards ride below the activity pills: one per prepare_swap part
-   * that is waiting on the user. A decided part keeps its card so the
-   * settlement stays visible; the card polls /api/tx itself. The connected
-   * address lets the mapper name self-returns correctly. */
+  /* Landmark cards interleave at their own tool index: one balance card per
+   * balance output, one approval card per prepare_swap decision. A decided
+   * part keeps its card so the settlement stays visible; the card polls
+   * /api/tx itself. The connected address lets the mapper name self-returns
+   * correctly. Setup tools (asset lookup, quote) stay as pill rows only. */
   const { account } = useWallet();
   const approvals = collectApprovals(
     message,
@@ -119,10 +143,140 @@ export function LiveResponse({
     account?.address ?? null,
   );
   const balanceViews = collectBalanceViews(message.parts);
+  const balanceByCallId = new Map(balanceViews.map((b) => [b.callId, b]));
+  const approvalById = new Map(approvals.map((a) => [a.approvalId, a]));
 
-  if (blocks.length === 0 && approvals.length === 0 && balanceViews.length === 0) {
+  // Part index each card was born at. The pill row for the same call keeps
+  // its place in the trace; the card mounts directly after it.
+  const balanceOrder = new Map<string, number>();
+  const approvalOrder = new Map<string, number>();
+  message.parts.forEach((part, index) => {
+    const p = part as ToolPart;
+    if (!isToolPart(part.type)) return;
+    if (
+      (toolNameOf(p) === "get_wallet_balances" ||
+        toolNameOf(p) === "getWalletBalances") &&
+      typeof p.toolCallId === "string" &&
+      balanceByCallId.has(p.toolCallId)
+    ) {
+      balanceOrder.set(p.toolCallId, index);
+    }
+    if (toolNameOf(p) === "prepare_swap") {
+      const id = approvalIdOf(p);
+      if (id && approvalById.has(id) && !approvalOrder.has(id)) {
+        approvalOrder.set(id, index);
+      }
+    }
+  });
+
+  type TimelineNode =
+    | { kind: "blocks"; blocks: ActivityBlock[]; order: number }
+    | { kind: "balance"; callId: string; order: number }
+    | { kind: "approval"; approvalId: string; order: number };
+
+  const timeline: TimelineNode[] = [];
+  blocks.forEach((block, i) => {
+    timeline.push({ kind: "blocks", blocks: [block], order: blockOrder[i] });
+  });
+  for (const [callId, order] of balanceOrder) {
+    timeline.push({ kind: "balance", callId, order });
+  }
+  for (const [approvalId, order] of approvalOrder) {
+    timeline.push({ kind: "approval", approvalId, order });
+  }
+  // Pills first on ties: the trace row for a call reads before its card.
+  timeline.sort((a, b) => a.order - b.order);
+
+  function renderBalance(callId: string) {
+    const b = balanceByCallId.get(callId);
+    if (!b) return null;
+    return (
+      <div
+        key={b.callId}
+        className="mt-3"
+        style={{
+          animation: "fade-up 400ms cubic-bezier(0.23,1,0.32,1) both",
+        }}
+      >
+        <div className="flex flex-col items-start gap-2">
+          {b.address ? (
+            <AddressPill address={b.address} chain={b.chain} />
+          ) : null}
+          <AssetMatrix
+            title={b.title}
+            groups={b.groups}
+            totalValueUsd={b.totalValueUsd}
+            showFilters={b.showFilters}
+            initialFilter={b.initialFilter}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  function renderApproval(approvalId: string) {
+    const a = approvalById.get(approvalId);
+    if (!a) return null;
+    // The database row wins when it exists: terminal states paint at
+    // once with no polling, and live rows poll the right record even on
+    // a device whose localStorage never saw the approval.
+    const snap = settlements?.[a.approvalId] ?? null;
+    const snapState = snap ? settlementCardState(snap.state) : null;
+    return (
+      <div key={a.approvalId} className="mt-2.5">
+        <SentenceTradeCard
+          action={a.action}
+          approvalId={a.approvalId}
+          fromSymbol={a.fromSymbol}
+          fromChain={a.fromChain}
+          toSymbol={a.toSymbol}
+          toChain={a.toChain}
+          amountIn={a.amountIn}
+          amountInUsd={a.amountInUsd}
+          amountOut={a.amountOut}
+          amountOutUsd={a.amountOutUsd}
+          minAmountOut={a.minAmountOut}
+          minAmountOutRaw={a.minAmountOutRaw}
+          fromPriceUsd={a.fromPriceUsd}
+          toPriceUsd={a.toPriceUsd}
+          recipient={a.recipient}
+          expiresAt={a.expiresAt}
+          requestedAt={a.requestedAt}
+          slippageBps={a.slippageBps}
+          state={
+            a.status === "denied"
+              ? "denied"
+              : (snapState ??
+                (a.status === "approved" ? "submitted" : "awaiting"))
+          }
+          transactionId={snap?.transactionId ?? a.transactionId}
+          depositAddress={snap?.depositAddress ?? a.depositAddress ?? undefined}
+          initialExplorerUrls={snap?.explorerUrls}
+          swapInput={a.status === "awaiting" ? a.swapInput : undefined}
+          disabled={a.status !== "awaiting"}
+          onApprove={(tx) => {
+            if (tx) rememberApprovalTx(a.approvalId, tx);
+            onApproval?.(a.approvalId, true);
+          }}
+          onDeny={() => {
+            rememberApprovalDenied(a.approvalId);
+            onApproval?.(a.approvalId, false);
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (timeline.length === 0) {
     return null;
   }
+
+  // Only the last activity group is live. Earlier groups settle the moment
+  // a card mounts after them, so the thread never shows two spinners.
+  const lastGroupIndex = timeline.reduce(
+    (last, node, i) => (node.kind === "blocks" ? i : last),
+    -1,
+  );
 
   return (
     <article
@@ -132,69 +286,19 @@ export function LiveResponse({
        * slide it up, reading as a downward jump of the settled loader. */
       style={{ animation: "fade-in 300ms ease-out both" }}
     >
-      <ActivityPills blocks={blocks} running={running} />
-      {!running &&
-        balanceViews.map((b) => (
-          <div
-            key={b.callId}
-            className="mt-3"
-            style={{
-              animation: "fade-up 400ms cubic-bezier(0.23,1,0.32,1) both",
-            }}
-          >
-            <AssetMatrix
-              title={b.title}
-              address={b.address}
-              chain={b.chain}
-              groups={b.groups}
-              totalValueUsd={b.totalValueUsd}
-              showFilters={b.showFilters}
-              initialFilter={b.initialFilter}
+      <div className="flex flex-col gap-4">
+        {timeline.map((node, i) => {
+          if (node.kind === "balance") return renderBalance(node.callId);
+          if (node.kind === "approval") return renderApproval(node.approvalId);
+          return (
+            <ActivityPills
+              key={`blocks-${node.order}-${i}`}
+              blocks={node.blocks}
+              running={running && i === lastGroupIndex}
             />
-          </div>
-        ))}
-      {approvals.map((a) => (
-        <div key={a.approvalId} className="mt-2.5">
-          <SentenceTradeCard
-            action={a.action}
-            fromSymbol={a.fromSymbol}
-            fromChain={a.fromChain}
-            toSymbol={a.toSymbol}
-            toChain={a.toChain}
-            amountIn={a.amountIn}
-            amountInUsd={a.amountInUsd}
-            amountOut={a.amountOut}
-            amountOutUsd={a.amountOutUsd}
-            minAmountOut={a.minAmountOut}
-            minAmountOutRaw={a.minAmountOutRaw}
-            fromPriceUsd={a.fromPriceUsd}
-            toPriceUsd={a.toPriceUsd}
-            recipient={a.recipient}
-            expiresAt={a.expiresAt}
-            requestedAt={a.requestedAt}
-            slippageBps={a.slippageBps}
-            state={
-              a.status === "denied"
-                ? "denied"
-                : a.status === "approved"
-                  ? "submitted"
-                  : "awaiting"
-            }
-            transactionId={a.transactionId}
-            depositAddress={a.depositAddress}
-            swapInput={a.status === "awaiting" ? a.swapInput : undefined}
-            disabled={a.status !== "awaiting"}
-            onApprove={(tx) => {
-              if (tx) rememberApprovalTx(a.approvalId, tx);
-              onApproval?.(a.approvalId, true);
-            }}
-            onDeny={() => {
-              rememberApprovalDenied(a.approvalId);
-              onApproval?.(a.approvalId, false);
-            }}
-          />
-        </div>
-      ))}
+          );
+        })}
+      </div>
       {replyText && !running && (
         <div className="mt-2.5">
           <AgentMessageActions text={replyText} onRegenerate={onRegenerate} />
