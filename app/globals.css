@@ -199,6 +199,9 @@ html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  /* Reserve viewport gutter so the page never reflows when a scrollbar
+   * appears or disappears. Overlay scrollbars report zero and ignore this. */
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -325,6 +328,15 @@ a {
 }
 .component-nav-scroll::-webkit-scrollbar {
   display: none; /* WebKit */
+}
+
+/* Live thread: when the stream starts, useChat appends the assistant message
+ * before the first chunk lands, and LiveResponse renders nothing for it yet.
+ * Without this the empty wrapper is still a flex item, so the thread's gap-8
+ * doubles above the inflight loader and shoves it down 32px until the first
+ * tool call renders — the loader looks like it jumps. */
+[data-role="assistant"]:empty {
+  display: none;
 }
 
 @media (min-width: 64rem) {

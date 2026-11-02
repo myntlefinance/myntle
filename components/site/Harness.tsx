@@ -1085,12 +1085,11 @@ export default function Harness({
     return () => ro.disconnect();
   }, [active]);
 
-  /* The composer floats outside the scroll container, so when the thread
-   * overflows a classic scrollbar steals layout width from the message
-   * column but not from the composer and the two edges drift apart by
-   * exactly the scrollbar width. Mirroring that width as a right margin
-   * on the composer locks both edges together in every state; overlay
-   * scrollbars report zero and change nothing. */
+  /* The composer floats outside the scroll container, so it needs the same
+   * right inset the thread reserves via `[scrollbar-gutter:stable]`.
+   * Mirroring the measured gutter width as a right margin on the composer
+   * locks both edges together in every state; overlay scrollbars report
+   * zero and change nothing. */
   const [scrollGutter, setScrollGutter] = useState(0);
   useEffect(() => {
     if (!active) {
@@ -1346,7 +1345,7 @@ export default function Harness({
       )}
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-slim"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-slim [scrollbar-gutter:stable]"
       >
         {loadingThread ? (
           <ThreadSkeleton bottomPad={composerH + 16} narrow={narrow} />
@@ -1640,7 +1639,7 @@ export default function Harness({
                 {active || loadingThread ? (
                   renderThread(false)
                 ) : (
-                  <div className="min-h-0 flex-1 overflow-y-auto scroll-slim">
+                  <div className="min-h-0 flex-1 overflow-y-auto scroll-slim [scrollbar-gutter:stable]">
                     <EmptyState onSend={send} shuffle={() => setOffset((current) => (current + 3) % SUGGESTION_POOL.length)} offset={offset} live={live} models={models} onModelChange={onModelChange} />
                   </div>
                 )}
