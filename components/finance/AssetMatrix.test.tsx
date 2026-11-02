@@ -74,7 +74,7 @@ describe("AssetMatrix", () => {
     expect(html).toContain("500.00");
   });
 
-  it("auto-groups flat balances array by network", () => {
+  it("omits the header and filters when the card holds a single row", () => {
     const balances: TokenBalance[] = [
       {
         chain: "evm",
@@ -95,13 +95,52 @@ describe("AssetMatrix", () => {
       <AssetMatrix
         title="Wallet balances"
         balances={balances}
-        showFilters={false}
+        showFilters={true}
       />,
     );
 
-    expect(html).toContain("Wallet balances");
+    // One row already names its chain and its value, so no header repeats it.
+    expect(html).not.toContain("Wallet balances");
+    expect(html).not.toContain(">All<");
     expect(html).toContain("Arbitrum");
     expect(html).toContain("USDC");
     expect(html).toContain("$100.00");
+  });
+
+  it("keeps the header and total when one network holds several rows", () => {
+    const groups: AssetGroup[] = [
+      {
+        id: "arb",
+        name: "Arbitrum",
+        icon: "arb",
+        items: [MOCK_GROUPS[0].items[0], MOCK_GROUPS[0].items[1]],
+      },
+    ];
+
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <AssetMatrix title="Arbitrum balances" groups={groups} />,
+    );
+
+    expect(html).toContain("Arbitrum balances");
+    expect(html).toContain("$1,250.00");
+  });
+
+  it("names the address as plain text with its chain mark", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <AssetMatrix
+        title="Ethereum balances"
+        groups={MOCK_GROUPS}
+        address="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+      />,
+    );
+
+    expect(html).toContain("0xd8dA…6045");
+    // No pill and no copy affordance; the full value is the hover title.
+    expect(html).not.toContain("border-accent/40");
+    expect(html).not.toContain("Click to copy");
+    expect(html).toContain(
+      'title="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"',
+    );
+    expect(html).toContain('src="/wallets/evm.webp"');
   });
 });

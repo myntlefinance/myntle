@@ -158,20 +158,51 @@ const POSITION_GROUPS: AssetGroup[] = [
   },
 ];
 
+const SINGLE_GROUPS: AssetGroup[] = [
+  {
+    id: "ethereum",
+    name: "Ethereum",
+    icon: "eth",
+    items: [
+      {
+        id: "eth-eth",
+        symbol: "ETH",
+        name: "Ethereum",
+        amount: "5.777859",
+        valueUsd: 13440.74,
+        category: "native",
+      },
+    ],
+  },
+];
+
 export default function AssetMatrixLabSample({
   variant = "Balances",
 }: {
   variant?: string;
 }) {
   const isPositions = variant.toLowerCase().includes("position");
-  const groups = isPositions ? POSITION_GROUPS : SAMPLE_GROUPS;
-  const title = isPositions ? "Positions & Perps" : "Portfolio balances";
+  const isSingle = variant.toLowerCase().includes("single");
+  const groups = isPositions
+    ? POSITION_GROUPS
+    : isSingle
+      ? SINGLE_GROUPS
+      : SAMPLE_GROUPS;
+  const title = isPositions
+    ? "Positions & Perps"
+    : isSingle
+      ? "Ethereum balances"
+      : "Portfolio balances";
 
   return (
     <FinanceAssetMatrix
       groups={groups}
       title={title}
-      showFilters={!isPositions}
+      address={
+        isSingle ? "0x8d8A6BF26964aF9D7eEd9e03E53415D37aA96045" : undefined
+      }
+      chain={isSingle ? "evm" : undefined}
+      showFilters={!isPositions && !isSingle}
     />
   );
 }

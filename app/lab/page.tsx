@@ -7,6 +7,14 @@ import ActionButton from "@/components/lab/samples/ActionButton";
 import QuotePreview from "@/components/lab/samples/QuotePreview";
 import ApprovalRow from "@/components/lab/samples/ApprovalRow";
 import AssetMatrix from "@/components/lab/samples/AssetMatrix";
+import AddressPill from "@/components/lab/samples/AddressPill";
+import DepositCard from "@/components/lab/samples/DepositCard";
+import SwapCard from "@/components/lab/samples/SwapCard";
+import BridgeCard from "@/components/lab/samples/BridgeCard";
+import WithdrawCard from "@/components/lab/samples/WithdrawCard";
+import LimitOrderCard from "@/components/lab/samples/LimitOrderCard";
+import PlainEnglishCard from "@/components/lab/samples/PlainEnglishCard";
+import ChipHoverCards from "@/components/lab/samples/ChipHoverCards";
 
 export const metadata = {
   title: "Lab",
@@ -26,6 +34,14 @@ const PROTOTYPES: Record<string, React.ComponentType<{ variant?: string }>> = {
   "quote-preview": QuotePreview,
   "approval-row": ApprovalRow,
   "asset-matrix": AssetMatrix,
+  "address-pill": AddressPill,
+  "deposit-card": DepositCard,
+  "swap-card": SwapCard,
+  "bridge-card": BridgeCard,
+  "withdraw-card": WithdrawCard,
+  "limit-order-card": LimitOrderCard,
+  "plain-english-card": PlainEnglishCard,
+  "chip-hover-cards": ChipHoverCards,
 };
 
 /** Sources are read at build time so each frame can offer its own file. */

@@ -14,6 +14,12 @@ import {
   IconCoin,
   IconCoins,
 } from "@tabler/icons-react";
+import {
+  CHAIN_ICONS,
+  detectTechData,
+  truncateTechData,
+  type SupportedChain,
+} from "@/components/atoms/TechDataChip";
 import { NetworkIcon } from "./NetworkIcon";
 import { TokenAvatar } from "./TokenAvatar";
 import {
@@ -39,6 +45,11 @@ export type AssetMatrixProps = {
   balances?: TokenBalance[];
   /** Title shown in the header bar. Defaults to "Portfolio balances" */
   title?: string;
+  /** Address the figures belong to, shown under the title when the card is
+   * not the connected wallet's own holdings. */
+  address?: string;
+  /** Chain family of that address, for its icon and truncation. */
+  chain?: SupportedChain;
   /** Total value in USD displayed in header bar. If omitted, computed from all items */
   totalValueUsd?: number;
   /** Whether to show the filter bar (All / Stables / Dust chips). Defaults to true */
@@ -63,6 +74,14 @@ const FILTER_CONFIG: Array<{
   { id: "dust", label: "Dust", icon: IconCoins },
 ];
 
+/** The chain family of an attribution address, when the tool did not say. */
+function addressChain(
+  address: string,
+  chain?: SupportedChain,
+): SupportedChain | undefined {
+  return chain ?? detectTechData(address)?.chain;
+}
+
 /**
  * Configurable multi-network asset matrix component.
  * Renders verified holdings with native vector icons, clean numeric hierarchy,
@@ -72,6 +91,8 @@ export function AssetMatrix({
   groups: rawGroups,
   balances,
   title = "Portfolio balances",
+  address,
+  chain,
   totalValueUsd: explicitTotal,
   showFilters = true,
   initialFilter = "all",
@@ -93,7 +114,7 @@ export function AssetMatrix({
   }, [rawGroups, balances]);
 
   // Overall counts and persistent portfolio total across all categories
-  const { totalPortfolioUsd, filterCounts } = useMemo(() => {
+  const { totalPortfolioUsd, filterCounts, itemCount } = useMemo(() => {
     let sum = 0;
     let allCount = 0;
     let stablesCount = 0;
@@ -124,8 +145,15 @@ export function AssetMatrix({
         stables: stablesCount,
         dust: dustCount,
       },
+      itemCount: allCount,
     };
   }, [groups, explicitTotal]);
+
+  // A single row already states its own chain and its own value, so the header
+  // and the filter bar would only repeat it. Binary: both or neither.
+  const hasMultipleItems = itemCount > 1;
+  const resolvedChain = address ? addressChain(address, chain) : undefined;
+  const addressIcon = resolvedChain ? CHAIN_ICONS[resolvedChain] : undefined;
 
   // Active items based on selected filter
   const visibleGroups = useMemo(() => {
@@ -194,30 +222,56 @@ export function AssetMatrix({
     <div className={`w-full max-w-[392px] sm:w-[392px] ${className}`}>
       <div className="overflow-hidden rounded-[14px] border border-[var(--grid-line)] bg-surface shadow-xs">
         {/* Header Bar */}
-        <div className="flex items-center justify-between border-b border-[var(--grid-line)] bg-surface px-3 sm:px-4 py-2.5 select-none">
-          <div className="flex items-center gap-2 min-w-0">
-            <IconWallet
-              size={15}
-              stroke={1.5}
-              className="text-ink-3 shrink-0"
-              aria-hidden="true"
-            />
-            <span className="text-[13px] font-medium text-ink truncate">
-              {title}
+        {hasMultipleItems && (
+          <div className="flex items-center justify-between border-b border-[var(--grid-line)] bg-surface px-3 sm:px-4 py-2.5 select-none">
+            <div className="flex items-center gap-2 min-w-0">
+              <IconWallet
+                size={15}
+                stroke={1.5}
+                className="text-ink-3 shrink-0"
+                aria-hidden="true"
+              />
+              <span className="text-[13px] font-medium text-ink truncate">
+                {title}
+              </span>
+            </div>
+
+            {/* Persistent Total Value */}
+            <span className="text-[14px] font-semibold tabular-nums text-ink shrink-0 pl-2">
+              ${totalPortfolioUsd.toLocaleString(undefined, {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}
             </span>
           </div>
+        )}
 
-          {/* Persistent Total Value */}
-          <span className="text-[14px] font-semibold tabular-nums text-ink shrink-0 pl-2">
-            ${totalPortfolioUsd.toLocaleString(undefined, {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}
-          </span>
-        </div>
+        {/* Attribution: an address the reader did not connect. */}
+        {address && (
+          <div className="flex items-center gap-2 border-b border-[var(--grid-line)] px-3 sm:px-4 py-2">
+            {addressIcon && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={addressIcon}
+                alt=""
+                aria-hidden="true"
+                className="size-4 shrink-0 select-none object-contain"
+              />
+            )}
+            <span
+              className="min-w-0 truncate text-[12.5px] leading-tight text-ink-2"
+              title={address}
+            >
+              <span className="sm:hidden">
+                {truncateTechData(address, resolvedChain)}
+              </span>
+              <span className="hidden sm:inline">{address}</span>
+            </span>
+          </div>
+        )}
 
         {/* Filter Chips Bar (Configurable) */}
-        {showFilters && (
+        {showFilters && hasMultipleItems && (
           <div className="flex items-center gap-1.5 p-2 bg-hover-1/10 border-b border-[var(--grid-line)] select-none">
             {FILTER_CONFIG.map((f) => {
               const active = activeFilter === f.id;

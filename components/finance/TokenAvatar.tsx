@@ -122,7 +122,10 @@ export function TokenAvatar({
   const [remoteFailed, setRemoteFailed] = useState(false);
   const sym = symbol.toUpperCase();
   const label = name || symbol;
-  const badgeSize = Math.max(10, Math.round(size * 0.39));
+  const badgeSize = Math.max(7, Math.round(size * 0.39));
+  // The ring separating badge from token thins out with small badges so the
+  // stroke never eats the glyph; large avatars keep the wider ring.
+  const badgeRing = badgeSize < 10 ? "ring-1" : "ring-2";
   const monogram = sym.length <= 4 ? sym.slice(0, 3) : sym.slice(0, 2);
 
   // 1. Direct inline SVG lookup for curated / uploaded tokens (instant, zero rasterization)
@@ -180,7 +183,9 @@ export function TokenAvatar({
 
       {/* Overlapping network badge at bottom-right corner */}
       {networkBadge && (
-        <div className="absolute -bottom-0.5 -right-0.5 flex items-center justify-center rounded-full ring-2 ring-surface">
+        <div
+          className={`absolute -bottom-0.5 -right-0.5 flex items-center justify-center rounded-full ${badgeRing} ring-surface`}
+        >
           <NetworkIcon network={networkBadge} size={badgeSize} />
         </div>
       )}
