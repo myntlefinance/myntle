@@ -14,6 +14,17 @@ export type ConnectedWallet = {
   /** The address on the chain the wallet belongs to. */
   address: string;
   /**
+   * The wallet app name for display (MetaMask, Phantom…), when the adapter
+   * knows it. Absent on bare reconnects, where the address reads instead.
+   */
+  walletName?: string;
+  /**
+   * The wallet brand mark for display, when the adapter knows it. Served
+   * inside an <img> tag only, which cannot execute script, and always with
+   * the generic glyph as the error fallback.
+   */
+  walletIcon?: string;
+  /**
    * The account the verifier knows this wallet as.
    *
    * This is not the address. An Ed25519 key produces a sixty-four character

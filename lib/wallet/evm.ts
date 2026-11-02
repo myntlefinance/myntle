@@ -13,7 +13,7 @@ import { fromHex, type ConnectedWallet } from "./types";
  * about the key has to travel.
  */
 export function useEvmWallet() {
-  const { address, isConnected } = useAccount();
+  const { address, connector, isConnected } = useAccount();
   const { connectAsync, connectors, isPending } = useConnect();
   const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
@@ -26,8 +26,10 @@ export function useEvmWallet() {
       address,
       signerId: address,
       publicKey: "",
+      walletName: connector?.name,
+      walletIcon: connector?.icon,
     };
-  }, [address]);
+  }, [address, connector]);
 
   const sign = useCallback(
     async (payload: Uint8Array): Promise<Uint8Array> => {

@@ -63,6 +63,9 @@ export async function saveUIMessage(
   const sb = getSupabaseAdmin();
   const clientMsgId = message.id?.trim() || generateId();
   message.id = clientMsgId;
+  // The same id dedupes retries, but newer content always wins: the
+  // paused-turn snapshot (approval requested) must give way to the decided
+  // update, or reloads resurrect dead approval buttons.
   const { error } = await sb.from("messages").upsert(
     {
       conversation_id: conversationId,
@@ -70,7 +73,7 @@ export async function saveUIMessage(
       parts: message.parts as unknown as object,
       client_msg_id: clientMsgId,
     },
-    { onConflict: "conversation_id,client_msg_id", ignoreDuplicates: true },
+    { onConflict: "conversation_id,client_msg_id", ignoreDuplicates: false },
   );
   if (error) throw new Error("The message could not be saved.");
 }

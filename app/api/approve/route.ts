@@ -4,7 +4,10 @@ import { start } from "workflow/api";
 import { swapLifecycle } from "@/workflows/swap-lifecycle";
 import { requireSession } from "@/lib/auth/session";
 import { verifyWalletSignature } from "@/lib/auth/signatures";
-import { buildTradeApprovalMessage } from "@/lib/trade/approval-message";
+import {
+  buildTradeApprovalMessage,
+  isApprovalWindowValid,
+} from "@/lib/trade/approval-message";
 import { createExecutionQuote } from "@/lib/intents/service";
 import {
   createApproval,
@@ -22,6 +25,8 @@ const Body = z.object({
   /** Minimum accepted output, raw smallest-unit, as shown on the card. */
   minAmountOut: z.string().min(1),
   expiresAt: z.string().min(1),
+  /** Card birth. Approvals older than the window are rejected. */
+  requestedAt: z.string().min(1),
   /** The exact canonical message the wallet signed. */
   message: z.string().min(1).max(2000),
   signature: z.string().min(1).max(2000),
@@ -65,9 +70,22 @@ export async function POST(req: Request) {
     slippageBps: body.slippageBps,
     minAmountOut: body.minAmountOut,
     expiresAt: body.expiresAt,
+    requestedAt: body.requestedAt,
   });
   if (body.message !== expected) {
     return NextResponse.json({ error: "An error occurred." }, { status: 400 });
+  }
+
+  // The approval window is bound by the signature: a stale card cannot be
+  // approved late, even by its own owner replaying the request.
+  if (!isApprovalWindowValid(body.requestedAt)) {
+    return NextResponse.json(
+      {
+        error: "expired",
+        message: "That approval expired. Ask for a fresh quote.",
+      },
+      { status: 409 },
+    );
   }
 
   // A signature on an expired quote authorises nothing.

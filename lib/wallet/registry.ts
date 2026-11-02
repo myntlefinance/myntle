@@ -99,6 +99,8 @@ export function useWallet() {
           .map((b) => b.toString(16).padStart(2, "0"))
           .join(""),
         publicKey: `ed25519:${solana.connection.address}`,
+        walletName: solana.connection.wallet.name,
+        walletIcon: solana.connection.wallet.icon,
       };
     }
     if (near.account) return near.account;

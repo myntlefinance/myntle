@@ -19,7 +19,22 @@ export type TradeApprovalParams = {
   minAmountOut: string;
   /** ISO timestamp of the quoted price expiry. */
   expiresAt: string;
+  /** ISO timestamp of the approval request. Binds the signature to its window. */
+  requestedAt: string;
 };
+
+/** How long an approval stays actionable after the card appears. */
+export const APPROVAL_WINDOW_MS = 5 * 60_000;
+
+/** Whether an approval request is still inside its window. */
+export function isApprovalWindowValid(requestedAt: string, now = Date.now()): boolean {
+  const at = Date.parse(requestedAt);
+  if (Number.isNaN(at)) return false;
+  const age = now - at;
+  // A small future allowance covers client/server clock skew; anything older
+  // than the window is expired.
+  return age >= -60_000 && age <= APPROVAL_WINDOW_MS;
+}
 
 export function buildTradeApprovalMessage(p: TradeApprovalParams): string {
   return (
@@ -29,6 +44,7 @@ export function buildTradeApprovalMessage(p: TradeApprovalParams): string {
     `Receive at least: ${p.minAmountOut} ${p.toAssetId}\n` +
     `To: ${p.recipient}\n` +
     `Slippage: ${p.slippageBps} bps\n` +
-    `Quote expires: ${p.expiresAt}`
+    `Quote expires: ${p.expiresAt}\n` +
+    `Requested: ${p.requestedAt}`
   );
 }
