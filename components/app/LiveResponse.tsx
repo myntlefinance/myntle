@@ -6,6 +6,9 @@ import ActivityPills, {
 } from "@/components/app/ActivityPills";
 import type { ToolDetailLine, ToolStep } from "@/components/primitives/ToolChips";
 import { AgentMessageActions } from "@/components/app/MessageActions";
+import TradeCard from "@/components/finance/TradeCard";
+import AssetMatrix from "@/components/finance/AssetMatrix";
+import type { AssetGroup } from "@/lib/wallet/balances";
 
 /**
  * The assistant's live reply.
@@ -28,10 +31,12 @@ export function LiveResponse({
   message,
   status,
   onRegenerate,
+  onApproval,
 }: {
   message: UIMessage;
   status: "submitted" | "streaming" | "ready" | "error";
   onRegenerate?: () => void;
+  onApproval?: (approvalId: string, approved: boolean) => void;
 }) {
   /* Tickers ride along in the catalogue outputs, so a later quote in the
    * same turn can name its pair without another round trip. */
@@ -60,13 +65,65 @@ export function LiveResponse({
     .map((b) => b.text)
     .join("\n\n");
 
+  /* Approval cards ride below the activity pills: one per prepare_swap part
+   * that is waiting on the user. A decided part keeps its card so the
+   * settlement stays visible; the card polls /api/tx itself. */
+  const approvals = collectApprovals(message.parts, symbols);
+  const balanceViews = collectBalanceViews(message.parts);
+
+  if (blocks.length === 0 && approvals.length === 0 && balanceViews.length === 0) {
+    return null;
+  }
+
   return (
     <article
       className="min-w-0"
       style={{ animation: "fade-up 450ms cubic-bezier(0.23,1,0.32,1) both" }}
     >
       <ActivityPills blocks={blocks} running={running} />
-      {replyText && (
+      {!running &&
+        balanceViews.map((b) => (
+          <div
+            key={b.callId}
+            className="mt-3"
+            style={{
+              animation: "fade-up 400ms cubic-bezier(0.23,1,0.32,1) both",
+            }}
+          >
+            <AssetMatrix
+              title={b.title}
+              groups={b.groups}
+              totalValueUsd={b.totalValueUsd}
+              showFilters={b.showFilters}
+              initialFilter={b.initialFilter}
+            />
+          </div>
+        ))}
+      {approvals.map((a) => (
+        <div key={a.approvalId} className="mt-2.5">
+          <TradeCard
+            fromSymbol={a.fromSymbol}
+            toSymbol={a.toSymbol}
+            amountIn={a.amountIn}
+            amountOut={a.amountOut}
+            minAmountOut={a.minAmountOut}
+            minAmountOutRaw={a.minAmountOutRaw}
+            recipient={a.recipient}
+            expiresAt={a.expiresAt}
+            state={a.decided ? "submitted" : "awaiting"}
+            transactionId={a.transactionId}
+            depositAddress={a.depositAddress}
+            swapInput={a.decided ? undefined : a.swapInput}
+            disabled={a.decided}
+            onApprove={(tx) => {
+              if (tx) rememberApprovalTx(a.approvalId, tx);
+              onApproval?.(a.approvalId, true);
+            }}
+            onDeny={() => onApproval?.(a.approvalId, false)}
+          />
+        </div>
+      ))}
+      {replyText && !running && (
         <div className="mt-2.5">
           <AgentMessageActions text={replyText} onRegenerate={onRegenerate} />
         </div>
@@ -82,12 +139,156 @@ export function LiveResponse({
 
 type ToolPart = {
   type: string;
+  toolCallId?: unknown;
   toolName?: unknown;
   state?: unknown;
   input?: unknown;
   output?: unknown;
   errorText?: unknown;
+  approval?: unknown;
 };
+
+/* Settlement records keyed by approval, so a decided card keeps polling
+ * across re-renders. Lost on reload; the timeline endpoint covers that. */
+const decidedTx = new Map<string, { transactionId: string; depositAddress: string }>();
+
+type ApprovalInfo = {
+  approvalId: string;
+  decided: boolean;
+  fromSymbol: string;
+  toSymbol: string;
+  amountIn: string;
+  amountOut: string;
+  minAmountOut?: string;
+  minAmountOutRaw?: string;
+  recipient: string;
+  expiresAt?: string;
+  swapInput?: {
+    fromAssetId: string;
+    toAssetId: string;
+    amount: string;
+    recipient: string;
+    slippageBps?: number;
+  };
+  transactionId?: string;
+  depositAddress?: string;
+};
+
+function approvalIdOf(part: ToolPart): string | null {
+  if (typeof part.approval === "object" && part.approval !== null) {
+    const id = (part.approval as { id?: unknown }).id;
+    if (typeof id === "string" && id.length > 0) return id;
+  }
+  return null;
+}
+
+function collectApprovals(
+  parts: UIMessage["parts"],
+  symbols: Map<string, string>,
+): ApprovalInfo[] {
+  // The figures live on the latest get_quote output in the turn; the
+  // approval input carries the pair the user actually agreed to.
+  let quoted: Record<string, unknown> | null = null;
+  for (const part of parts) {
+    const p = part as ToolPart;
+    if (toolNameOf(p) === "get_quote" && stateOf(p).startsWith("output")) {
+      const out = outputOf(p);
+      if (out.amountIn && out.amountOut) quoted = out;
+    }
+  }
+
+  const out: ApprovalInfo[] = [];
+  for (const part of parts) {
+    const p = part as ToolPart;
+    if (toolNameOf(p) !== "prepare_swap") continue;
+    const state = stateOf(p);
+    if (state !== "approval-requested" && state !== "approval-responded") continue;
+    const approvalId = approvalIdOf(p);
+    if (!approvalId) continue;
+    const input = inputOf(p);
+    const fromAssetId = str(input.fromAssetId);
+    const toAssetId = str(input.toAssetId);
+    const amount = str(input.amount);
+    const recipient = str(input.recipient);
+    if (!fromAssetId || !toAssetId || !amount || !recipient) continue;
+    const decided = state === "approval-responded";
+    const stored = decidedTx.get(approvalId);
+    out.push({
+      approvalId,
+      decided,
+      fromSymbol: assetName(fromAssetId, symbols),
+      toSymbol: assetName(toAssetId, symbols),
+      amountIn: str(quoted?.amountIn) ?? amount,
+      amountOut: str(quoted?.amountOut) ?? "—",
+      minAmountOut: str(quoted?.minAmountOut) ?? undefined,
+      minAmountOutRaw: str(quoted?.minAmountOutRaw) ?? undefined,
+      recipient,
+      expiresAt: str(quoted?.expiresAt) ?? undefined,
+      swapInput: decided
+        ? undefined
+        : {
+            fromAssetId,
+            toAssetId,
+            amount,
+            recipient,
+            slippageBps:
+              typeof input.slippageBps === "number" ? input.slippageBps : 100,
+          },
+      transactionId: stored?.transactionId,
+      depositAddress: stored?.depositAddress,
+    });
+  }
+  return out;
+}
+
+type BalanceViewInfo = {
+  callId: string;
+  title: string;
+  showFilters: boolean;
+  initialFilter: "all" | "stables" | "dust";
+  totalValueUsd?: number;
+  groups: AssetGroup[];
+};
+
+function collectBalanceViews(parts: UIMessage["parts"]): BalanceViewInfo[] {
+  const views: BalanceViewInfo[] = [];
+
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i] as ToolPart;
+    if (!isToolPart(p.type)) continue;
+    const name = toolNameOf(p);
+    if (name !== "get_wallet_balances" && name !== "getWalletBalances") continue;
+
+    if (!stateOf(p).startsWith("output")) continue;
+    const out = outputOf(p);
+    if (!out.connected || !Array.isArray(out.groups) || out.groups.length === 0) continue;
+
+    const callId =
+      typeof p.toolCallId === "string" ? p.toolCallId : `balance-${i}`;
+
+    views.push({
+      callId,
+      title: typeof out.title === "string" ? out.title : "Portfolio balances",
+      showFilters: out.showFilters !== false,
+      initialFilter:
+        out.initialFilter === "stables" || out.initialFilter === "dust"
+          ? out.initialFilter
+          : "all",
+      totalValueUsd:
+        typeof out.totalValueUsd === "number" ? out.totalValueUsd : undefined,
+      groups: out.groups as AssetGroup[],
+    });
+  }
+
+  return views;
+}
+
+export function rememberApprovalTx(
+  approvalId: string,
+  tx: { transactionId: string; depositAddress: string },
+): void {
+  decidedTx.set(approvalId, tx);
+}
 
 function isToolPart(type: string): boolean {
   return type.startsWith("tool-") || type === "dynamic-tool";
@@ -317,6 +518,37 @@ function assetsRow(part: ToolPart): ToolStep {
 }
 
 function balancesRow(part: ToolPart): ToolStep {
+  const output = outputOf(part);
+  const wallet =
+    typeof output.wallet === "object" && output.wallet !== null
+      ? (output.wallet as { balances?: unknown[] })
+      : undefined;
+  const balances = Array.isArray(wallet?.balances)
+    ? (wallet.balances as Array<{
+        symbol?: string;
+        chain?: string;
+        balance?: string;
+        valueUsd?: number;
+      }>)
+    : [];
+
+  if (balances.length > 0) {
+    const lines: ToolDetailLine[] = balances.slice(0, 4).map((b) => ({
+      text: `${b.symbol ?? "TOKEN"} · ${b.balance ?? "0"} (${b.chain ?? ""})`,
+    }));
+    if (balances.length > 4) {
+      lines.push({ text: `+${balances.length - 4} more` });
+    }
+    return {
+      icon: "read",
+      label: "Read balances",
+      chip: `${balances.length} ${balances.length === 1 ? "token" : "tokens"}`,
+      mono: false,
+      detailMono: true,
+      detail: lines,
+    };
+  }
+
   const entries = catalogueEntries(part);
   return {
     icon: "read",

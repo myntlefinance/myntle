@@ -8,6 +8,7 @@ import Harness from "@/components/site/Harness";
 import { WalletButton } from "@/components/app/WalletButton";
 import { MODELS, DEFAULT_MODEL } from "@/lib/ai/provider";
 import { TITLE_MAX_CHARS } from "@/lib/ai/title";
+import { focusComposer } from "@/lib/composer";
 import { openWalletPicker } from "@/components/app/ConnectGate";
 import { useWallet } from "@/lib/wallet/registry";
 import { useQueryClient } from "@tanstack/react-query";
@@ -19,10 +20,13 @@ import {
 } from "@/components/app/threadQueries";
 import {
   clearThreadCache,
+  deleteCachedMessages,
   findThreadLabel,
+  getCachedMessages,
   messageCache,
   prefetchInflight,
   prefetchThread,
+  setCachedMessages,
   threadPagination,
   type ThreadItem,
   type TrashedItem,
@@ -39,11 +43,41 @@ export default function ChatView({
   const { data: threads = [] } = useThreads();
   const { data: trashed = [] } = useTrashed();
   const [model, setModel] = useState(DEFAULT_MODEL);
-  const { connected } = useWallet();
+  const { connected, account } = useWallet();
+  const accountRef = useRef(account);
+  accountRef.current = account;
   const router = useRouter();
   const [conversationId, setConversationId] = useState<string | null>(
     initialConversationId,
   );
+  const conversationIdRef = useRef<string | null>(conversationId);
+  conversationIdRef.current = conversationId;
+
+  const [title, setTitle] = useState<string | null>(() =>
+    findThreadLabel(initialConversationId ?? null),
+  );
+  const titleRef = useRef<string | null>(title);
+  titleRef.current = title;
+  const titleDirtyRef = useRef(false);
+  const titleReqRef = useRef(0);
+  const titlePromiseRef = useRef<Promise<void> | null>(null);
+
+  const [gated, setGated] = useState<GatedExchange[]>([]);
+  const gatedIdRef = useRef(0);
+  const pendingRef = useRef<string | null>(null);
+
+  const [loadingThread, setLoadingThread] = useState(() => {
+    if (!initialConversationId) return false;
+    const cached = getCachedMessages(initialConversationId);
+    return !cached || cached.length === 0;
+  });
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMoreOlder, setHasMoreOlder] = useState(() => {
+    if (!initialConversationId) return false;
+    return Boolean(threadPagination.get(initialConversationId)?.hasMore);
+  });
+  const lastLoadedConvRef = useRef<string | null>(null);
+  const routeSlugRef = useRef<string | null | undefined>(undefined);
 
   // Old ?c= links become /chat/<slug>.
   useEffect(() => {
@@ -56,18 +90,26 @@ export default function ChatView({
     }
   }, [initialConversationId, router]);
 
-  const { messages, sendMessage, setMessages, status, error, regenerate } = useChat({
+  const { messages, sendMessage, setMessages, status, error, regenerate, addToolApprovalResponse } = useChat({
     // Seed first paint from cache so a thread route never flashes the
     // composer. useChat only reads this once; later switches go through
-    // setMessages in the effects below.
+    // setMessages in switchConversation.
     messages: initialConversationId
-      ? (messageCache.get(initialConversationId) ?? [])
+      ? (getCachedMessages(initialConversationId) ?? [])
       : [],
     transport: new DefaultChatTransport({
       api: "/api/chat",
-      body: () => ({ model, conversationId, title }),
+      body: () => ({
+        model,
+        conversationId: conversationIdRef.current,
+        title: titleRef.current,
+        walletAddress: accountRef.current?.address,
+        walletChain: accountRef.current?.kind,
+      }),
     }),
   });
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   // Private chat route guard: an unauthenticated visitor cannot view a saved thread.
   useEffect(() => {
@@ -150,23 +192,97 @@ export default function ChatView({
     return () => clearTimeout(timer);
   }, [conversationId, messages.length, status, queryClient]);
 
+  const switchConversation = useCallback(
+    (targetId: string | null, pushHistory = true) => {
+      if (targetId === conversationIdRef.current) return;
+
+      // Stash current conversation messages in cache before switching
+      if (conversationIdRef.current && messagesRef.current.length > 0) {
+        setCachedMessages(conversationIdRef.current, messagesRef.current);
+      }
+
+      // Cancel any in-flight title generation
+      titleReqRef.current += 1;
+      titlePromiseRef.current = null;
+      titleDirtyRef.current = false;
+      pendingRef.current = null;
+      setGated([]);
+      setLoadingOlder(false);
+
+      if (targetId) {
+        setConversationId(targetId);
+        conversationIdRef.current = targetId;
+        const threadLabel = findThreadLabel(targetId);
+        setTitle(threadLabel);
+
+        const cached = getCachedMessages(targetId);
+        if (cached && cached.length > 0) {
+          setMessages(cached);
+          setLoadingThread(false);
+          const pag = threadPagination.get(targetId);
+          setHasMoreOlder(pag ? pag.hasMore : false);
+        } else {
+          setMessages([]);
+          setLoadingThread(true);
+          setHasMoreOlder(false);
+        }
+
+        try {
+          localStorage.setItem("myntle-conv", targetId);
+        } catch {
+          // Ignore.
+        }
+
+        if (pushHistory) {
+          try {
+            window.history.pushState(null, "", `/chat/${encodeURIComponent(targetId)}`);
+          } catch {
+            // Ignore.
+          }
+        }
+      } else {
+        setConversationId(null);
+        conversationIdRef.current = null;
+        setTitle(null);
+        lastLoadedConvRef.current = null;
+        try {
+          localStorage.removeItem("myntle-conv");
+        } catch {
+          // Ignore.
+        }
+        setMessages([]);
+        setLoadingThread(false);
+        setHasMoreOlder(false);
+
+        if (pushHistory) {
+          try {
+            window.history.pushState(null, "", "/");
+          } catch {
+            // Ignore.
+          }
+        }
+      }
+    },
+    [setMessages],
+  );
+
   const onPickThread = useCallback(
     (id: string) => {
-      router.push(`/chat/${encodeURIComponent(id)}`);
+      switchConversation(id);
     },
-    [router],
+    [switchConversation],
   );
 
   // Keep this chat's cache entry fresh as the conversation grows.
   useEffect(() => {
     if (conversationId && messages.length > 0)
-      messageCache.set(conversationId, messages);
+      setCachedMessages(conversationId, messages);
   }, [conversationId, messages]);
 
   useEffect(() => {
     if (!conversationId) return;
     // Visited before: render instantly from cache
-    const cached = messageCache.get(conversationId);
+    const cached = getCachedMessages(conversationId);
     if (cached && cached.length > 0 && messages.length === 0) {
       setMessages(cached);
       setLoadingThread(false);
@@ -191,7 +307,11 @@ export default function ChatView({
           setConversationId(null);
           setTitle(null);
           setLoadingThread(false);
-          router.replace("/");
+          try {
+            window.history.replaceState(null, "", "/");
+          } catch {
+            // Ignore.
+          }
           return null;
         }
         return res.ok ? res.json() : null;
@@ -207,7 +327,7 @@ export default function ChatView({
         ) => {
           if (!body || cancelled) return;
           if (body.messages && body.messages.length > 0) {
-            messageCache.set(conversationId, body.messages);
+            setCachedMessages(conversationId, body.messages);
             setMessages(body.messages);
           }
           if (body.hasMore !== undefined) {
@@ -287,13 +407,14 @@ export default function ChatView({
       await queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
       if (cancelled) return;
       setConversationId(slug);
+      conversationIdRef.current = slug;
       try {
         localStorage.setItem("myntle-conv", slug);
       } catch {
         // Ignore.
       }
       try {
-        router.push(`/chat/${encodeURIComponent(slug)}`);
+        window.history.replaceState(null, "", `/chat/${encodeURIComponent(slug)}`);
       } catch {
         // Ignore.
       }
@@ -301,41 +422,7 @@ export default function ChatView({
     return () => {
       cancelled = true;
     };
-  }, [conversationId, status, messages.length, router, queryClient]);
-
-  const [gated, setGated] = useState<GatedExchange[]>([]);
-  // Seed from the sidebar cache so a thread route paints its real name on
-  // the first frame instead of flashing "New chat".
-  const [title, setTitle] = useState<string | null>(() =>
-    findThreadLabel(initialConversationId ?? null),
-  );
-  // Thread routes start loading unless cache already covers first paint;
-  // the composer never loads.
-  const [loadingThread, setLoadingThread] = useState(() => {
-    if (!initialConversationId) return false;
-    const cached = messageCache.get(initialConversationId);
-    return !cached || cached.length === 0;
-  });
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  const [hasMoreOlder, setHasMoreOlder] = useState(() => {
-    if (!initialConversationId) return false;
-    return Boolean(threadPagination.get(initialConversationId)?.hasMore);
-  });
-  const lastLoadedConvRef = useRef<string | null>(null);
-  const pendingRef = useRef<string | null>(null);
-  const gatedIdRef = useRef(0);
-  const titleReqRef = useRef(0);
-  // Latest title value for the post-stream finalizer, which runs async.
-  const titleRef = useRef<string | null>(null);
-  // In-flight /api/title promise, so finalization can wait for it instead
-  // of navigating while the generated title is still unresolved.
-  const titlePromiseRef = useRef<Promise<void> | null>(null);
-  // True only when the title was set locally (generated or renamed) and not
-  // yet saved. Titles loaded from the database never set this.
-  const titleDirtyRef = useRef(false);
-  const routeSlugRef = useRef<string | null | undefined>(undefined);
-  // Mirror for async readers (the post-stream finalizer runs after awaits).
-  titleRef.current = title;
+  }, [conversationId, status, messages.length, queryClient]);
 
   // Stay on the thread the route points at when moving between chats.
   // Guarded by ref so it only fires when the slug actually changes —
@@ -345,28 +432,27 @@ export default function ChatView({
     if (routeSlugRef.current === initialConversationId) return;
     const firstMount = routeSlugRef.current === undefined;
     routeSlugRef.current = initialConversationId ?? null;
-    setConversationId(initialConversationId ?? null);
     if (firstMount) return;
-    const cached = initialConversationId
-      ? messageCache.get(initialConversationId)
-      : undefined;
-    if (cached && cached.length > 0) {
-      setMessages(cached);
-      setLoadingThread(false);
-      const pag = initialConversationId
-        ? threadPagination.get(initialConversationId)
-        : undefined;
-      setHasMoreOlder(pag ? pag.hasMore : false);
-    } else {
-      setMessages([]);
-      setLoadingThread(initialConversationId != null);
-      setHasMoreOlder(false);
-    }
-    // Keep the outgoing title out of the incoming thread: use the cached
-    // name when we have it, so the bar never flashes "New chat" mid-switch.
-    setTitle(findThreadLabel(initialConversationId ?? null));
-    titleDirtyRef.current = false;
-  }, [initialConversationId, setMessages]);
+    switchConversation(initialConversationId ?? null, false);
+  }, [initialConversationId, switchConversation]);
+
+  // Browser back/forward navigation between chats (popstate).
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname;
+      let targetId: string | null = null;
+      if (path.startsWith("/chat/")) {
+        const rawSlug = path.slice(6);
+        if (rawSlug) {
+          targetId = decodeURIComponent(rawSlug);
+        }
+      }
+      switchConversation(targetId, false);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [switchConversation]);
 
   const requestTitle = useCallback((prompt: string) => {
     const id = (titleReqRef.current += 1);
@@ -428,29 +514,14 @@ export default function ChatView({
   }, [connected, sendMessage, title, requestTitle]);
 
   const newChat = useCallback(() => {
-    titleReqRef.current += 1;
-    titlePromiseRef.current = null;
-    pendingRef.current = null;
-    setGated([]);
-    setTitle(null);
-    setConversationId(null);
-    setHasMoreOlder(false);
-    setLoadingOlder(false);
-    lastLoadedConvRef.current = null;
-    try {
-      localStorage.removeItem("myntle-conv");
-    } catch {
-      // Ignore.
-    }
-    setMessages([]);
-    setLoadingThread(false);
-    router.push("/");
-  }, [setMessages, router]);
+    switchConversation(null);
+    focusComposer({ clearDraft: true });
+  }, [switchConversation]);
 
   const rename = useCallback(
     (next: string) => {
       const cleaned = next.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX_CHARS);
-      if (!cleaned) return;
+      if (!cleaned || cleaned === titleRef.current?.trim()) return;
       // A manual rename wins over an in-flight generated title.
       titleReqRef.current += 1;
       setTitle(cleaned);
@@ -466,6 +537,9 @@ export default function ChatView({
     (id: string, next: string) => {
       const cleaned = next.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX_CHARS);
       if (!cleaned) return;
+      const current =
+        (id === conversationId ? titleRef.current : null) ?? findThreadLabel(id);
+      if (current && cleaned === current.trim()) return;
       titleReqRef.current += 1;
       if (id === conversationId) {
         // Already saved below; the dirty-title effect must not send it twice.
@@ -499,8 +573,7 @@ export default function ChatView({
           if (!res.ok) throw new Error("delete failed");
         })
         .then(() => {
-          messageCache.delete(id);
-          prefetchInflight.delete(id);
+          deleteCachedMessages(id);
           if (id === conversationId) newChat();
           void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
           void queryClient.invalidateQueries({ queryKey: TRASHED_QUERY_KEY });
@@ -558,6 +631,13 @@ export default function ChatView({
     [connected, sendMessage],
   );
 
+  const respondToApproval = useCallback(
+    (approvalId: string, approved: boolean) => {
+      void addToolApprovalResponse({ id: approvalId, approved });
+    },
+    [addToolApprovalResponse],
+  );
+
   const live = useMemo(
     () => ({
       messages,
@@ -566,8 +646,9 @@ export default function ChatView({
       error: error?.message,
       regenerate: regenerateTurn,
       editAndSend,
+      respondToApproval,
     }),
-    [messages, status, send, error, regenerateTurn, editAndSend],
+    [messages, status, send, error, regenerateTurn, editAndSend, respondToApproval],
   );
 
   // Seeded mounts skip the history fetch (messages already present) but
@@ -615,7 +696,7 @@ export default function ChatView({
           const existingIds = new Set(current.map((m) => m.id));
           const uniqueOlder = older.filter((m) => !existingIds.has(m.id));
           const merged = [...uniqueOlder, ...current];
-          if (conversationId) messageCache.set(conversationId, merged);
+          if (conversationId) setCachedMessages(conversationId, merged);
           return merged;
         });
         const nextHasMore = Boolean(body.hasMore);

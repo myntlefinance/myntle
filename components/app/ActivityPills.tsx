@@ -352,9 +352,7 @@ export default function ActivityPills({
   });
 
   if (blocks.length === 0) {
-    /* the round trip from send to the first stream chunk has nothing to
-     * attach a pill to, so the plain loader carries it */
-    return running ? <LoadingState variant="Drive" /> : null;
+    return null;
   }
 
   return (

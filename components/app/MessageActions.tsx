@@ -19,6 +19,7 @@ import {
   IconThumbUp,
   IconThumbUpFilled,
 } from "@tabler/icons-react";
+import { Button } from "@/components/atoms/Button";
 
 /** Brand blue extracted from /public/myntle-logo.svg */
 const MYNTLE_BLUE = "#00A6FF";
@@ -500,22 +501,24 @@ export function UserBubble({
             rows={Math.max(2, Math.min(8, draft.split("\n").length))}
             className="w-full resize-none bg-transparent text-[13px] leading-relaxed text-ink outline-none"
           />
-          <div className="mt-2.5 flex items-center justify-end gap-2">
-            <button
+          <div className="-mr-0.5 mt-2.5 flex items-center justify-end gap-1.5">
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={handleCancel}
-              className="rounded-control px-3 py-1.5 text-[12px] font-medium text-ink-2 transition-colors duration-100 hover:bg-hover hover:text-ink"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="accent"
+              size="sm"
               onClick={handleSubmit}
               disabled={!draft.trim()}
-              className="rounded-control bg-accent px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity duration-100 hover:opacity-90 active:scale-[0.97] disabled:opacity-40"
             >
               Send
-            </button>
+            </Button>
           </div>
         </div>
       </div>

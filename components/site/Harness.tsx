@@ -32,6 +32,7 @@ import {
 import { LiveResponse } from "@/components/app/LiveResponse";
 import { ConnectGate } from "@/components/app/ConnectGate";
 import { UserBubble, AgentMessageActions } from "@/components/app/MessageActions";
+import { ThreadSkeleton } from "@/components/app/ThreadSkeleton";
 import {
   TimestampPill,
   computeMessageClusters,
@@ -50,10 +51,11 @@ import RecordsTable from "@/components/primitives/RecordsTable";
 import SelectionActions from "@/components/primitives/SelectionActions";
 import SidebarNav from "@/components/primitives/SidebarNav";
 import StreamingText from "@/components/primitives/StreamingText";
-import TaskRows from "@/components/primitives/TaskRows";
+import TaskRows, { SpinnerRing } from "@/components/primitives/TaskRows";
 import ThinkingState from "@/components/primitives/ThinkingState";
 import { TITLE_MAX_CHARS } from "@/lib/ai/title";
 import ToolChips from "@/components/primitives/ToolChips";
+import { focusComposer, FOCUS_COMPOSER_EVENT } from "@/lib/composer";
 // UseThisHarness (the "fork this" modal pointing at the upstream repo) has been
 // removed. The footer button now opens the wallet picker instead.
 
@@ -542,47 +544,17 @@ function homeRevealStyle(
   };
 }
 
-/* Static placeholder while a saved thread loads. Deliberately plain: no
- * staged blur-fade, so switching chats never replays the entrance. Row
- * wrappers mirror renderThread exactly (same max-w, same gutters) so the
- * skeleton sits precisely where the messages will land on every screen. */
-function ThreadSkeleton({ bottomPad }: { bottomPad: number }) {
-  return (
-    <div
-      className="flex flex-col gap-8 px-4 pt-8 sm:px-8 lg:px-12"
-      style={{ paddingBottom: bottomPad }}
-    >
-      <div className="mx-auto w-full max-w-[720px]">
-        <div className="flex justify-end pl-10 sm:pl-24">
-          <div className="h-10 w-44 animate-pulse rounded-xl bg-hover-2" />
-        </div>
-      </div>
-      <div className="mx-auto w-full max-w-[720px]">
-        <div className="flex animate-pulse flex-col gap-2">
-          <div className="h-3.5 w-full rounded-[4px] bg-hover-2" />
-          <div className="h-3.5 w-11/12 rounded-[4px] bg-hover-2" />
-          <div className="h-3.5 w-3/5 rounded-[4px] bg-hover-2" />
-        </div>
-      </div>
-      <div className="mx-auto w-full max-w-[720px]">
-        <div className="flex justify-end pl-10 sm:pl-24">
-          <div className="h-10 w-56 animate-pulse rounded-xl bg-hover-2" />
-        </div>
-      </div>
-      <div className="mx-auto w-full max-w-[720px]">
-        <div className="flex animate-pulse flex-col gap-2">
-          <div className="h-3.5 w-full rounded-[4px] bg-hover-2" />
-          <div className="h-3.5 w-10/12 rounded-[4px] bg-hover-2" />
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { onSend: (text: string, id: ScenarioId) => void; shuffle: () => void; offset: number; live?: LiveChat; models?: PromptModel[]; onModelChange?: (modelId: string) => void }) {
   const pool = live ? LIVE_SUGGESTIONS : SUGGESTION_POOL;
   const shown = [0, 1, 2].map((i) => pool[(offset + i) % pool.length]);
   const [stage, setStage] = useState(homeRevealPlayed ? 4 : 0);
+  useEffect(() => {
+    const skipReveal = () => setStage(4);
+    window.addEventListener(FOCUS_COMPOSER_EVENT, skipReveal);
+    return () => window.removeEventListener(FOCUS_COMPOSER_EVENT, skipReveal);
+  }, []);
+
   useEffect(() => {
     if (homeRevealPlayed) {
       setStage(4);
@@ -614,10 +586,15 @@ function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { 
           <PromptBar
             demo={false}
             tall
+            autoFocus={true}
             models={models}
             onModelChange={onModelChange}
             placeholder={live ? "Ask for a trade, or ask what you hold" : "Ask anything about your finance ops..."}
-            onSend={(text) => (live ? live.send(text) : onSend(text, matchScenario(text)))}
+            onSend={(text) => {
+              if (live) live.send(text);
+              else onSend(text, matchScenario(text));
+              focusComposer();
+            }}
           />
         </div>
       </div>
@@ -630,6 +607,7 @@ function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { 
             onClick={() => {
               if (live) live.send(item.label);
               else onSend(item.label, item.id as ScenarioId);
+              focusComposer();
             }}
             className="-mx-2 flex items-center gap-3 rounded-control px-2 py-2.5 text-left text-[14px] text-ink transition-colors duration-150 hover:bg-hover"
           >
@@ -813,6 +791,7 @@ export type LiveChat = {
   error?: string;
   regenerate?: (messageId?: string) => void;
   editAndSend?: (messageId: string, nextText: string) => void;
+  respondToApproval?: (approvalId: string, approved: boolean) => void;
 };
 
 const useIsomorphicLayoutEffect =
@@ -869,7 +848,7 @@ export default function Harness({
   trashActive?: boolean;
   /** opens the Trash page */
   onOpenTrash?: () => void;
-  /** a saved thread is loading its history; show a skeleton, never the composer */
+  /** a saved thread is loading its history; show a skeleton in place of messages */
   loadingThread?: boolean;
   /** replaces the sidebar's footer button */
   footer?: ReactNode;
@@ -900,6 +879,8 @@ export default function Harness({
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const [composerH, setComposerH] = useState(150);
+  const [activeSpacer, setActiveSpacer] = useState(0);
+  const initialSpacerRef = useRef(0);
   const messageTimestampsRef = useRef<Map<string, number>>(new Map());
 
   const resolveTimestamp = (msg: {
@@ -979,6 +960,9 @@ export default function Harness({
     setDemoMessages([]);
     setDemoTitle(null);
     setPropView(null);
+    initialSpacerRef.current = 0;
+    setActiveSpacer(0);
+    focusComposer({ clearDraft: true });
   };
 
   const stickRef = useRef(true);
@@ -1022,13 +1006,18 @@ export default function Harness({
     const isChatSwitch = prevActiveChatIdRef.current !== activeChatId;
 
     if (isChatSwitch) {
+      initialSpacerRef.current = 0;
+      setActiveSpacer(0);
       prevActiveChatIdRef.current = activeChatId;
       prevFirstMsgIdRef.current = firstMsgId;
       prevMessagesCountRef.current = messagesCount;
       stickRef.current = true;
-      el.scrollTop = el.scrollHeight;
-      prevScrollHeightRef.current = el.scrollHeight;
-      prevScrollTopRef.current = el.scrollTop;
+      requestAnimationFrame(() => {
+        if (!scrollRef.current) return;
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        prevScrollHeightRef.current = scrollRef.current.scrollHeight;
+        prevScrollTopRef.current = scrollRef.current.scrollTop;
+      });
       return;
     }
 
@@ -1048,6 +1037,12 @@ export default function Harness({
     if (messagesCount !== prevMessagesCountRef.current) {
       const isNewUserPrompt = lastMessageRole === "user" || liveStatus === "submitted";
       if (isNewUserPrompt) {
+        if (!initialSpacerRef.current) {
+          const availableH = Math.max(260, el.clientHeight - composerH);
+          const targetSpacer = Math.round(availableH * 0.5);
+          initialSpacerRef.current = targetSpacer;
+          setActiveSpacer(targetSpacer);
+        }
         scrollToBottom(true);
       } else if (stickRef.current) {
         scrollToBottom(false);
@@ -1060,6 +1055,7 @@ export default function Harness({
   }, [
     active,
     activeChatId,
+    composerH,
     firstMsgId,
     messagesCount,
     lastMessageRole,
@@ -1073,9 +1069,7 @@ export default function Harness({
     }
   }, [loadingOlder]);
 
-  /* the composer floats over the thread (ChatGPT-style), so the thread pads its
-   * bottom by the composer's height — that lets the last message rest flush with
-   * the bar and older content scroll behind it. Measure it as it changes. */
+  /* Measure the floating composer as it changes */
   useEffect(() => {
     const el = composerRef.current;
     if (!el) return;
@@ -1086,48 +1080,98 @@ export default function Harness({
     return () => ro.disconnect();
   }, [active]);
 
-  /* artifacts (charts, tables, approval cards) reveal after the text streams
-   * in, growing the thread well after `messages` last changed — often in one
-   * big jump. Track whether the reader is pinned to the bottom from their
-   * scroll position, then follow any later growth so a tall reply's footer
-   * isn't left clipped behind the composer. Scrolling up to re-read releases
-   * the pin. */
+  /* While streaming, as the assistant response grows, the empty space below shrinks
+   * so that (prompt + assistant + empty space) fills the viewport naturally.
+   * If the user scrolls away from the bottom after generation completes, the empty space collapses
+   * to 0 so that no ghost padding lingers when they return. */
   useEffect(() => {
     if (!active) return;
     const el = scrollRef.current;
-    const content = el?.firstElementChild;
+    const content = el?.firstElementChild as HTMLElement | null;
     if (!el || !content) return;
     let raf = 0;
+
     const onScroll = () => {
-      // User manual scroll: if within 120px of bottom, stick is true; otherwise false.
-      stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      const scrollEl = scrollRef.current;
+      if (!scrollEl) return;
+
+      const isBusy = liveStatus === "submitted" || liveStatus === "streaming";
+
+      // If the turn is finished and the user scrolls away from the bottom (e.g. scrolls up into history),
+      // collapse the empty space so it never lingers when they return.
+      if (!isBusy && initialSpacerRef.current > 0) {
+        const distanceFromBottom = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+        if (distanceFromBottom > 40) {
+          initialSpacerRef.current = 0;
+          setActiveSpacer(0);
+        }
+      }
+
+      const lastChild = content.lastElementChild as HTMLElement | null;
+      if (lastChild) {
+        const contentBottom = lastChild.offsetTop + lastChild.offsetHeight;
+        const composerThreshold = scrollEl.clientHeight - composerH - 28;
+        const bottomInViewport = contentBottom - scrollEl.scrollTop;
+        stickRef.current = bottomInViewport <= composerThreshold + 80;
+      } else {
+        stickRef.current = true;
+      }
+
       if (
-        el.scrollTop < 80 &&
+        scrollEl.scrollTop < 80 &&
         hasMoreOlder &&
         !loadingOlder &&
         onLoadOlder &&
         !isPrependingRef.current
       ) {
         isPrependingRef.current = true;
-        prevScrollHeightRef.current = el.scrollHeight;
-        prevScrollTopRef.current = el.scrollTop;
+        prevScrollHeightRef.current = scrollEl.scrollHeight;
+        prevScrollTopRef.current = scrollEl.scrollTop;
         onLoadOlder();
       }
     };
+
     const pin = () => {
       if (!stickRef.current) return;
-      // Do not auto-scroll if an interactive component is undergoing a user-initiated height transition
       if (content.querySelector("[data-prevent-scroll-pin='true']")) return;
+
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        if (scrollRef.current) {
-          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        const scrollEl = scrollRef.current;
+        if (!scrollEl) return;
+
+        // "the ultimate combo is that the user prompt + agent + empty space is the total viewport"
+        // As the assistant response expands, decrease the empty space spacer proportionally
+        if (initialSpacerRef.current > 0) {
+          const assistantEl = content.querySelector(
+            '[data-role="assistant"]:last-of-type, [data-role="loading"]:last-of-type'
+          ) as HTMLElement | null;
+          if (assistantEl) {
+            const assistantH = assistantEl.offsetHeight;
+            const remainingSpacer = Math.max(0, initialSpacerRef.current - assistantH);
+            setActiveSpacer((current) => (current !== remainingSpacer ? remainingSpacer : current));
+          }
+        }
+
+        const lastChild = content.lastElementChild as HTMLElement | null;
+        if (!lastChild) return;
+
+        const contentBottom = lastChild.offsetTop + lastChild.offsetHeight;
+        const composerThreshold = scrollEl.clientHeight - composerH - 24;
+        const bottomInViewport = contentBottom - scrollEl.scrollTop;
+
+        if (bottomInViewport <= composerThreshold) {
+          return;
+        }
+
+        const neededScrollTop = contentBottom - composerThreshold;
+        if (neededScrollTop > scrollEl.scrollTop) {
+          scrollEl.scrollTop = neededScrollTop;
         }
       });
     };
+
     el.addEventListener("scroll", onScroll, { passive: true });
-    // ResizeObserver catches gradual growth (streaming); MutationObserver catches
-    // a whole artifact being inserted and its height-animation style ticks.
     const resize = new ResizeObserver(pin);
     resize.observe(content);
     const mutate = new MutationObserver(pin);
@@ -1138,22 +1182,31 @@ export default function Harness({
       mutate.disconnect();
       cancelAnimationFrame(raf);
     };
-  }, [active, hasMoreOlder, loadingOlder, onLoadOlder]);
+  }, [active, composerH, hasMoreOlder, liveStatus, loadingOlder, onLoadOlder]);
+
+  // Normal padding lets the last line rest flush above the composer.
+  // The temporary activeSpacer is only present while a prompt is sent/streaming
+  // and collapses to 0 once the turn completes and the user scrolls away or navigates.
+  const threadPaddingBottom = composerH + 16 + activeSpacer;
 
   /* the title bar rides the top of the main pane in both layouts. The type
    * matches the sidebar's "New chat" row: 14px medium ink-2. Hovering the
    * title reveals a pencil that renames it inline. */
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const renameCancelledRef = useRef(false);
 
   const startRename = () => {
+    renameCancelledRef.current = false;
     setTitleDraft(displayTitle ?? "");
     setEditingTitle(true);
   };
   const commitRename = () => {
+    if (renameCancelledRef.current) return;
     const next = titleDraft.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX_CHARS);
     setEditingTitle(false);
-    if (!next) return;
+    const current = (displayTitle ?? "").trim();
+    if (!next || next === current) return;
     if (live) onRename?.(next);
     else setDemoTitle(next);
   };
@@ -1173,8 +1226,12 @@ export default function Harness({
           aria-label="Rename chat"
           onChange={(event) => setTitleDraft(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") commitRename();
-            else if (event.key === "Escape") setEditingTitle(false);
+            if (event.key === "Enter") {
+              commitRename();
+            } else if (event.key === "Escape") {
+              renameCancelledRef.current = true;
+              setEditingTitle(false);
+            }
           }}
           onBlur={commitRename}
           onFocus={(event) => event.currentTarget.select()}
@@ -1201,7 +1258,11 @@ export default function Harness({
       <button
         type="button"
         aria-label="New chat"
-        onClick={live ? onNewChat : newDemoChat}
+        onClick={() => {
+          if (live) onNewChat?.();
+          else newDemoChat();
+          focusComposer({ clearDraft: true });
+        }}
         className="flex size-7 shrink-0 items-center justify-center rounded-[7px] text-ink-3 transition-colors duration-100 hover:bg-hover hover:text-ink"
       >
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
@@ -1211,25 +1272,57 @@ export default function Harness({
 
   /* the message thread + composer — reused as the main column (wide) or the
    * docked assistant panel in spreadsheet mode (narrow) */
-  const renderThread = (narrow: boolean) => (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+  const renderThread = (narrow: boolean) => {
+    const isToolPart = (type: string) =>
+      type.startsWith("tool-") || type === "dynamic-tool";
+    const lastAssistant =
+      live?.messages &&
+      live.messages.length > 0 &&
+      live.messages[live.messages.length - 1].role === "assistant"
+        ? live.messages[live.messages.length - 1]
+        : null;
+    const hasInflightAssistantContent = Boolean(
+      lastAssistant?.parts?.some(
+        (part) =>
+          (part.type === "text" && part.text.trim().length > 0) ||
+          part.type === "reasoning" ||
+          isToolPart(part.type),
+      ),
+    );
+    const showInflightLoader =
+      (live?.status === "submitted" || live?.status === "streaming") &&
+      !hasInflightAssistantContent;
+
+    return (
+      <div className="relative flex min-h-0 flex-1 flex-col">
+      {loadingOlder && (
+        <div
+          className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center"
+          aria-hidden="true"
+        >
+          <div
+            className="flex size-7 items-center justify-center rounded-full border border-line bg-surface/90 shadow-sm backdrop-blur-sm"
+            style={{ animation: "pop-in 200ms cubic-bezier(0.23,1,0.32,1) both" }}
+          >
+            <SpinnerRing active size={18} stroke={2} />
+          </div>
+        </div>
+      )}
       <div
         ref={scrollRef}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-slim [scrollbar-gutter:stable]"
       >
-        <div
-          key={activeChatId ?? "thread"}
-          className={`flex flex-col gap-8 pt-8 ${narrow ? "px-4" : "px-4 sm:px-8 lg:px-12"}`}
-          /* pad the bottom by the floating composer's height so the last message
-             can rest flush with the bar and older content scrolls behind it */
-          style={{ animation: "fade-in 150ms ease both", paddingBottom: composerH + 16 }}
-        >
-          {loadingOlder && (
-            <div className="flex justify-center py-2" aria-hidden="true">
-              <div className="size-4 animate-spin rounded-full border-2 border-line border-t-ink-3" />
-            </div>
-          )}
-          {live ? (
+        {loadingThread ? (
+          <ThreadSkeleton bottomPad={composerH + 16} narrow={narrow} />
+        ) : (
+          <div
+            key={activeChatId ?? "thread"}
+            className={`flex flex-col gap-8 pt-8 ${narrow ? "px-4" : "px-4 sm:px-8 lg:px-12"}`}
+            /* pad the bottom by the floating composer's height so the last message
+               can rest flush with the bar and older content scrolls behind it */
+            style={{ animation: "fade-in 150ms ease both", paddingBottom: threadPaddingBottom }}
+          >
+            {live ? (
             <>
               {liveClustered.map(({ message, showTimestamp, timestamp }) => {
                 const text = message.parts
@@ -1243,16 +1336,29 @@ export default function Harness({
                 return (
                   <Fragment key={message.id}>
                     {showTimestamp && (
-                      <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+                      <div
+                        data-timestamp="true"
+                        className={`scroll-mt-8 ${narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}`}
+                      >
                         <TimestampPill timestamp={timestamp} />
                       </div>
                     )}
-                    <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+                    <div
+                      data-role={message.role}
+                      data-message-id={message.id}
+                      className={`scroll-mt-8 ${narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}`}
+                    >
                       {message.role === "user" ? (
                         <UserBubble
                           text={text}
                           onEdit={(next) => {
-                            scrollToBottom(true);
+                            const el = scrollRef.current;
+                            if (el) {
+                              const availableH = Math.max(260, el.clientHeight - composerH);
+                              const targetSpacer = Math.round(availableH * 0.5);
+                              initialSpacerRef.current = targetSpacer;
+                              setActiveSpacer(targetSpacer);
+                            }
                             if (live.editAndSend) {
                               live.editAndSend(message.id, next);
                             } else {
@@ -1269,6 +1375,7 @@ export default function Harness({
                               ? () => live.regenerate?.(message.id)
                               : undefined
                           }
+                          onApproval={live.respondToApproval}
                         />
                       )}
                     </div>
@@ -1276,7 +1383,11 @@ export default function Harness({
                 );
               })}
               {(gated ?? []).map((exchange) => (
-                <div key={`gated-${exchange.id}`} className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+                <div
+                  key={`gated-${exchange.id}`}
+                  data-role="gated"
+                  className={`scroll-mt-8 ${narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}`}
+                >
                   <div className="flex flex-col gap-8">
                     <UserBubble text={exchange.prompt} />
                     <ConnectGate />
@@ -1290,15 +1401,29 @@ export default function Harness({
               return (
                 <Fragment key={message.id}>
                   {showTimestamp && (
-                    <div className={narrow || full ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+                    <div
+                      data-timestamp="true"
+                      className={`scroll-mt-8 ${narrow || full ? "w-full" : "mx-auto w-full max-w-[720px]"}`}
+                    >
                       <TimestampPill timestamp={timestamp} />
                     </div>
                   )}
-                  <div className={narrow || full ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+                  <div
+                    data-role={message.role}
+                    data-message-id={message.id}
+                    className={`scroll-mt-8 ${narrow || full ? "w-full" : "mx-auto w-full max-w-[720px]"}`}
+                  >
                     {message.role === "user" ? (
                       <UserBubble
                         text={message.text}
                         onEdit={(next) => {
+                          const el = scrollRef.current;
+                          if (el) {
+                            const availableH = Math.max(260, el.clientHeight - composerH);
+                            const targetSpacer = Math.round(availableH * 0.5);
+                            initialSpacerRef.current = targetSpacer;
+                            setActiveSpacer(targetSpacer);
+                          }
                           setDemoMessages((current) =>
                             current.map((m) =>
                               m.id === message.id ? { ...m, text: next } : m,
@@ -1315,20 +1440,19 @@ export default function Harness({
             })
           )}
           {/* the round trip from send to the first stream chunk has no
-              assistant message to attach to, so the loader sits on its own */}
-          {(live?.status === "submitted" || live?.status === "streaming") &&
-          (!live.messages.length ||
-            live.messages[live.messages.length - 1].role !== "assistant") ? (
-            <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+              assistant content to attach to, so the loader sits on its own */}
+          {showInflightLoader ? (
+            <div data-role="loading" className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
               <LoadingState variant="Drive" />
             </div>
           ) : null}
           {live?.error ? (
-            <div className="mx-auto w-full max-w-[720px] text-[13px] text-red">
+            <div data-role="error" className="mx-auto w-full max-w-[720px] text-[13px] text-red">
               {live.error}
             </div>
           ) : null}
         </div>
+        )}
       </div>
 
       {/* soft fade so content dissolves into the bar instead of hard-clipping */}
@@ -1346,19 +1470,28 @@ export default function Harness({
           <PromptBar
             demo={false}
             tall
+            autoFocus={true}
             models={models}
             onModelChange={onModelChange}
             placeholder="Reply"
             onSend={(text) => {
-              scrollToBottom(true);
+              const el = scrollRef.current;
+              if (el) {
+                const availableH = Math.max(260, el.clientHeight - composerH);
+                const targetSpacer = Math.round(availableH * 0.5);
+                initialSpacerRef.current = targetSpacer;
+                setActiveSpacer(targetSpacer);
+              }
               if (live) live.send(text);
               else send(text, matchScenario(text));
+              focusComposer();
             }}
           />
         </div>
       </div>
     </div>
   );
+};
 
   return (
     <main className="flex h-[100dvh] gap-0 bg-canvas p-2.5 text-ink lg:pl-0">
@@ -1389,7 +1522,11 @@ export default function Harness({
         trashCount={live ? (trashCount ?? 0) : 0}
         trashActive={trashActive}
         onOpenTrash={live ? onOpenTrash : undefined}
-        onNewChat={live ? onNewChat : newDemoChat}
+        onNewChat={() => {
+          if (live) onNewChat?.();
+          else newDemoChat();
+          focusComposer({ clearDraft: true });
+        }}
         footerLabel="Fork this"
         onFooterClick={footer ? () => {} : () => setUseOpen(true)}
         footer={footer}
@@ -1455,12 +1592,8 @@ export default function Harness({
             <>
               <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-line bg-page">
                 {titleBar}
-                {active ? (
+                {active || loadingThread ? (
                   renderThread(false)
-                ) : loadingThread ? (
-                  <div className="min-h-0 flex-1 overflow-y-auto scroll-slim">
-                    <ThreadSkeleton bottomPad={composerH + 16} />
-                  </div>
                 ) : (
                   <div className="min-h-0 flex-1 overflow-y-auto scroll-slim">
                     <EmptyState onSend={send} shuffle={() => setOffset((current) => (current + 3) % SUGGESTION_POOL.length)} offset={offset} live={live} models={models} onModelChange={onModelChange} />
