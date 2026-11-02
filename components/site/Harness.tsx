@@ -575,62 +575,64 @@ function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { 
   }, []);
 
   return (
-    <div className="mx-auto flex min-h-full max-w-[720px] flex-col justify-center px-4 py-10 sm:px-8">
-      <h1 className="text-[26px] font-normal tracking-[-0.02em] text-ink">
-        <span className="home-reveal block text-ink-3" style={homeRevealStyle(stage >= 1, revealParams.reveal)}>{live ? "Your money, in plain language" : `Hello ${NAME}`}</span>
-        <span className="home-reveal block" style={homeRevealStyle(stage >= 2, revealParams.reveal)}>{live ? "Ask for a trade and watch it settle." : "What can I help you with?"}</span>
-      </h1>
+    <div className="mx-auto flex min-h-full w-full flex-col justify-center px-4 py-10 sm:px-8 lg:px-12">
+      <div className="mx-auto w-full max-w-[720px]">
+        <h1 className="text-[26px] font-normal tracking-[-0.02em] text-ink">
+          <span className="home-reveal block text-ink-3" style={homeRevealStyle(stage >= 1, revealParams.reveal)}>{live ? "Your money, in plain language" : `Hello ${NAME}`}</span>
+          <span className="home-reveal block" style={homeRevealStyle(stage >= 2, revealParams.reveal)}>{live ? "Ask for a trade and watch it settle." : "What can I help you with?"}</span>
+        </h1>
 
-      <div className="home-reveal relative mt-7" style={homeRevealStyle(stage >= 3, revealParams.reveal)}>
-        <div className="relative">
-          <PromptBar
-            demo={false}
-            tall
-            autoFocus={true}
-            models={models}
-            onModelChange={onModelChange}
-            placeholder={live ? "Ask for a trade, or ask what you hold" : "Ask anything about your finance ops..."}
-            onSend={(text) => {
-              if (live) live.send(text);
-              else onSend(text, matchScenario(text));
-              focusComposer();
-            }}
-          />
+        <div className="home-reveal relative mt-7" style={homeRevealStyle(stage >= 3, revealParams.reveal)}>
+          <div className="relative">
+            <PromptBar
+              demo={false}
+              tall
+              autoFocus={true}
+              models={models}
+              onModelChange={onModelChange}
+              placeholder={live ? "Ask for a trade, or ask what you hold" : "Ask anything about your finance ops..."}
+              onSend={(text) => {
+                if (live) live.send(text);
+                else onSend(text, matchScenario(text));
+                focusComposer();
+              }}
+            />
+          </div>
         </div>
-      </div>
 
-      <div className="home-reveal mt-6 flex flex-col" style={homeRevealStyle(stage >= 4, revealParams.reveal)}>
-        {shown.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => {
-              if (live) live.send(item.label);
-              else onSend(item.label, item.id as ScenarioId);
-              focusComposer();
-            }}
-            className="-mx-2 flex items-center gap-3 rounded-control px-2 py-2.5 text-left text-[14px] text-ink transition-colors duration-150 hover:bg-hover"
-          >
-            <span className="text-ink-3">
-              {item.id === "offboarding" ? (
-                <span className="block size-3.5 rounded-full bg-gradient-to-br from-orange to-red" />
-              ) : (
-                <SuggestionIcon kind={item.id} />
-              )}
-            </span>
-            <span className="min-w-0 truncate">{item.label}</span>
-          </button>
-        ))}
-        <div className="mt-1 flex items-center gap-5 pl-0.5 text-[13px] text-ink-3">
-          <button type="button" className="flex items-center gap-2 py-1 transition-colors duration-150 hover:text-ink">
-            <IconDots size={15} stroke={1.9} aria-hidden />
-            Connect your apps for a better experience
-            <IconArrowRight size={13} stroke={2} aria-hidden />
-          </button>
-          <button type="button" onClick={shuffle} className="flex items-center gap-2 py-1 transition-colors duration-150 hover:text-ink">
-            <IconRefresh size={14} stroke={2} aria-hidden />
-            Shuffle suggestions
-          </button>
+        <div className="home-reveal mt-6 flex flex-col" style={homeRevealStyle(stage >= 4, revealParams.reveal)}>
+          {shown.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => {
+                if (live) live.send(item.label);
+                else onSend(item.label, item.id as ScenarioId);
+                focusComposer();
+              }}
+              className="-mx-2 flex items-center gap-3 rounded-control px-2 py-2.5 text-left text-[14px] text-ink transition-colors duration-150 hover:bg-hover"
+            >
+              <span className="text-ink-3">
+                {item.id === "offboarding" ? (
+                  <span className="block size-3.5 rounded-full bg-gradient-to-br from-orange to-red" />
+                ) : (
+                  <SuggestionIcon kind={item.id} />
+                )}
+              </span>
+              <span className="min-w-0 truncate">{item.label}</span>
+            </button>
+          ))}
+          <div className="mt-1 flex items-center gap-5 pl-0.5 text-[13px] text-ink-3">
+            <button type="button" className="flex items-center gap-2 py-1 transition-colors duration-150 hover:text-ink">
+              <IconDots size={15} stroke={1.9} aria-hidden />
+              Connect your apps for a better experience
+              <IconArrowRight size={13} stroke={2} aria-hidden />
+            </button>
+            <button type="button" onClick={shuffle} className="flex items-center gap-2 py-1 transition-colors duration-150 hover:text-ink">
+              <IconRefresh size={14} stroke={2} aria-hidden />
+              Shuffle suggestions
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1080,6 +1082,37 @@ export default function Harness({
     return () => ro.disconnect();
   }, [active]);
 
+  /* The composer floats outside the scroll container, so when the thread
+   * overflows a classic scrollbar steals layout width from the message
+   * column but not from the composer and the two edges drift apart by
+   * exactly the scrollbar width. Mirroring that width as a right margin
+   * on the composer locks both edges together in every state; overlay
+   * scrollbars report zero and change nothing. */
+  const [scrollGutter, setScrollGutter] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      setScrollGutter(0);
+      return;
+    }
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = Math.max(0, el.offsetWidth - el.clientWidth);
+      setScrollGutter((current) => (current === w ? current : w));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    const mo = new MutationObserver(measure);
+    mo.observe(el, { childList: true, subtree: true, characterData: true });
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [active, messagesCount]);
+
   /* While streaming, as the assistant response grows, the empty space below shrinks
    * so that (prompt + assistant + empty space) fills the viewport naturally.
    * If the user scrolls away from the bottom after generation completes, the empty space collapses
@@ -1310,7 +1343,7 @@ export default function Harness({
       )}
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-slim [scrollbar-gutter:stable]"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-slim"
       >
         {loadingThread ? (
           <ThreadSkeleton bottomPad={composerH + 16} narrow={narrow} />
@@ -1443,7 +1476,14 @@ export default function Harness({
               assistant content to attach to, so the loader sits on its own */}
           {showInflightLoader ? (
             <div data-role="loading" className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
-              <LoadingState variant="Drive" />
+              {/* Pixel-matched to ActivityPills' PillButton (-mx-1.5 + px-1.5 + py-1,
+                  icon 15px, gap-2, 13px label) so the swap to the Thinking pill
+                  on the first stream chunk doesn't move the text. */}
+              <div className="w-full max-w-95">
+                <div className="-mx-1.5 flex w-fit items-center gap-2 rounded-control px-1.5 py-1">
+                  <LoadingState variant="Drive" />
+                </div>
+              </div>
             </div>
           ) : null}
           {live?.error ? (
@@ -1464,9 +1504,10 @@ export default function Harness({
       {/* the composer floats over the thread; content scrolls behind it */}
       <div
         ref={composerRef}
-        className={`absolute inset-x-0 bottom-0 ${narrow ? "p-3" : "px-4 pb-6 sm:px-8 lg:px-12"}`}
+        className={`absolute inset-x-0 bottom-0 ${narrow ? "px-4 pb-4" : "px-4 pb-6 sm:px-8 lg:px-12"}`}
+        style={{ marginRight: scrollGutter }}
       >
-        <div className={narrow ? "" : "mx-auto max-w-[720px]"}>
+        <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
           <PromptBar
             demo={false}
             tall

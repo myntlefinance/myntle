@@ -1,14 +1,41 @@
 "use client";
 
+import { useMemo } from "react";
 import type { UIMessage } from "ai";
 import ActivityPills, {
   type ActivityBlock,
 } from "@/components/app/ActivityPills";
 import type { ToolDetailLine, ToolStep } from "@/components/primitives/ToolChips";
 import { AgentMessageActions } from "@/components/app/MessageActions";
-import TradeCard from "@/components/finance/TradeCard";
+import SentenceTradeCard from "@/components/finance/SentenceTradeCard";
 import AssetMatrix from "@/components/finance/AssetMatrix";
+import type { SupportedChain } from "@/components/atoms/TechDataChip";
 import type { AssetGroup } from "@/lib/wallet/balances";
+import {
+  approvalDecision,
+  collectApprovalAssetIds,
+  collectApprovals,
+} from "@/components/app/approvals";
+import { useResolvedAssetMeta } from "@/components/app/useAssetMeta";
+import { useWallet } from "@/lib/wallet/registry";
+import {
+  rememberApprovalDenied,
+  rememberApprovalTx,
+} from "@/components/app/approvalStore";
+import {
+  assetName,
+  formatNum,
+  harvestAssetMeta,
+  harvestSymbols,
+  inputOf,
+  isToolPart,
+  outputOf,
+  shortId,
+  stateOf,
+  str,
+  toolNameOf,
+  type ToolPart,
+} from "@/components/app/toolParts";
 
 /**
  * The assistant's live reply.
@@ -38,9 +65,24 @@ export function LiveResponse({
   onRegenerate?: () => void;
   onApproval?: (approvalId: string, approved: boolean) => void;
 }) {
-  /* Tickers ride along in the catalogue outputs, so a later quote in the
-   * same turn can name its pair without another round trip. */
-  const symbols = harvestSymbols(message.parts);
+  const approvalIds = useMemo(
+    () => collectApprovalAssetIds(message.parts),
+    [message.parts],
+  );
+  const resolvedMeta = useResolvedAssetMeta(approvalIds);
+  const symbols = useMemo(() => {
+    const inTurn = harvestSymbols(message.parts);
+    for (const [id, meta] of resolvedMeta) {
+      if (!inTurn.has(id) && meta.symbol) inTurn.set(id, meta.symbol);
+    }
+    return inTurn;
+  }, [message.parts, resolvedMeta]);
+  const assetMeta = useMemo(() => {
+    const inTurn = harvestAssetMeta(message.parts);
+    const merged = new Map(resolvedMeta);
+    for (const [id, meta] of inTurn) merged.set(id, meta);
+    return merged;
+  }, [message.parts, resolvedMeta]);
   const blocks: ActivityBlock[] = [];
   for (const part of message.parts) {
     if (part.type === "reasoning") {
@@ -67,8 +109,15 @@ export function LiveResponse({
 
   /* Approval cards ride below the activity pills: one per prepare_swap part
    * that is waiting on the user. A decided part keeps its card so the
-   * settlement stays visible; the card polls /api/tx itself. */
-  const approvals = collectApprovals(message.parts, symbols);
+   * settlement stays visible; the card polls /api/tx itself. The connected
+   * address lets the mapper name self-returns correctly. */
+  const { account } = useWallet();
+  const approvals = collectApprovals(
+    message,
+    symbols,
+    assetMeta,
+    account?.address ?? null,
+  );
   const balanceViews = collectBalanceViews(message.parts);
 
   if (blocks.length === 0 && approvals.length === 0 && balanceViews.length === 0) {
@@ -78,7 +127,10 @@ export function LiveResponse({
   return (
     <article
       className="min-w-0"
-      style={{ animation: "fade-up 450ms cubic-bezier(0.23,1,0.32,1) both" }}
+      /* fade-in only: this article mounts 2-3s after send, replacing the
+       * inflight loader in place. A fade-up would start it 8px low then
+       * slide it up, reading as a downward jump of the settled loader. */
+      style={{ animation: "fade-in 300ms ease-out both" }}
     >
       <ActivityPills blocks={blocks} running={running} />
       {!running &&
@@ -92,6 +144,8 @@ export function LiveResponse({
           >
             <AssetMatrix
               title={b.title}
+              address={b.address}
+              chain={b.chain}
               groups={b.groups}
               totalValueUsd={b.totalValueUsd}
               showFilters={b.showFilters}
@@ -101,25 +155,43 @@ export function LiveResponse({
         ))}
       {approvals.map((a) => (
         <div key={a.approvalId} className="mt-2.5">
-          <TradeCard
+          <SentenceTradeCard
+            action={a.action}
             fromSymbol={a.fromSymbol}
+            fromChain={a.fromChain}
             toSymbol={a.toSymbol}
+            toChain={a.toChain}
             amountIn={a.amountIn}
+            amountInUsd={a.amountInUsd}
             amountOut={a.amountOut}
+            amountOutUsd={a.amountOutUsd}
             minAmountOut={a.minAmountOut}
             minAmountOutRaw={a.minAmountOutRaw}
+            fromPriceUsd={a.fromPriceUsd}
+            toPriceUsd={a.toPriceUsd}
             recipient={a.recipient}
             expiresAt={a.expiresAt}
-            state={a.decided ? "submitted" : "awaiting"}
+            requestedAt={a.requestedAt}
+            slippageBps={a.slippageBps}
+            state={
+              a.status === "denied"
+                ? "denied"
+                : a.status === "approved"
+                  ? "submitted"
+                  : "awaiting"
+            }
             transactionId={a.transactionId}
             depositAddress={a.depositAddress}
-            swapInput={a.decided ? undefined : a.swapInput}
-            disabled={a.decided}
+            swapInput={a.status === "awaiting" ? a.swapInput : undefined}
+            disabled={a.status !== "awaiting"}
             onApprove={(tx) => {
               if (tx) rememberApprovalTx(a.approvalId, tx);
               onApproval?.(a.approvalId, true);
             }}
-            onDeny={() => onApproval?.(a.approvalId, false)}
+            onDeny={() => {
+              rememberApprovalDenied(a.approvalId);
+              onApproval?.(a.approvalId, false);
+            }}
           />
         </div>
       ))}
@@ -132,118 +204,13 @@ export function LiveResponse({
   );
 }
 
-/* ── part shapes ──────────────────────────────────────────────
- * Static tools arrive as `tool-<name>`; dynamic ones as `dynamic-tool`
- * with the name beside it. Either way a part carries its input, and once
- * the call resolves, its output or error. */
-
-type ToolPart = {
-  type: string;
-  toolCallId?: unknown;
-  toolName?: unknown;
-  state?: unknown;
-  input?: unknown;
-  output?: unknown;
-  errorText?: unknown;
-  approval?: unknown;
-};
-
-/* Settlement records keyed by approval, so a decided card keeps polling
- * across re-renders. Lost on reload; the timeline endpoint covers that. */
-const decidedTx = new Map<string, { transactionId: string; depositAddress: string }>();
-
-type ApprovalInfo = {
-  approvalId: string;
-  decided: boolean;
-  fromSymbol: string;
-  toSymbol: string;
-  amountIn: string;
-  amountOut: string;
-  minAmountOut?: string;
-  minAmountOutRaw?: string;
-  recipient: string;
-  expiresAt?: string;
-  swapInput?: {
-    fromAssetId: string;
-    toAssetId: string;
-    amount: string;
-    recipient: string;
-    slippageBps?: number;
-  };
-  transactionId?: string;
-  depositAddress?: string;
-};
-
-function approvalIdOf(part: ToolPart): string | null {
-  if (typeof part.approval === "object" && part.approval !== null) {
-    const id = (part.approval as { id?: unknown }).id;
-    if (typeof id === "string" && id.length > 0) return id;
-  }
-  return null;
-}
-
-function collectApprovals(
-  parts: UIMessage["parts"],
-  symbols: Map<string, string>,
-): ApprovalInfo[] {
-  // The figures live on the latest get_quote output in the turn; the
-  // approval input carries the pair the user actually agreed to.
-  let quoted: Record<string, unknown> | null = null;
-  for (const part of parts) {
-    const p = part as ToolPart;
-    if (toolNameOf(p) === "get_quote" && stateOf(p).startsWith("output")) {
-      const out = outputOf(p);
-      if (out.amountIn && out.amountOut) quoted = out;
-    }
-  }
-
-  const out: ApprovalInfo[] = [];
-  for (const part of parts) {
-    const p = part as ToolPart;
-    if (toolNameOf(p) !== "prepare_swap") continue;
-    const state = stateOf(p);
-    if (state !== "approval-requested" && state !== "approval-responded") continue;
-    const approvalId = approvalIdOf(p);
-    if (!approvalId) continue;
-    const input = inputOf(p);
-    const fromAssetId = str(input.fromAssetId);
-    const toAssetId = str(input.toAssetId);
-    const amount = str(input.amount);
-    const recipient = str(input.recipient);
-    if (!fromAssetId || !toAssetId || !amount || !recipient) continue;
-    const decided = state === "approval-responded";
-    const stored = decidedTx.get(approvalId);
-    out.push({
-      approvalId,
-      decided,
-      fromSymbol: assetName(fromAssetId, symbols),
-      toSymbol: assetName(toAssetId, symbols),
-      amountIn: str(quoted?.amountIn) ?? amount,
-      amountOut: str(quoted?.amountOut) ?? "—",
-      minAmountOut: str(quoted?.minAmountOut) ?? undefined,
-      minAmountOutRaw: str(quoted?.minAmountOutRaw) ?? undefined,
-      recipient,
-      expiresAt: str(quoted?.expiresAt) ?? undefined,
-      swapInput: decided
-        ? undefined
-        : {
-            fromAssetId,
-            toAssetId,
-            amount,
-            recipient,
-            slippageBps:
-              typeof input.slippageBps === "number" ? input.slippageBps : 100,
-          },
-      transactionId: stored?.transactionId,
-      depositAddress: stored?.depositAddress,
-    });
-  }
-  return out;
-}
+/* ── per-tool rows ──────────────────────────────────────────── */
 
 type BalanceViewInfo = {
   callId: string;
   title: string;
+  address?: string;
+  chain?: SupportedChain;
   showFilters: boolean;
   initialFilter: "all" | "stables" | "dust";
   totalValueUsd?: number;
@@ -261,7 +228,15 @@ function collectBalanceViews(parts: UIMessage["parts"]): BalanceViewInfo[] {
 
     if (!stateOf(p).startsWith("output")) continue;
     const out = outputOf(p);
-    if (!out.connected || !Array.isArray(out.groups) || out.groups.length === 0) continue;
+    // Turns stored before `source` existed carry `connected` instead. Keep
+    // those cards rendering after a reload rather than dropping them.
+    const isBalanceCard =
+      out.source === "session" ||
+      out.source === "requested" ||
+      out.connected === true;
+    if (!isBalanceCard || !Array.isArray(out.groups) || out.groups.length === 0) {
+      continue;
+    }
 
     const callId =
       typeof p.toolCallId === "string" ? p.toolCallId : `balance-${i}`;
@@ -269,6 +244,18 @@ function collectBalanceViews(parts: UIMessage["parts"]): BalanceViewInfo[] {
     views.push({
       callId,
       title: typeof out.title === "string" ? out.title : "Portfolio balances",
+      // Only a lookup the model asked for carries an address the reader has
+      // to be told about. The session card is already known to be theirs.
+      address:
+        (out.source === "requested" ||
+          (out.source === undefined && out.connected === true)) &&
+        typeof out.address === "string"
+          ? out.address
+          : undefined,
+      chain:
+        out.chain === "evm" || out.chain === "solana" || out.chain === "near"
+          ? out.chain
+          : undefined,
       showFilters: out.showFilters !== false,
       initialFilter:
         out.initialFilter === "stables" || out.initialFilter === "dust"
@@ -281,93 +268,6 @@ function collectBalanceViews(parts: UIMessage["parts"]): BalanceViewInfo[] {
   }
 
   return views;
-}
-
-export function rememberApprovalTx(
-  approvalId: string,
-  tx: { transactionId: string; depositAddress: string },
-): void {
-  decidedTx.set(approvalId, tx);
-}
-
-function isToolPart(type: string): boolean {
-  return type.startsWith("tool-") || type === "dynamic-tool";
-}
-
-function toolNameOf(part: ToolPart): string {
-  if (part.type === "dynamic-tool" && typeof part.toolName === "string") {
-    return part.toolName;
-  }
-  return part.type.startsWith("tool-")
-    ? part.type.slice("tool-".length)
-    : part.type;
-}
-
-function stateOf(part: ToolPart): string {
-  return typeof part.state === "string" ? part.state : "";
-}
-
-function inputOf(part: ToolPart): Record<string, unknown> {
-  return typeof part.input === "object" && part.input !== null
-    ? (part.input as Record<string, unknown>)
-    : {};
-}
-
-function outputOf(part: ToolPart): Record<string, unknown> {
-  return typeof part.output === "object" && part.output !== null
-    ? (part.output as Record<string, unknown>)
-    : {};
-}
-
-function str(value: unknown): string | null {
-  if (typeof value === "string" && value.length > 0) return value;
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return null;
-}
-
-/* ── the ticker map ─────────────────────────────────────────── */
-
-function harvestSymbols(parts: UIMessage["parts"]): Map<string, string> {
-  const symbols = new Map<string, string>();
-  for (const part of parts) {
-    if (!isToolPart(part.type)) continue;
-    const output = outputOf(part as ToolPart);
-    if (!Array.isArray(output.assets)) continue;
-    for (const entry of output.assets) {
-      if (typeof entry !== "object" || entry === null) continue;
-      const asset = entry as { assetId?: unknown; symbol?: unknown };
-      if (typeof asset.assetId === "string" && typeof asset.symbol === "string") {
-        symbols.set(asset.assetId, asset.symbol.toUpperCase());
-      }
-    }
-  }
-  return symbols;
-}
-
-/** Name an asset the way the reader would: ticker when a catalogue output
- * in this turn taught us one, otherwise a short id. Never invents one. */
-function assetName(assetId: string, symbols: Map<string, string>): string {
-  const known = symbols.get(assetId);
-  if (known) return known;
-  return shortId(assetId);
-}
-
-/** `nep141:172086…a33a1` — the standard stays, the hash compresses. */
-function shortId(id: string): string {
-  const head = id.includes(":") ? id.slice(0, id.indexOf(":")) : "";
-  const tail = id.includes(":") ? id.slice(id.indexOf(":") + 1) : id;
-  const short =
-    tail.length > 12 ? `${tail.slice(0, 6)}…${tail.slice(-4)}` : tail;
-  return head ? `${head}:${short}` : short;
-}
-
-function formatNum(raw: string): string {
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return raw;
-  if (n !== 0 && (Math.abs(n) >= 1_000_000 || Math.abs(n) < 0.0001)) {
-    return n.toExponential(2);
-  }
-  return String(Number(n.toPrecision(4)));
 }
 
 /* ── per-tool rows ────────────────────────────────────────────
@@ -402,9 +302,16 @@ function describeTool(
     case "get_quote":
       return quoteRow(part, symbols, "Quoted a price");
     case "prepare_swap": {
-      if (state === "approval-requested" || state === "approval-responded") {
+      if (state === "approval-requested") {
         const swap = quoteRow(part, symbols, "Proposed a trade");
         return { ...swap, chip: "awaiting approval", mono: false };
+      }
+      if (state === "approval-responded") {
+        const swap = quoteRow(part, symbols, "Proposed a trade");
+        if (approvalDecision(part) === false) {
+          return { ...swap, chip: "rejected", mono: false };
+        }
+        return swap;
       }
       return quoteRow(part, symbols, "Proposed a trade");
     }
