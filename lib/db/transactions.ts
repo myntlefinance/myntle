@@ -193,3 +193,64 @@ export async function getTransaction(
     }>),
   };
 }
+
+export type ConversationSettlement = {
+  toolApprovalId: string;
+  transactionId: string;
+  state: TxState;
+  depositAddress: string | null;
+  explorerUrls: string[];
+};
+
+/** Every settlement in one conversation, keyed by tool approval id. */
+export async function listConversationSettlements(
+  userId: string,
+  conversationIdOrSlug: string,
+): Promise<ConversationSettlement[]> {
+  const sb = getSupabaseAdmin();
+  const filter = conversationIdOrSlug.replace(/"/g, "");
+  const uuidRe =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const orFilter = uuidRe.test(filter)
+    ? `id.eq.${filter}`
+    : `slug.eq.${filter}`;
+  const { data: conv } = await sb
+    .from("conversations")
+    .select("id")
+    .eq("user_id", userId)
+    .is("deleted_at", null)
+    .or(orFilter)
+    .maybeSingle();
+  if (!conv) return [];
+  const { data } = await sb
+    .from("transactions")
+    .select("id, state, deposit_address, refs, outcome")
+    .eq("user_id", userId)
+    .eq("conversation_id", (conv as { id: string }).id)
+    .order("created_at", { ascending: true });
+  const out: ConversationSettlement[] = [];
+  for (const row of (data ?? []) as Array<{
+    id: string;
+    state: TxState;
+    deposit_address: string | null;
+    refs: Record<string, unknown> | null;
+    outcome: Record<string, unknown> | null;
+  }>) {
+    const toolApprovalId = row.refs?.toolApprovalId;
+    if (typeof toolApprovalId !== "string" || toolApprovalId.length === 0) {
+      continue;
+    }
+    const urls = (row.outcome as { explorerUrls?: unknown } | null)
+      ?.explorerUrls;
+    out.push({
+      toolApprovalId,
+      transactionId: row.id,
+      state: row.state,
+      depositAddress: row.deposit_address,
+      explorerUrls: Array.isArray(urls)
+        ? urls.filter((u): u is string => typeof u === "string").slice(0, 2)
+        : [],
+    });
+  }
+  return out;
+}

@@ -19,6 +19,30 @@ import {
 
 export type ApprovalStatus = "awaiting" | "approved" | "denied";
 
+/** One settlement row from the database, keyed by tool approval id. */
+export type SettlementSnapshot = {
+  state: string;
+  transactionId: string;
+  depositAddress?: string | null;
+  explorerUrls?: string[];
+};
+
+/** Terminal database states painted directly; anything else keeps polling. */
+export function settlementCardState(
+  state: string,
+): "settled" | "refunded" | "failed" | null {
+  if (state === "settled") return "settled";
+  if (state === "refunded") return "refunded";
+  if (
+    state === "failed" ||
+    state === "incomplete_deposit" ||
+    state === "needs_reconciliation"
+  ) {
+    return "failed";
+  }
+  return null;
+}
+
 export type ApprovalInfo = {
   approvalId: string;
   status: ApprovalStatus;

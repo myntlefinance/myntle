@@ -42,9 +42,9 @@ export async function swapLifecycle(input: SwapInput): Promise<SwapOutcome> {
 
   await markStateStep({ transactionId: input.transactionId, state: "pending" });
 
-  // Roughly five minutes of polling with a short head and a longer tail.
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    await sleep(attempt < 10 ? "3s" : "6s");
+  // Roughly five minutes of polling: a quick first check, then steady beats.
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    await sleep(attempt === 0 ? "5s" : "10s");
 
     const snapshot = await pollStatusStep(input.depositAddress);
 

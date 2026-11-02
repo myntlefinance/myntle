@@ -15,10 +15,14 @@ export type ApprovalTx = {
 
 const TX_KEY = "myntle.approval-tx.v1";
 const DENIED_KEY = "myntle.approval-denied.v1";
+const OUTCOME_KEY = "myntle.approval-outcome.v1";
 const MAX_ENTRIES = 200;
+
+export type ApprovalOutcome = "settled" | "refunded" | "failed";
 
 const tx = new Map<string, ApprovalTx>();
 const denied = new Set<string>();
+const outcome = new Map<string, ApprovalOutcome>();
 let hydrated = false;
 
 function storage(): Storage | null {
@@ -61,6 +65,15 @@ function hydrate(): void {
         }
       }
     }
+    const rawOutcome = store.getItem(OUTCOME_KEY);
+    if (rawOutcome) {
+      const parsed = JSON.parse(rawOutcome) as Record<string, ApprovalOutcome>;
+      for (const [id, value] of Object.entries(parsed).slice(-MAX_ENTRIES)) {
+        if (value === "settled" || value === "refunded" || value === "failed") {
+          outcome.set(id, value);
+        }
+      }
+    }
   } catch {
     // Corrupt storage never breaks the card; memory still works.
   }
@@ -73,6 +86,8 @@ function persist(): void {
     const txEntries = [...tx.entries()].slice(-MAX_ENTRIES);
     store.setItem(TX_KEY, JSON.stringify(Object.fromEntries(txEntries)));
     store.setItem(DENIED_KEY, JSON.stringify([...denied].slice(-MAX_ENTRIES)));
+    const outcomeEntries = [...outcome.entries()].slice(-MAX_ENTRIES);
+    store.setItem(OUTCOME_KEY, JSON.stringify(Object.fromEntries(outcomeEntries)));
   } catch {
     // Quota or privacy mode: memory still works for the session.
   }
@@ -82,6 +97,7 @@ function persist(): void {
 export function resetApprovalStore(): void {
   tx.clear();
   denied.clear();
+  outcome.clear();
   hydrated = false;
 }
 
@@ -104,6 +120,30 @@ export function rememberApprovalDenied(approvalId: string): void {
 export function getApprovalTx(approvalId: string): ApprovalTx | undefined {
   hydrate();
   return tx.get(approvalId);
+}
+
+/**
+ * Records a terminal settlement outcome so a reload paints it immediately
+ * instead of flashing the Approved spinner until the first status poll lands.
+ */
+export function rememberApprovalOutcome(
+  approvalId: string,
+  value: ApprovalOutcome,
+): void {
+  hydrate();
+  if (outcome.size >= MAX_ENTRIES) {
+    const oldest = outcome.keys().next();
+    if (!oldest.done) outcome.delete(oldest.value);
+  }
+  outcome.set(approvalId, value);
+  persist();
+}
+
+export function getApprovalOutcome(
+  approvalId: string,
+): ApprovalOutcome | undefined {
+  hydrate();
+  return outcome.get(approvalId);
 }
 
 export function isApprovalDenied(approvalId: string): boolean {

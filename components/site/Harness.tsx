@@ -30,6 +30,7 @@ import {
   IconWallet,
 } from "@tabler/icons-react";
 import { LiveResponse } from "@/components/app/LiveResponse";
+import type { SettlementSnapshot } from "@/components/app/approvals";
 import { ConnectGate } from "@/components/app/ConnectGate";
 import { UserBubble, AgentMessageActions } from "@/components/app/MessageActions";
 import { ThreadSkeleton } from "@/components/app/ThreadSkeleton";
@@ -794,6 +795,8 @@ export type LiveChat = {
   regenerate?: (messageId?: string) => void;
   editAndSend?: (messageId: string, nextText: string) => void;
   respondToApproval?: (approvalId: string, approved: boolean) => void;
+  /** Database settlements by tool approval id, for instant card states. */
+  settlements?: Record<string, SettlementSnapshot>;
 };
 
 const useIsomorphicLayoutEffect =
@@ -1409,6 +1412,7 @@ export default function Harness({
                               : undefined
                           }
                           onApproval={live.respondToApproval}
+                          settlements={live.settlements}
                         />
                       )}
                     </div>

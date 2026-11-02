@@ -31,6 +31,7 @@ import {
   type ThreadItem,
   type TrashedItem,
 } from "@/components/app/threadCache";
+import type { SettlementSnapshot } from "@/components/app/approvals";
 
 export type GatedExchange = { id: number; prompt: string };
 
@@ -50,6 +51,12 @@ export default function ChatView({
   const [conversationId, setConversationId] = useState<string | null>(
     initialConversationId,
   );
+  // Database settlements for the open conversation, keyed by tool approval
+  // id. One fetch covers every card in the thread — historical cards paint
+  // their terminal state at once instead of each polling /api/tx on load.
+  const [settlements, setSettlements] = useState<
+    Record<string, SettlementSnapshot>
+  >({});
   const conversationIdRef = useRef<string | null>(conversationId);
   conversationIdRef.current = conversationId;
 
@@ -127,6 +134,7 @@ export default function ChatView({
       setConversationId(null);
       setTitle(null);
       setGated([]);
+      setSettlements({});
       setLoadingThread(false);
       setHasMoreOlder(false);
       setLoadingOlder(false);
@@ -192,6 +200,54 @@ export default function ChatView({
     return () => clearTimeout(timer);
   }, [conversationId, messages.length, status, queryClient]);
 
+  // Settlement rows for the open conversation, in one request. Cards join
+  // by tool approval id; rows approved before the join existed stay on the
+  // localStorage fallback inside the card.
+  useEffect(() => {
+    if (!conversationId) {
+      setSettlements({});
+      return;
+    }
+    let cancelled = false;
+    void fetch(
+      `/api/conversations/${encodeURIComponent(conversationId)}/transactions`,
+    )
+      .then((res) => (res.ok ? res.json() : null))
+      .then(
+        (
+          body: {
+            settlements?: Array<{
+              toolApprovalId: string;
+              transactionId: string;
+              state: string;
+              depositAddress?: string | null;
+              explorerUrls?: string[];
+            }>;
+          } | null,
+        ) => {
+          if (!body || cancelled) return;
+          const next: Record<string, SettlementSnapshot> = {};
+          for (const s of body.settlements ?? []) {
+            if (typeof s.toolApprovalId === "string" && s.toolApprovalId) {
+              next[s.toolApprovalId] = {
+                state: s.state,
+                transactionId: s.transactionId,
+                depositAddress: s.depositAddress,
+                explorerUrls: s.explorerUrls,
+              };
+            }
+          }
+          setSettlements(next);
+        },
+      )
+      .catch(() => {
+        // Cards fall back to their own status poll.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId]);
+
   const switchConversation = useCallback(
     (targetId: string | null, pushHistory = true) => {
       if (targetId === conversationIdRef.current) return;
@@ -207,6 +263,7 @@ export default function ChatView({
       titleDirtyRef.current = false;
       pendingRef.current = null;
       setGated([]);
+      setSettlements({});
       setLoadingOlder(false);
 
       if (targetId) {
@@ -647,8 +704,9 @@ export default function ChatView({
       regenerate: regenerateTurn,
       editAndSend,
       respondToApproval,
+      settlements,
     }),
-    [messages, status, send, error, regenerateTurn, editAndSend, respondToApproval],
+    [messages, status, send, error, regenerateTurn, editAndSend, respondToApproval, settlements],
   );
 
   // Seeded mounts skip the history fetch (messages already present) but

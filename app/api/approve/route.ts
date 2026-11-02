@@ -35,6 +35,8 @@ const Body = z.object({
   nonce: z.string().max(128).optional(),
   txHash: z.string().optional(),
   conversationId: z.string().uuid().optional(),
+  /** Tool approval id (aitxt-…), so the card can rejoin its row on reload. */
+  approvalId: z.string().max(200).optional(),
 });
 
 /**
@@ -82,7 +84,7 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         error: "expired",
-        message: "That approval expired. Ask for a fresh quote.",
+        message: "Your approval has expired. Please try a fresh quote.",
       },
       { status: 409 },
     );
@@ -91,7 +93,7 @@ export async function POST(req: Request) {
   // A signature on an expired quote authorises nothing.
   if (Number.isNaN(Date.parse(body.expiresAt)) || Date.parse(body.expiresAt) <= Date.now()) {
     return NextResponse.json(
-      { error: "price-moved", message: "That price expired. Ask for a fresh quote." },
+      { error: "price-moved", message: "Your approval has expired. Please try a fresh quote." },
       { status: 409 },
     );
   }
@@ -130,7 +132,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error: "price-moved",
-          message: "The price moved. Review the new figures.",
+          message: "The price has moved. Please review and resubmit.",
           fresh: {
             amountOut: execution.amountOutFormatted,
             minAmountOut: execution.minAmountOut,
@@ -187,7 +189,7 @@ export async function POST(req: Request) {
       amountIn: execution.amountInFormatted,
       expectedOut: execution.amountOutFormatted,
       depositAddress: execution.depositAddress,
-      refs: { txHash: body.txHash ?? null },
+      refs: { txHash: body.txHash ?? null, toolApprovalId: body.approvalId ?? null },
     });
 
     const run = await start(swapLifecycle, [
