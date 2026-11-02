@@ -17,6 +17,10 @@ import {
   buildTradeApprovalMessage,
   isApprovalWindowValid,
 } from "@/lib/trade/approval-message";
+import {
+  getApprovalOutcome,
+  rememberApprovalOutcome,
+} from "@/components/app/approvalStore";
 import { actionTitle, type TradeAction } from "@/lib/trade/action";
 
 export type SentenceCardState =
@@ -82,6 +86,8 @@ export default function SentenceTradeCard({
   state = "awaiting",
   depositAddress,
   transactionId,
+  approvalId,
+  initialExplorerUrls,
   swapInput,
   conversationId,
   disabled = false,
@@ -112,6 +118,10 @@ export default function SentenceTradeCard({
   state?: SentenceCardState;
   depositAddress?: string;
   transactionId?: string;
+  /** Tool approval id, used to recall a settled outcome across reloads. */
+  approvalId?: string;
+  /** Explorer links already known from the database; the poll reconfirms. */
+  initialExplorerUrls?: string[];
   swapInput?: {
     fromAssetId: string;
     toAssetId: string;
@@ -125,12 +135,25 @@ export default function SentenceTradeCard({
   onDeny?: () => void;
 }) {
   const { account, signMessage, signNEP413 } = useWallet();
-  const [txState, setTxState] = useState<SentenceCardState>(state);
+  // A reload paints the remembered terminal outcome at once instead of
+  // flashing Approved until the first status poll lands. The poll below
+  // still reconfirms against the server record.
+  const [txState, setTxState] = useState<SentenceCardState>(() => {
+    if (approvalId) {
+      const remembered = getApprovalOutcome(approvalId);
+      if (remembered) return remembered;
+    }
+    return state;
+  });
   const [txId, setTxId] = useState<string | undefined>(transactionId);
   const [deposit, setDeposit] = useState<string | undefined>(depositAddress);
-  const [explorerUrls, setExplorerUrls] = useState<string[]>([]);
+  const [explorerUrls, setExplorerUrls] = useState<string[]>(
+    initialExplorerUrls ?? [],
+  );
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(() =>
+    txState === "failed" ? "Deposit failed. Nothing was moved." : null,
+  );
   // Quoted figures are local so a moved price can refresh the card in
   // place; props win whenever the turn produces a new quote.
   const [figures, setFigures] = useState({
@@ -140,7 +163,16 @@ export default function SentenceTradeCard({
     minAmountOutRaw,
     expiresAt,
   });
-  useEffect(() => setTxState(state), [state]);
+  // The host message restates the decision, never the settlement: once the
+  // card holds a terminal state (remembered or polled), props must not drag
+  // it back to Approved.
+  useEffect(() => {
+    setTxState((current) =>
+      current === "settled" || current === "refunded" || current === "failed"
+        ? current
+        : state,
+    );
+  }, [state]);
   useEffect(() => setTxId(transactionId), [transactionId]);
   useEffect(() => setDeposit(depositAddress), [depositAddress]);
   useEffect(() => {
@@ -181,10 +213,23 @@ export default function SentenceTradeCard({
           outcome?: { explorerUrls?: unknown };
         };
         if (cancelled || !body.state) return;
-        if (body.state === "settled") setTxState("settled");
-        else if (body.state === "refunded") setTxState("refunded");
-        else if (body.state === "failed") setTxState("failed");
-        else setTxState("submitted");
+        if (body.state === "settled") {
+          if (approvalId) rememberApprovalOutcome(approvalId, "settled");
+          setTxState("settled");
+        } else if (body.state === "refunded") {
+          if (approvalId) rememberApprovalOutcome(approvalId, "refunded");
+          setTxState("refunded");
+        } else if (
+          body.state === "failed" ||
+          body.state === "incomplete_deposit" ||
+          body.state === "needs_reconciliation"
+        ) {
+          // Terminal without settlement: the workflow gave up waiting for
+          // the deposit. Stop the spinner instead of polling forever.
+          if (approvalId) rememberApprovalOutcome(approvalId, "failed");
+          setTxState("failed");
+          setSubmitError("Deposit failed. Nothing was moved.");
+        } else setTxState("submitted");
         const urls = body.outcome?.explorerUrls;
         if (Array.isArray(urls)) {
           setExplorerUrls(
@@ -201,7 +246,7 @@ export default function SentenceTradeCard({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [txId, txState]);
+  }, [txId, txState, approvalId]);
 
   const handleApprove = async () => {
     if (!swapInput) {
@@ -209,7 +254,7 @@ export default function SentenceTradeCard({
       return;
     }
     if (expired) {
-      setSubmitError("That approval expired. Ask for a fresh quote.");
+      setSubmitError("Your approval has expired. Please try a fresh quote.");
       return;
     }
     if (!account) {
@@ -265,6 +310,7 @@ export default function SentenceTradeCard({
           message,
           ...auth,
           conversationId,
+          approvalId,
         }),
       });
       if (res.status === 409) {
@@ -279,12 +325,12 @@ export default function SentenceTradeCard({
         } | null;
         if (moved?.fresh) setFigures((f) => ({ ...f, ...moved.fresh }));
         setTxState("awaiting");
-        setSubmitError(moved?.message ?? "The price moved. Review the new figures.");
+        setSubmitError(moved?.message ?? "The price has moved. Please review and resubmit.");
         return;
       }
       if (res.status === 401) {
         setTxState("awaiting");
-        setSubmitError("The signature was rejected. Nothing was submitted.");
+        setSubmitError("Signature was rejected. Nothing was submitted.");
         return;
       }
       if (!res.ok) throw new Error("submit failed");
@@ -301,7 +347,7 @@ export default function SentenceTradeCard({
       });
     } catch {
       setTxState("awaiting");
-      setSubmitError("The trade could not start. Please try again.");
+      setSubmitError("Unable to execute trade. Please try again.");
     }
   };
 
@@ -578,14 +624,33 @@ export default function SentenceTradeCard({
         </Popup>
       ) : null}
 
-      {submitError ? (
-        <div
-          className="primitive-card-pad"
-          style={{ paddingTop: 0, paddingBottom: 6 }}
-        >
-          <p className="text-xs text-red">{submitError}</p>
+      {/* error drawer — same expanding section as the primitive */}
+      <div
+        className="grid transition-[grid-template-rows,opacity] duration-300"
+        style={{
+          gridTemplateRows: submitError ? "1fr" : "0fr",
+          opacity: submitError ? 1 : 0,
+          transitionTimingFunction: "cubic-bezier(0.16, 1, 0.3, 1)",
+        }}
+      >
+        <div className="overflow-hidden">
+          <div
+            className="primitive-card-pad"
+            style={{ paddingTop: 0, paddingBottom: 6 }}
+          >
+            {submitError ? (
+              <p
+                key={submitError}
+                role="alert"
+                className="text-xs text-red"
+                style={{ animation: "fade-in 180ms ease-out both" }}
+              >
+                {submitError}
+              </p>
+            ) : null}
+          </div>
         </div>
-      ) : null}
+      </div>
 
       {/* details drawer — the primitive's expanding section */}
       <div
