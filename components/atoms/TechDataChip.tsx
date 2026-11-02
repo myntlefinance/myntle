@@ -1,8 +1,24 @@
 "use client";
 
-import { useState, useEffect, useCallback, type MouseEvent } from "react";
-import { IconCopy, IconCheck } from "@tabler/icons-react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type MouseEvent,
+} from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
+import {
+  activateWarmState,
+  isTooltipWarm,
+  onTooltipEnter,
+  onTooltipLeave,
+  TOOLTIP_ENTER_ANIMATION,
+  TOOLTIP_PILL_CLASS,
+  TOOLTIP_PILL_TEXT,
+} from "@/components/app/tooltip";
 
 export type SupportedChain = "evm" | "solana" | "near";
 
@@ -31,7 +47,6 @@ export const CHIP_LAYOUT_TOKENS = {
   paddingX: "px-1.5",
   gap: "gap-1.5",
   iconSize: "size-3.5",
-  copyGlyphSize: 12,
 } as const;
 
 /**
@@ -174,6 +189,24 @@ export function TechDataChip({
   className?: string;
 }) {
   const [copied, setCopied] = useState(false);
+  const [tooltipPos, setTooltipPos] = useState<{
+    x: number;
+    top?: number;
+    bottom?: number;
+  } | null>(null);
+  const [isInstant, setIsInstant] = useState(false);
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearOpenTimer = useCallback(() => {
+    if (openTimerRef.current) {
+      clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => clearOpenTimer();
+  }, [clearOpenTimer]);
 
   useEffect(() => {
     if (!copied) return;
@@ -196,81 +229,150 @@ export function TechDataChip({
     [data.raw],
   );
 
+  const placeTooltip = useCallback((element: HTMLElement) => {
+    const rect = element.getBoundingClientRect();
+    const isNearTop = rect.top < 44;
+    setTooltipPos({
+      x: Math.min(
+        Math.max(rect.left + rect.width / 2, 56),
+        window.innerWidth - 56,
+      ),
+      bottom: isNearTop ? undefined : window.innerHeight - rect.top + 6,
+      top: isNearTop ? rect.bottom + 6 : undefined,
+    });
+  }, []);
+
+  const handleMouseEnter = (event: MouseEvent<HTMLButtonElement>) => {
+    const element = event.currentTarget;
+    onTooltipEnter();
+
+    if (isTooltipWarm()) {
+      // Warm window: skip the delay and the entrance animation
+      setIsInstant(true);
+      placeTooltip(element);
+      return;
+    }
+
+    // Cold hover: wait 400ms to prevent accidental activation
+    setIsInstant(false);
+    clearOpenTimer();
+    openTimerRef.current = setTimeout(() => {
+      placeTooltip(element);
+      activateWarmState();
+    }, 400);
+  };
+
+  const handleMouseLeave = () => {
+    clearOpenTimer();
+    setTooltipPos(null);
+    onTooltipLeave();
+  };
+
+  const handleFocus = (event: FocusEvent<HTMLButtonElement>) => {
+    setIsInstant(false);
+    placeTooltip(event.currentTarget);
+    activateWarmState();
+  };
+
+  const handleBlur = () => {
+    clearOpenTimer();
+    setTooltipPos(null);
+    onTooltipLeave();
+  };
+
+  useEffect(() => {
+    if (!tooltipPos) return;
+    const dismiss = () => {
+      clearOpenTimer();
+      setTooltipPos(null);
+      onTooltipLeave();
+    };
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", dismiss);
+    };
+  }, [tooltipPos, clearOpenTimer]);
+
   const truncated = truncateTechData(data.raw, data.chain, data.kind);
   const canTruncate = truncated !== data.raw;
 
   return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      title={`${data.label ?? "Address"}: ${data.raw} (Click to copy)`}
-      aria-label={`Copy ${data.label ?? "address"}: ${data.raw}`}
-      className={cn(
-        "group/chip mx-1 inline-flex max-w-full items-center rounded-[6px] border border-accent/40 bg-field text-left align-middle font-mono text-[12px] leading-tight text-ink transition-[background-color,border-color,transform] duration-75 hover:border-accent/70 hover:bg-hover dark:border-accent/45 dark:hover:border-accent/75 active:scale-[0.99] cursor-pointer select-none",
-        CHIP_LAYOUT_TOKENS.paddingY,
-        CHIP_LAYOUT_TOKENS.paddingX,
-        CHIP_LAYOUT_TOKENS.gap,
-        className,
-      )}
-    >
-      {/* Prefix chain logo: fitted with object-contain */}
-      {data.icon && (
-        <span
-          className={cn(
-            "flex shrink-0 items-center justify-center",
-            CHIP_LAYOUT_TOKENS.iconSize,
-          )}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={data.icon}
-            alt=""
-            aria-hidden="true"
-            className="size-full object-contain select-none pointer-events-none"
-          />
-        </span>
-      )}
-
-      {/* Responsive mono value: middle-truncated on mobile (<640px), full on desktop */}
-      <span className="min-w-0 font-mono text-[12px] tracking-tight">
-        {canTruncate ? (
-          <>
-            <span className="sm:hidden">{truncated}</span>
-            <span className="hidden sm:inline">{data.raw}</span>
-          </>
-        ) : (
-          data.raw
-        )}
-      </span>
-
-      {/* Suffix copy icon: always present, tactile morph into checkmark */}
-      <span
+    <>
+      <button
+        type="button"
+        onClick={handleCopy}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        aria-label={`Copy ${data.label ?? "address"}: ${data.raw}`}
         className={cn(
-          "relative flex shrink-0 items-center justify-center text-ink-3 transition-colors duration-75 group-hover/chip:text-ink-2",
-          CHIP_LAYOUT_TOKENS.iconSize,
+          "mx-1 inline-flex max-w-full cursor-pointer select-none items-center rounded-[6px] bg-field text-left align-middle text-[12px] leading-tight text-ink transition-[background-color,transform] duration-75 hover:bg-hover active:scale-[0.99]",
+          CHIP_LAYOUT_TOKENS.paddingY,
+          CHIP_LAYOUT_TOKENS.paddingX,
+          CHIP_LAYOUT_TOKENS.gap,
+          className,
         )}
       >
-        <span
-          aria-hidden={copied}
-          className="absolute inset-0 flex items-center justify-center transition-opacity duration-100 ease-out"
-          style={{
-            opacity: copied ? 0 : 1,
-            pointerEvents: copied ? "none" : "auto",
-          }}
-        >
-          <IconCopy size={CHIP_LAYOUT_TOKENS.copyGlyphSize} stroke={1.8} />
+        {/* Prefix chain logo: fitted with object-contain */}
+        {data.icon && (
+          <span
+            className={cn(
+              "flex shrink-0 items-center justify-center",
+              CHIP_LAYOUT_TOKENS.iconSize,
+            )}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={data.icon}
+              alt=""
+              aria-hidden="true"
+              className="pointer-events-none size-full object-contain select-none"
+            />
+          </span>
+        )}
+
+        {/* Responsive value: middle-truncated on mobile (<640px), full on desktop */}
+        <span className="min-w-0 text-[12px]">
+          {canTruncate ? (
+            <>
+              <span className="sm:hidden">{truncated}</span>
+              <span className="hidden sm:inline">{data.raw}</span>
+            </>
+          ) : (
+            data.raw
+          )}
         </span>
-        <span
-          aria-hidden={!copied}
-          className="absolute inset-0 flex items-center justify-center text-green transition-opacity duration-100 ease-out"
-          style={{
-            opacity: copied ? 1 : 0,
-            pointerEvents: copied ? "auto" : "none",
-          }}
-        >
-          <IconCheck size={CHIP_LAYOUT_TOKENS.copyGlyphSize} stroke={2.2} />
-        </span>
-      </span>
-    </button>
+      </button>
+
+      {typeof document !== "undefined" &&
+        tooltipPos &&
+        createPortal(
+          <div
+            role="tooltip"
+            data-instant={isInstant ? "" : undefined}
+            className="pointer-events-none fixed z-[9999] -translate-x-1/2"
+            style={{
+              left: tooltipPos.x,
+              top: tooltipPos.top,
+              bottom: tooltipPos.bottom,
+            }}
+          >
+            <div
+              className={cn(TOOLTIP_PILL_CLASS, TOOLTIP_PILL_TEXT)}
+              style={
+                isInstant
+                  ? { transition: "none", animation: "none" }
+                  : { animation: TOOLTIP_ENTER_ANIMATION }
+              }
+            >
+              {copied ? "Copied!" : "Click to copy"}
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }

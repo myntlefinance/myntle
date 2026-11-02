@@ -18,7 +18,7 @@ import {
   isTooltipWarm,
   onTooltipEnter,
   onTooltipLeave,
-} from "@/components/app/MessageActions";
+} from "@/components/app/tooltip";
 import { useQueryClient } from "@tanstack/react-query";
 import { THREADS_QUERY_KEY, TRASHED_QUERY_KEY } from "@/components/app/threadQueries";
 import {

@@ -25,14 +25,17 @@ describe("MarkdownCode integration with Beautiful UI CodeBlock", () => {
     expect(html).not.toContain("shadow-card");
   });
 
-  it("renders blockchain address as TechDataChip with thin Myntle blue border outline", () => {
+  it("renders blockchain address as a quiet TechDataChip without an outline", () => {
     const md = "Connected wallet: `0x32596df10ff2ac5acde8406e6adcc8d047921073`";
     const html = ReactDOMServer.renderToString(<Markdown>{md}</Markdown>);
 
     expect(html).toContain("0x32596df10ff2ac5acde8406e6adcc8d047921073");
-    expect(html).toContain("group/chip");
-    expect(html).toContain("border-accent/40");
+    expect(html).toContain("bg-field");
+    expect(html).not.toContain("border-accent");
     expect(html).toContain("Copy EVM address: 0x32596df10ff2ac5acde8406e6adcc8d047921073");
+    // The chip reads in the body typeface, with no copy glyph to compete with the address
+    expect(html).not.toContain("font-mono");
+    expect(html).not.toContain("<svg");
   });
 
   it("renders fenced code block with Beautiful UI CodeBlock and language pill", () => {

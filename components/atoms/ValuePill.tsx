@@ -9,7 +9,7 @@ const TONES: Record<Tone, { cls: string; ring: string }> = {
 };
 
 /** Inline value badge — a plain value (a date, a name, a count) set off in
- *  prose. Softer than a StatusPill (no dot) and not a mono token (see Chip). */
+ *  prose. Quieter than a StatusPill and not a mono token (see Chip). */
 export function ValuePill({
   children,
   tone = "neutral",

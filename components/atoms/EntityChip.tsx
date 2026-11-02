@@ -21,8 +21,8 @@ export function Monogram({
 }
 
 /** Inline entity reference — a monogram + name in a soft field pill.
- *  Names a vendor, person, or record inside running text. Softer than a
- *  StatusPill (no dot, no state) and not a mono token (see Chip). */
+ *  Names a vendor, person, or record inside running text. Quieter than a
+ *  StatusPill (no state) and not a mono token (see Chip). */
 export function EntityChip({
   name,
   color,

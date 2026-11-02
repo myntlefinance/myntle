@@ -20,6 +20,15 @@ import {
   IconThumbUpFilled,
 } from "@tabler/icons-react";
 import { Button } from "@/components/atoms/Button";
+import {
+  activateWarmState,
+  globalIsWarm,
+  onTooltipEnter,
+  onTooltipLeave,
+  TOOLTIP_ENTER_ANIMATION,
+  TOOLTIP_PILL_CLASS,
+  TOOLTIP_PILL_TEXT,
+} from "@/components/app/tooltip";
 
 /** Brand blue extracted from /public/myntle-logo.svg */
 const MYNTLE_BLUE = "#00A6FF";
@@ -31,49 +40,6 @@ type IconProps = {
   stroke?: number;
   style?: CSSProperties;
 };
-
-/* ─────────────────────────────────────────────────────────
- * EMIL KOWALSKI TOOLTIP COORDINATOR
- *
- * "Tooltips should delay before appearing to prevent accidental
- * activation. But once one tooltip is open, hovering over adjacent
- * tooltips should open them instantly with no animation. This feels
- * faster without defeating the purpose of the initial delay."
- *
- * - Cold hover: waits 400ms delay, then smoothly animates in (pop-in 125ms).
- * - Warm window: once any tooltip is active, adjacent tooltips open with
- *   0ms delay and 0ms animation duration.
- * - Cool-down: after mouse leaves for 400ms, reverts back to cold.
- * ───────────────────────────────────────────────────────── */
-
-export let globalIsWarm = false;
-export let globalWarmTimer: ReturnType<typeof setTimeout> | null = null;
-
-export function onTooltipEnter() {
-  if (globalWarmTimer) {
-    clearTimeout(globalWarmTimer);
-    globalWarmTimer = null;
-  }
-}
-
-export function onTooltipLeave() {
-  if (globalWarmTimer) clearTimeout(globalWarmTimer);
-  globalWarmTimer = setTimeout(() => {
-    globalIsWarm = false;
-  }, 400);
-}
-
-export function activateWarmState() {
-  globalIsWarm = true;
-  if (globalWarmTimer) {
-    clearTimeout(globalWarmTimer);
-    globalWarmTimer = null;
-  }
-}
-
-export function isTooltipWarm() {
-  return globalIsWarm;
-}
 
 /**
  * An action icon button with an Emil Kowalski-crafted hover tooltip.
@@ -231,15 +197,15 @@ export function MessageActionButton({
         <div
           role="tooltip"
           data-instant={isInstant ? "" : undefined}
-          className={`pointer-events-none absolute bottom-[calc(100%+6px)] left-1/2 -translate-x-1/2 z-30 inline-flex h-5.5 items-center justify-center whitespace-nowrap rounded-full bg-inset px-2.5 text-[11.5px] font-medium shadow-hairline origin-bottom
-            ${active && !activeColor && ActiveIcon ? "text-green" : "text-ink dark:text-white"}`}
+          className={`absolute bottom-[calc(100%+6px)] left-1/2 z-30 origin-bottom -translate-x-1/2 ${TOOLTIP_PILL_CLASS} ${
+            active && !activeColor && ActiveIcon
+              ? "text-green"
+              : TOOLTIP_PILL_TEXT
+          }`}
           style={
             isInstant
               ? { transition: "none", animation: "none" }
-              : {
-                  animation:
-                    "pop-in 125ms cubic-bezier(0.23, 1, 0.32, 1) both",
-                }
+              : { animation: TOOLTIP_ENTER_ANIMATION }
           }
         >
           {currentLabel}

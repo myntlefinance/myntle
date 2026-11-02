@@ -108,7 +108,7 @@ export default function LoadingState({
   if (surfer) {
     return (
       <div role="status" className="flex w-fit flex-col items-start">
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           <LoaderGrid {...PATTERNS.Drive} />
           {labelEl}
           {elapsedEl}
@@ -145,7 +145,7 @@ export default function LoadingState({
   }
 
   return (
-    <div role="status" className="flex w-fit items-center gap-2.5">
+    <div role="status" className="flex w-fit items-center gap-2">
       <LoaderGrid delays={delays} dur={dur} round={round} />
       {labelEl}
       {elapsedEl}
