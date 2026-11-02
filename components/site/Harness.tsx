@@ -987,6 +987,29 @@ export default function Harness({
   const lastMessageRole = lastMessage?.role;
   const liveStatus = live?.status;
 
+  /* Stable identity for the thread container. The server id arrives after
+   * the first turn (null → slug for the same messages), which must not
+   * remount the list — the key below would replay its fade and wipe local
+   * message state mid-stream. So the key only adopts a new id on a real
+   * switch (different messages), never on first-save or older-page
+   * prepends, which keep the current key. Adjusted during render so the
+   * commit already carries the right key; no flash frame. */
+  const [threadKey, setThreadKey] = useState<string>(activeChatId ?? "thread");
+  const prevIdForKey = prevActiveChatIdRef.current;
+  const prevFirstForKey = prevFirstMsgIdRef.current;
+  let desiredKey = activeChatId ?? "thread";
+  if (activeChatId === prevIdForKey) {
+    desiredKey = threadKey;
+  } else if (
+    activeChatId != null &&
+    prevIdForKey == null &&
+    prevFirstForKey === firstMsgId &&
+    firstMsgId != null
+  ) {
+    desiredKey = threadKey;
+  }
+  if (desiredKey !== threadKey) setThreadKey(desiredKey);
+
   const scrollToBottom = useCallback((smooth = true) => {
     stickRef.current = true;
     const el = scrollRef.current;
@@ -1008,7 +1031,20 @@ export default function Harness({
     const el = scrollRef.current;
     if (!el) return;
 
-    const isChatSwitch = prevActiveChatIdRef.current !== activeChatId;
+    /* A real switch is a different conversation, not the same one learning
+     * its server id (null → slug with identical messages) and not the first
+     * time the thread becomes active (EmptyState → thread on send, where the
+     * spacer the send just set must survive). */
+    const prevId = prevActiveChatIdRef.current;
+    const prevFirst = prevFirstMsgIdRef.current;
+    const isFirstSave =
+      activeChatId != null &&
+      prevId == null &&
+      prevFirst === firstMsgId &&
+      firstMsgId != null;
+    const isBecomingActive = prevId === undefined;
+    const isChatSwitch =
+      prevId !== activeChatId && !isFirstSave && !isBecomingActive;
 
     if (isChatSwitch) {
       initialSpacerRef.current = 0;
@@ -1351,7 +1387,7 @@ export default function Harness({
           <ThreadSkeleton bottomPad={composerH + 16} narrow={narrow} />
         ) : (
           <div
-            key={activeChatId ?? "thread"}
+            key={threadKey}
             className={`flex flex-col gap-8 pt-8 ${narrow ? "px-4" : "px-4 sm:px-8 lg:px-12"}`}
             /* pad the bottom by the floating composer's height so the last message
                can rest flush with the bar and older content scrolls behind it */
