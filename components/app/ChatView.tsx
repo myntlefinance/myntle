@@ -97,7 +97,7 @@ export default function ChatView({
     }
   }, [initialConversationId, router]);
 
-  const { messages, sendMessage, setMessages, status, error, regenerate, addToolApprovalResponse } = useChat({
+  const { messages, sendMessage, setMessages, status, clearError, regenerate, addToolApprovalResponse } = useChat({
     // Seed first paint from cache so a thread route never flashes the
     // composer. useChat only reads this once; later switches go through
     // setMessages in switchConversation.
@@ -117,6 +117,40 @@ export default function ChatView({
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+
+  // A failed turn must look the same live as it does after a refresh. The
+  // server persists `error-<userId>` ("An error occurred.") when the stream
+  // fails, but the client only held the transient `error` state — so the red
+  // line vanished on the next send while the database kept the bubble.
+  // Materialize the same deterministic bubble here and clear the transient
+  // error, dropping any trailing partial from the failed turn to match the
+  // persisted shape (user + error, no partial).
+  useEffect(() => {
+    if (status !== "error") return;
+    setMessages((current) => {
+      const lastUser = [...current].reverse().find((m) => m.role === "user");
+      if (!lastUser) return current;
+      const errorId = `error-${lastUser.id}`;
+      if (current.some((m) => m.id === errorId)) return current;
+      const errorMessage: UIMessage = {
+        id: errorId,
+        role: "assistant",
+        parts: [{ type: "text", text: "An error occurred." }],
+        metadata: { createdAt: new Date().toISOString() },
+      };
+      const last = current[current.length - 1];
+      const lastUserIdx = current.map((m) => m.id).lastIndexOf(lastUser.id);
+      if (
+        last &&
+        last.role === "assistant" &&
+        current.length - 1 > lastUserIdx
+      ) {
+        return [...current.slice(0, -1), errorMessage];
+      }
+      return [...current, errorMessage];
+    });
+    clearError();
+  }, [status, setMessages, clearError]);
 
   // Private chat route guard: an unauthenticated visitor cannot view a saved thread.
   useEffect(() => {
@@ -700,13 +734,16 @@ export default function ChatView({
       messages,
       status,
       send,
-      error: error?.message,
+      // Failed turns are materialized as durable "An error occurred."
+      // bubbles (matching the persisted row), so the transient red state is
+      // never shown — it would vanish on the next send while the bubble stays.
+      error: undefined,
       regenerate: regenerateTurn,
       editAndSend,
       respondToApproval,
       settlements,
     }),
-    [messages, status, send, error, regenerateTurn, editAndSend, respondToApproval, settlements],
+    [messages, status, send, regenerateTurn, editAndSend, respondToApproval, settlements],
   );
 
   // Seeded mounts skip the history fetch (messages already present) but
