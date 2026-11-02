@@ -20,18 +20,21 @@ import {
 import { ConfirmDialog } from "@/components/app/TrashView";
 import { Button } from "@/components/atoms/Button";
 import { useQueryClient } from "@tanstack/react-query";
-import { THREADS_QUERY_KEY, TRASHED_QUERY_KEY } from "@/components/app/threadQueries";
 import {
-  fetchThreads,
-  fetchTrashed,
+  THREADS_QUERY_KEY,
+  TRASHED_QUERY_KEY,
+  useThreads,
+  useTrashed,
+} from "@/components/app/threadQueries";
+import {
+  deleteCachedMessages,
+  findThreadLabel,
   messageCache,
   prefetchInflight,
   prefetchThread,
-  readThreadsCache,
-  readTrashedCache,
-  type ThreadItem,
-  type TrashedItem,
+  trashedMessageCache,
 } from "@/components/app/threadCache";
+import { ThreadSkeleton } from "@/components/app/ThreadSkeleton";
 import { TITLE_MAX_CHARS } from "@/lib/ai/title";
 
 
@@ -45,9 +48,11 @@ export default function TrashDetailView({ slug }: { slug: string }) {
   }, [router]);
   const queryClient = useQueryClient();
   const id = decodeURIComponent(slug);
-  const [threads, setThreads] = useState<ThreadItem[]>(() => readThreadsCache());
-  const [trashed, setTrashed] = useState<TrashedItem[]>(() => readTrashedCache());
-  const [messages, setMessages] = useState<UIMessage[] | null>(null);
+  const { data: threads = [] } = useThreads();
+  const { data: trashed = [] } = useTrashed();
+  const [messages, setMessages] = useState<UIMessage[] | null>(
+    () => trashedMessageCache.get(id) ?? null,
+  );
   const [title, setTitle] = useState<string | null>(null);
   const [deletedAt, setDeletedAt] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
@@ -59,25 +64,15 @@ export default function TrashDetailView({ slug }: { slug: string }) {
     [messages],
   );
 
-  const refresh = useCallback(async () => {
-    const [nextThreads, nextTrashed] = await Promise.all([
-      fetchThreads(),
-      fetchTrashed(),
-    ]);
-    queryClient.setQueryData(THREADS_QUERY_KEY, nextThreads);
-    queryClient.setQueryData(TRASHED_QUERY_KEY, nextTrashed);
-    setThreads(nextThreads);
-    setTrashed(nextTrashed);
-  }, [queryClient]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
   const renameThread = useCallback(
     (threadId: string, next: string) => {
       const cleaned = next.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX_CHARS);
       if (!cleaned) return;
+      const current =
+        (threadId === id ? title : null) ??
+        findThreadLabel(threadId) ??
+        threads.find((t) => t.id === threadId)?.label;
+      if (current && cleaned === current.trim()) return;
       void fetch(`/api/conversations/${encodeURIComponent(threadId)}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -86,10 +81,10 @@ export default function TrashDetailView({ slug }: { slug: string }) {
         .then((res) => {
           if (!res.ok) throw new Error("rename failed");
         })
-        .then(() => refresh())
-        .catch(() => refresh());
+        .then(() => queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY }))
+        .catch(() => queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY }));
     },
-    [refresh],
+    [id, queryClient, threads, title],
   );
 
   const deleteThread = useCallback(
@@ -101,19 +96,25 @@ export default function TrashDetailView({ slug }: { slug: string }) {
           if (!res.ok) throw new Error("delete failed");
         })
         .then(() => {
-          messageCache.delete(threadId);
-          prefetchInflight.delete(threadId);
-          void refresh();
+          deleteCachedMessages(threadId);
+          void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
+          void queryClient.invalidateQueries({ queryKey: TRASHED_QUERY_KEY });
         })
-        .catch(() => refresh());
+        .catch(() => queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY }));
     },
-    [refresh],
+    [queryClient],
   );
 
   useEffect(() => {
     let cancelled = false;
-    setMessages(null);
-    setMissing(false);
+    const cached = trashedMessageCache.get(id);
+    if (cached) {
+      setMessages(cached);
+      setMissing(false);
+    } else {
+      setMessages(null);
+      setMissing(false);
+    }
     void fetch(`/api/conversations/${encodeURIComponent(id)}/messages?limit=100&trashed=1`)
       .then((res) => {
         if (!res.ok) throw new Error("not found");
@@ -126,7 +127,9 @@ export default function TrashDetailView({ slug }: { slug: string }) {
           deletedAt?: string | null;
         }) => {
           if (cancelled) return;
-          setMessages(body.messages ?? []);
+          const msgs = body.messages ?? [];
+          trashedMessageCache.set(id, msgs);
+          setMessages(msgs);
           setTitle(body.title ?? null);
           if (body.deletedAt) setDeletedAt(body.deletedAt);
         },
@@ -149,11 +152,14 @@ export default function TrashDetailView({ slug }: { slug: string }) {
         body: JSON.stringify({ restore: true }),
       }).catch(() => null);
       if (!res || !res.ok) return;
+      trashedMessageCache.delete(id);
+      void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: TRASHED_QUERY_KEY });
     } finally {
       setBusy(false);
     }
     router.push(`/chat/${encodeURIComponent(id)}`);
-  }, [busy, id, router]);
+  }, [busy, id, router, queryClient]);
 
   const destroy = useCallback(async () => {
     if (busy) return;
@@ -163,12 +169,14 @@ export default function TrashDetailView({ slug }: { slug: string }) {
         `/api/conversations/${encodeURIComponent(id)}?permanent=true`,
         { method: "DELETE" },
       ).catch(() => undefined);
+      trashedMessageCache.delete(id);
+      void queryClient.invalidateQueries({ queryKey: TRASHED_QUERY_KEY });
     } finally {
       setBusy(false);
     }
     setConfirming(false);
     router.push("/trash");
-  }, [busy, id, router]);
+  }, [busy, id, router, queryClient]);
 
   const headerTitle = title ?? trashed.find((t) => t.id === id)?.label ?? "Deleted chat";
   const effectiveDeletedAt =
@@ -237,68 +245,60 @@ export default function TrashDetailView({ slug }: { slug: string }) {
 
             <div className="relative flex min-h-0 flex-1 flex-col">
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-slim [scrollbar-gutter:stable]">
-                <div className="flex flex-col gap-8 px-4 pt-8 sm:px-8 lg:px-12">
-                  {messages === null && !missing ? (
-                    <>
-                      <span className="sr-only" role="status">
-                        Loading deleted chat.
-                      </span>
-                      <div className="mx-auto w-full max-w-[720px]">
-                        {[70, 45, 60].map((width) => (
-                          <div
-                            key={width}
-                            aria-hidden
-                            className="mb-4 h-4 animate-pulse rounded-[4px] bg-hover-2"
-                            style={{ width: `${width}%` }}
-                          />
-                        ))}
+                {messages === null && !missing ? (
+                  <ThreadSkeleton />
+                ) : (
+                  <div
+                    key={id}
+                    className="flex flex-col gap-8 px-4 pt-8 pb-8 sm:px-8 lg:px-12"
+                    style={{ animation: "fade-in 150ms ease both" }}
+                  >
+                    {missing ? (
+                      <div className="mx-auto flex w-full max-w-[720px] flex-col items-center justify-center gap-1 py-16">
+                        <span className="text-[13.5px] font-medium text-ink">
+                          This chat is gone.
+                        </span>
+                        <span className="text-[12.5px] text-ink-3">
+                          It was deleted permanently or expired.
+                        </span>
                       </div>
-                    </>
-                  ) : missing ? (
-                    <div className="mx-auto flex w-full max-w-[720px] flex-col items-center justify-center gap-1 py-16">
-                      <span className="text-[13.5px] font-medium text-ink">
-                        This chat is gone.
-                      </span>
-                      <span className="text-[12.5px] text-ink-3">
-                        It was deleted permanently or expired.
-                      </span>
-                    </div>
-                  ) : messages!.length === 0 ? (
-                    <div className="mx-auto flex w-full max-w-[720px] flex-col items-center justify-center gap-1 py-16">
-                      <span className="text-[13.5px] font-medium text-ink">
-                        No messages.
-                      </span>
-                      <span className="text-[12.5px] text-ink-3">
-                        This chat has nothing to preview.
-                      </span>
-                    </div>
-                  ) : (
-                    clusteredMessages.map(({ message, showTimestamp, timestamp }) => (
-                      <Fragment key={message.id}>
-                        {showTimestamp && (
-                          <div className="mx-auto w-full max-w-[720px]">
-                            <TimestampPill timestamp={timestamp} />
-                          </div>
-                        )}
-                        <div className="mx-auto w-full max-w-[720px]">
-                          {message.role === "user" ? (
-                            <UserBubble
-                              text={message.parts
-                                .filter((part) => part.type === "text")
-                                .map((part) => part.text)
-                                .join("")}
-                            />
-                          ) : (
-                            <LiveResponse
-                              message={message}
-                              status="ready"
-                            />
+                    ) : messages!.length === 0 ? (
+                      <div className="mx-auto flex w-full max-w-[720px] flex-col items-center justify-center gap-1 py-16">
+                        <span className="text-[13.5px] font-medium text-ink">
+                          No messages.
+                        </span>
+                        <span className="text-[12.5px] text-ink-3">
+                          This chat has nothing to preview.
+                        </span>
+                      </div>
+                    ) : (
+                      clusteredMessages.map(({ message, showTimestamp, timestamp }) => (
+                        <Fragment key={message.id}>
+                          {showTimestamp && (
+                            <div className="mx-auto w-full max-w-[720px]">
+                              <TimestampPill timestamp={timestamp} />
+                            </div>
                           )}
-                        </div>
-                      </Fragment>
-                    ))
-                  )}
-                </div>
+                          <div className="mx-auto w-full max-w-[720px]">
+                            {message.role === "user" ? (
+                              <UserBubble
+                                text={message.parts
+                                  .filter((part) => part.type === "text")
+                                  .map((part) => part.text)
+                                  .join("")}
+                              />
+                            ) : (
+                              <LiveResponse
+                                message={message}
+                                status="ready"
+                              />
+                            )}
+                          </div>
+                        </Fragment>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </section>

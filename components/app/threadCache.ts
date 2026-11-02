@@ -17,7 +17,52 @@ export type TrashedItem = { id: string; label: string; deletedAt: string };
 // thread warms one entry. Nothing is prefetched in bulk.
 export const messageCache = new Map<string, UIMessage[]>();
 export const prefetchInflight = new Set<string>();
+export const trashedMessageCache = new Map<string, UIMessage[]>();
+export const trashedPrefetchInflight = new Set<string>();
 export const threadPagination = new Map<string, { hasMore: boolean; oldestSeq?: number }>();
+
+export function getCachedMessages(slug: string): UIMessage[] | undefined {
+  const mem = messageCache.get(slug);
+  if (mem && mem.length > 0) return mem;
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      const raw = sessionStorage.getItem(`myntle-msgs-${slug}`);
+      if (raw) {
+        const parsed = JSON.parse(raw) as UIMessage[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          messageCache.set(slug, parsed);
+          return parsed;
+        }
+      }
+    }
+  } catch {
+    // Ignore.
+  }
+  return undefined;
+}
+
+export function setCachedMessages(slug: string, messages: UIMessage[]) {
+  messageCache.set(slug, messages);
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.setItem(`myntle-msgs-${slug}`, JSON.stringify(messages));
+    }
+  } catch {
+    // Quota or private mode.
+  }
+}
+
+export function deleteCachedMessages(slug: string) {
+  messageCache.delete(slug);
+  prefetchInflight.delete(slug);
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.removeItem(`myntle-msgs-${slug}`);
+    }
+  } catch {
+    // Ignore.
+  }
+}
 
 // Survives chat-to-chat remounts within the session: the sidebar renders
 // this instantly and refreshes in the background, so it never flashes empty.
@@ -28,16 +73,28 @@ let trashedInflightPromise: Promise<TrashedItem[]> | null = null;
 
 export function clearThreadCache() {
   messageCache.clear();
+  trashedMessageCache.clear();
   prefetchInflight.clear();
+  trashedPrefetchInflight.clear();
   threadPagination.clear();
   threadsInflightPromise = null;
   trashedInflightPromise = null;
   threadsMemoryCache = null;
   trashedMemoryCache = null;
   try {
-    localStorage.removeItem("myntle-threads");
-    localStorage.removeItem("myntle-trashed");
-    localStorage.removeItem("myntle-conv");
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem("myntle-threads");
+      localStorage.removeItem("myntle-trashed");
+      localStorage.removeItem("myntle-conv");
+    }
+    if (typeof sessionStorage !== "undefined") {
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const key = sessionStorage.key(i);
+        if (key?.startsWith("myntle-msgs-")) {
+          sessionStorage.removeItem(key);
+        }
+      }
+    }
   } catch {
     // Ignore.
   }
@@ -195,7 +252,7 @@ export function prefetchThread(slug: string) {
     })
     .then((body: { messages?: UIMessage[]; hasMore?: boolean; oldestSeq?: number } | null) => {
       if (body?.messages && body.messages.length > 0) {
-        messageCache.set(slug, body.messages);
+        setCachedMessages(slug, body.messages);
         if (body.hasMore !== undefined) {
           threadPagination.set(slug, {
             hasMore: body.hasMore,
@@ -209,3 +266,27 @@ export function prefetchThread(slug: string) {
       prefetchInflight.delete(slug);
     });
 }
+
+/** Hover intent on a trashed thread: warm its history so previewing it is instant. */
+export function prefetchTrashedThread(slug: string) {
+  if (trashedMessageCache.has(slug) || trashedPrefetchInflight.has(slug)) return;
+  trashedPrefetchInflight.add(slug);
+  void fetch(`/api/conversations/${encodeURIComponent(slug)}/messages?limit=100&trashed=1`)
+    .then((res) => {
+      if (res.status === 401) {
+        clearThreadCache();
+        return null;
+      }
+      return res.ok ? res.json() : null;
+    })
+    .then((body: { messages?: UIMessage[] } | null) => {
+      if (body?.messages && body.messages.length > 0) {
+        trashedMessageCache.set(slug, body.messages);
+      }
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      trashedPrefetchInflight.delete(slug);
+    });
+}
+

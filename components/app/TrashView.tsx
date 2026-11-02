@@ -22,13 +22,17 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { THREADS_QUERY_KEY, TRASHED_QUERY_KEY } from "@/components/app/threadQueries";
 import {
+  deleteCachedMessages,
   fetchThreads,
   fetchTrashed,
+  findThreadLabel,
   messageCache,
   prefetchInflight,
   prefetchThread,
+  prefetchTrashedThread,
   readThreadsCache,
   readTrashedCache,
+  trashedMessageCache,
   type ThreadItem,
   type TrashedItem,
 } from "@/components/app/threadCache";
@@ -498,6 +502,7 @@ export default function TrashView() {
           }).catch(() => undefined),
         ),
       );
+      ids.forEach((id) => trashedMessageCache.delete(id));
       setSelected(new Set());
       void refresh();
     },
@@ -514,6 +519,7 @@ export default function TrashView() {
           ).catch(() => undefined),
         ),
       );
+      ids.forEach((id) => trashedMessageCache.delete(id));
     },
     [],
   );
@@ -539,6 +545,7 @@ export default function TrashView() {
         await fetch("/api/conversations?empty=true", {
           method: "DELETE",
         }).catch(() => undefined);
+        trashedMessageCache.clear();
         setDialog(null);
         animateOut(
           items.map((item) => item.id),
@@ -566,6 +573,8 @@ export default function TrashView() {
     (id: string, next: string) => {
       const cleaned = next.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX_CHARS);
       if (!cleaned) return;
+      const current = findThreadLabel(id);
+      if (current && cleaned === current.trim()) return;
       void fetch(`/api/conversations/${encodeURIComponent(id)}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -589,8 +598,7 @@ export default function TrashView() {
           if (!res.ok) throw new Error("delete failed");
         })
         .then(() => {
-          messageCache.delete(id);
-          prefetchInflight.delete(id);
+          deleteCachedMessages(id);
           void refresh();
         })
         .catch(() => refresh());
@@ -763,6 +771,7 @@ export default function TrashView() {
                         {/* Compact row with dedicated checkbox hit zone and full-height chat trigger */}
                         <div
                           onClick={() => void openChat(item.id)}
+                          onMouseEnter={() => prefetchTrashedThread(item.id)}
                           className={`group relative flex h-9 cursor-pointer items-center rounded-[6px] pr-2.5 transition-colors duration-75 hover:bg-hover-2 ${
                             isSelected ? "bg-hover-2" : ""
                           }`}
