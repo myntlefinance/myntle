@@ -10,6 +10,12 @@ The product is multi-chain from the first release. The user may connect an EVM w
 
 The product thesis is that an AI agent handling money should be verifiable at every layer: the model is identified, the quote is explicit, the approval is bound to concrete parameters, and the settlement is read from the record of what actually happened rather than asserted by the assistant.
 
+## Confidential-only thesis
+
+We expose only the confidential part of NEAR Intents. Users never see public versus private, never manage the distinction, and never move funds between public and confidential balances themselves.
+
+Concretely: foreign-to-foreign flows always send `confidentiality: basic` or `advanced`, and embedded NEAR-account flows always use `INTENTS` balance types as `CONFIDENTIAL_INTENTS` with signed-intent execution (`generate-intent → sign → submit-intent`) plus User-Session auth (`POST /v0/auth/authenticate`). There is no public toggle in the product. The working plan is in `plans/confidential-intents.md` (gitignored working notes; re-derive from the `near-intents` skill + `docs.near-intents.org` if missing).
+
 ## Stack
 
 Pinned versions, because the current major releases moved recently and several APIs were removed rather than deprecated.
@@ -159,6 +165,8 @@ Never build a component in the lab. The lab is where a component is decided.
 
 **Tools are narrow.** Each tool has one job and a zod schema. Read-only tools (`get_balances`, `get_supported_assets`, `get_quote`, `get_transaction_status`, `get_transaction_history`) run server-side without approval. Exactly one tool mutates state (`prepare_swap`), and it is configured with `toolApproval: { prepare_swap: 'user-approval' }`. There is no generic signing tool and no generic RPC tool, and neither may be added.
 
+**News tools page, never trim.** `get_google_news`, `get_reddit_posts`, `get_x_posts`, and `get_x_user_posts` fetch the full result set once per turn into the per-turn block cache (`lib/news/block-cache.ts`), then serve it back in ~6k-char / ≤10-item blocks via `searchId + block`. Never `slice` an API response down to the display limit and discard the rest: the fetch is already paid for, the model can page with `searchId + block` (X also has `nextPage` via cursor), and refetching the same query returns the same first page. Field truncation follows the same rule — keep the full post text the API returns (X posts up to 2000 chars) rather than squeezing it into a 180-char title, so the model never needs another call to recover what we cut.
+
 **The model never sees a wallet.** No tool returns an address, and no tool signs. The assistant proposes a trade as two assets and an amount, and the application decides what to do with that. The wallet belongs to the interface layer.
 
 **Approvals are cryptographically checked.** The client sends the whole conversation on every turn, so a modified client could fabricate an approval response. Any tool that moves money sets `experimental_toolApprovalSecret` on the `streamText` call so the server verifies that it issued the approval. Do not remove this.
@@ -251,6 +259,10 @@ Read these before changing anything. They contain verified facts, not opinions, 
 | `context/near-notes.md` | NEAR mainnet reality: contracts, fees, RPC, the traps that will cost a demo. |
 | `context/roadmap.md` | The prep week, the fourteen build days, and the submission checklist. |
 | `context/decisions.md` | Decision log, with the reasoning and the conditions that would reverse each choice. |
+
+## Development wallet
+
+Before testing the wallet or auth flows, read `learnings/dev-wallet.md`. It covers the keyed provider that signs for real, how to switch accounts so the session rules can be exercised, and what it still cannot cover. The `learnings/` directory is gitignored, so a fresh clone will not have it.
 
 ## Ground rules for agents
 

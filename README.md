@@ -40,7 +40,7 @@ You can trade by writing a sentence. You ask for a swap the way you would explai
 
 You can bring any of the three supported wallets. EVM wallets connect through wagmi and viem, Solana wallets connect through the Wallet Standard, and NEAR wallets connect through near-connect, and all three sit behind one interface so the conversation does not change with the wallet.
 
-You always see the trade before you sign it. The quote shows what you would receive and the least you would accept, and the approval shows where the funds go, what the fee is, and when the quote expires. The approval is bound to those exact parameters, so what you sign is what you saw.
+You always see the trade before you sign it. The quote shows what you would receive and the least you would accept, and the approval shows where the funds go, where a refund would return, and when the quote expires. The approval is bound to those exact parameters, so what you sign is what you saw. Fees are inside the quoted amounts rather than a separate line, because the settlement API prices all-in and returns no separate fee figure to display.
 
 You can follow the trade after you approve it. The timeline is driven by the transaction record rather than by the conversation, so it moves through quoted, approved, submitted, and settled only as the settlement source confirms each step. When funds arrive but the trade is never filled, the screen says the money is coming back instead of showing a success for part of the story.
 
@@ -63,6 +63,17 @@ Browser ──▶ /api/chat ──▶ NEAR AI Cloud, which proposes trades and l
 The interface is a Next.js application that renders the conversation, the quote card, the approval card, and the transaction timeline. The chat route owns the model, the tool registry, and the approval policy, and it never sees a wallet. The registry has six tools, where five only read balances, assets, quotes, and status, and one proposes a swap and always asks for your approval first. The approval route validates the request against your connected account and starts a durable workflow that submits the trade, sleeps between checks, and records the outcome in Supabase Postgres. Amounts always carry their chain and contract identity, and an address is always read together with its chain, because the same ticker on two chains is a different asset and the same wallet on two chains is a different account.
 
 The key paths are `app/api/chat/route.ts` for the assistant, `app/api/approve/route.ts` for approval, `workflows/swap-lifecycle.ts` for the durable swap lifecycle, `lib/intents/service.ts` for quotes and status, `lib/wallet/` for the three wallet adapters, and `lib/db/` for the conversation and transaction records.
+
+## Verification
+
+These checks need only the install above plus the keys in `.env.local`. No funds move in any of them except the last, which moves your own test amount on your own wallet.
+
+1. Pricing is live: ask "what can I trade" and then "price 100 USDC to NEAR". The amounts come from the 1Click quote API, tickers resolve to full chain contract ids, and an unknown ticker gets a plain refusal instead of a guess.
+2. Approval binds: open devtools, edit the approval payload before signing, and submit. The server compares against its saved quote and rejects with "The trade changed since it was priced" — nothing is created.
+3. Expiry holds: wait five minutes past a quote card and approve. The card reads expired locally, and the server rejects stale quotes with "Your approval has expired."
+4. Refusal continues: press Reject on a card. The card paints denied and the conversation carries on; nothing hangs.
+5. Outcomes differ: a failed trade paints failed, a refunded one paints refunded with the money-back meaning, and anything still moving keeps polling its record. Close the laptop mid-trade and reopen `/api/tx/[id]` — the state moved on alone.
+6. Full loop: `bun run typecheck`, `bun run lint`, `bun run test`, `bun run build`. The build compiles the workflows; all four must pass.
 
 ## Contribution
 
