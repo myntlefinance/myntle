@@ -21,7 +21,7 @@ const NETWORK_ALIASES: Record<string, string> = {
   ethereum: "ethereum",
   mainnet: "ethereum",
   sol: "solana",
-  "sol-mainnet": "solana",
+  "solana-mainnet": "solana",
   solana: "solana",
   near: "near",
   "near-mainnet": "near",

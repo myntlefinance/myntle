@@ -4,6 +4,7 @@ import {
   classifyAssetCategory,
   groupBalancesByNetwork,
   isPhishingToken,
+  networkDisplayName,
   type TokenBalance,
 } from "./balances";
 
@@ -213,5 +214,57 @@ describe("getConnectedWalletBalances network filtering", () => {
     });
     expect(res.balances).toEqual([]);
     expect(res.totalValueUsd).toBe(0);
+  });
+});
+
+describe("networkDisplayName", () => {
+  it("names known chain ids", () => {
+    expect(networkDisplayName("arb")).toBe("Arbitrum");
+    expect(networkDisplayName("eth")).toBe("Ethereum");
+    expect(networkDisplayName("near")).toBe("NEAR");
+  });
+
+  it("names the slugs Alchemy answers with", () => {
+    expect(networkDisplayName("solana-mainnet")).toBe("Solana");
+    // Alchemy takes polygon-mainnet on the request and answers matic-mainnet.
+    expect(networkDisplayName("matic-mainnet")).toBe("Polygon");
+    expect(networkDisplayName("matic")).toBe("Polygon");
+  });
+
+  it("falls back to the raw id when unknown", () => {
+    expect(networkDisplayName("mychain")).toBe("mychain");
+    expect(networkDisplayName(undefined)).toBe("");
+  });
+});
+
+describe("Alchemy request slugs", () => {
+  it("asks for solana-mainnet, which is the only slug the API accepts", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalKey = process.env.ALCHEMY_API_KEY;
+    const bodies: Array<{
+      addresses: Array<{ address: string; networks: string[] }>;
+    }> = [];
+
+    process.env.ALCHEMY_API_KEY = "test-key";
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ data: { tokens: [] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const { getConnectedWalletBalances } = await import("./balances");
+      await getConnectedWalletBalances(
+        "solana",
+        "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+      );
+      expect(bodies[0]?.addresses[0]?.networks).toEqual(["solana-mainnet"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalKey === undefined) delete process.env.ALCHEMY_API_KEY;
+      else process.env.ALCHEMY_API_KEY = originalKey;
+    }
   });
 });

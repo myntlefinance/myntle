@@ -67,13 +67,27 @@ const NETWORK_CONFIG: Record<string, { name: string; icon: string; order: number
   op: { name: "Optimism", icon: "op", order: 4 },
   polygon: { name: "Polygon", icon: "polygon", order: 5 },
   "polygon-mainnet": { name: "Polygon", icon: "polygon", order: 5 },
+  // Alchemy accepts polygon-mainnet on the request and answers with
+  // matic-mainnet, so both spellings have to resolve to the same group.
+  matic: { name: "Polygon", icon: "polygon", order: 5 },
+  "matic-mainnet": { name: "Polygon", icon: "polygon", order: 5 },
   solana: { name: "Solana", icon: "sol", order: 6 },
-  "sol-mainnet": { name: "Solana", icon: "sol", order: 6 },
+  "solana-mainnet": { name: "Solana", icon: "sol", order: 6 },
   sol: { name: "Solana", icon: "sol", order: 6 },
   near: { name: "NEAR", icon: "near", order: 7 },
   "near-mainnet": { name: "NEAR", icon: "near", order: 7 },
   intents: { name: "Settlement Ledger", icon: "near", order: 8 },
 };
+
+/**
+ * Display name for a chain id from any source (catalogue, balances, intent
+ * output). Unknown ids fall back to the raw id so they stay readable.
+ */
+export function networkDisplayName(chain?: string): string {
+  if (!chain) return "";
+  const norm = chain.toLowerCase();
+  return NETWORK_CONFIG[norm]?.name ?? chain;
+}
 
 /**
  * Transforms flat TokenBalance items into grouped network buckets.
@@ -296,8 +310,9 @@ const NETWORK_DEFAULTS: Record<
   "base-mainnet": { symbol: "ETH", name: "Base ETH", decimals: 18 },
   "arb-mainnet": { symbol: "ETH", name: "Arbitrum ETH", decimals: 18 },
   "polygon-mainnet": { symbol: "POL", name: "Polygon", decimals: 18 },
+  "matic-mainnet": { symbol: "POL", name: "Polygon", decimals: 18 },
   "opt-mainnet": { symbol: "ETH", name: "Optimism ETH", decimals: 18 },
-  "sol-mainnet": { symbol: "SOL", name: "Solana", decimals: 9 },
+  "solana-mainnet": { symbol: "SOL", name: "Solana", decimals: 9 },
 };
 
 type AlchemyTokenItem = {
@@ -353,7 +368,7 @@ async function fetchAlchemyBalances(
     if (options?.networks && !options.networks.includes("solana")) {
       return { address, chain, balances: [], totalValueUsd: 0 };
     }
-    networks = ["sol-mainnet"];
+    networks = ["solana-mainnet"];
   } else {
     if (options?.networks && options.networks.length > 0) {
       const filtered = options.networks
@@ -781,10 +796,14 @@ export async function getConnectedWalletBalances(
   options?: BalanceFilterOptions,
 ): Promise<WalletBalancesResult> {
   const normalizedChain = chain.toLowerCase();
-  if (normalizedChain === "near") {
+  if (normalizedChain === "near" || normalizedChain === "near-mainnet") {
     return fetchNearBalances(address, options);
   }
-  if (normalizedChain === "solana" || normalizedChain === "sol") {
+  if (
+    normalizedChain === "solana" ||
+    normalizedChain === "sol" ||
+    normalizedChain === "solana-mainnet"
+  ) {
     return fetchAlchemyBalances(address, "solana", options);
   }
   return fetchAlchemyBalances(address, "evm", options);
