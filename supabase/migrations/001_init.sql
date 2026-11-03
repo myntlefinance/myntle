@@ -65,7 +65,9 @@ create table public.conversations (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users (id) on delete cascade,
   slug text not null unique check (char_length(slug) >= 8),
-  title text not null default 'New chat',
+  -- NULL means untitled; the interface shows "New chat" as a fallback. A
+  -- stored "New chat" string is a manual rename and stays distinct.
+  title text,
   model text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

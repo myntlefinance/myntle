@@ -24,7 +24,7 @@ export function conversationFilter(value: string): string {
 export async function ensureConversation(args: {
   userId: string;
   conversationId?: string;
-  title?: string;
+  title?: string | null;
 }): Promise<{ id: string; slug: string }> {
   const sb = getSupabaseAdmin();
   if (args.conversationId) {
@@ -39,12 +39,17 @@ export async function ensureConversation(args: {
   }
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const slug = newSlug();
+    // Untitled stays NULL so the display fallback ("New chat") never
+    // collides with a manual rename to that same text. Only a stored
+    // string counts as named; generation and repair write solely where
+    // the title IS NULL.
+    const clean = args.title?.trim().slice(0, TITLE_MAX_CHARS) || null;
     const { data, error } = await sb
       .from("conversations")
       .insert({
         user_id: args.userId,
         slug,
-        title: (args.title ?? "New chat").slice(0, TITLE_MAX_CHARS),
+        title: clean,
       })
       .select("id, slug")
       .single();
@@ -82,12 +87,41 @@ export async function saveNewUIMessages(
   conversationId: string,
   messages: UIMessage[],
 ): Promise<void> {
-  for (const m of messages) {
-    if (m.role !== "assistant" && m.role !== "user") continue;
-    try {
-      await saveUIMessage(conversationId, m);
-    } catch {
-      // Never break streaming for a save failure. The next turn retries.
+  const rows = messages
+    .filter((m) => m.role === "assistant" || m.role === "user")
+    .map((m) => {
+      const clientMsgId = m.id?.trim() || generateId();
+      // Callers rely on the in-place id (e.g. regenerate reuses it).
+      m.id = clientMsgId;
+      return {
+        conversation_id: conversationId,
+        role: m.role,
+        parts: m.parts as unknown as object,
+        client_msg_id: clientMsgId,
+      };
+    });
+  if (rows.length === 0) return;
+  try {
+    // One turn = one upsert. Same dedupe semantics as the single-message
+    // path (conversation_id,client_msg_id; newer wins).
+    const sb = getSupabaseAdmin();
+    const { error } = await sb
+      .from("messages")
+      .upsert(rows, {
+        onConflict: "conversation_id,client_msg_id",
+        ignoreDuplicates: false,
+      });
+    if (error) throw error;
+  } catch {
+    // Never break streaming for a save failure: fall back to the
+    // per-message loop (best-effort) and the next turn retries.
+    for (const m of messages) {
+      if (m.role !== "assistant" && m.role !== "user") continue;
+      try {
+        await saveUIMessage(conversationId, m);
+      } catch {
+        // Never break streaming for a save failure. The next turn retries.
+      }
     }
   }
 }
@@ -96,7 +130,7 @@ export async function listConversations(
   userId: string,
   limit = 20,
   cursor?: { updatedAt: string; id: string },
-): Promise<Array<{ id: string; slug: string; title: string; updatedAt: string }>> {
+): Promise<Array<{ id: string; slug: string; title: string | null; updatedAt: string }>> {
   const sb = getSupabaseAdmin();
   let q = sb
     .from("conversations")
@@ -116,7 +150,7 @@ export async function listConversations(
   return data.map((r) => ({
     id: r.id as string,
     slug: r.slug as string,
-    title: r.title as string,
+    title: (r.title as string | null) ?? null,
     updatedAt: r.updated_at as string,
   }));
 }
@@ -124,7 +158,7 @@ export async function listConversations(
 export type TrashedConversation = {
   id: string;
   slug: string;
-  title: string;
+  title: string | null;
   updatedAt: string;
   deletedAt: string;
 };
@@ -147,7 +181,7 @@ export async function listTrashedConversations(
   return data.map((r) => ({
     id: r.id as string,
     slug: r.slug as string,
-    title: r.title as string,
+    title: (r.title as string | null) ?? null,
     updatedAt: r.updated_at as string,
     deletedAt: r.deleted_at as string,
   }));
@@ -281,7 +315,7 @@ export async function getTrashedConversationMessages(
     .or(conversationFilter(conversationIdOrSlug))
     .single();
   if (!conv) return { messages: [], title: null, deletedAt: null, hasMore: false };
-  const title = (conv as { title: string }).title ?? null;
+  const title = ((conv as { title: string | null }).title ?? null) as string | null;
   const deletedAt = (conv as { deleted_at: string }).deleted_at ?? null;
 
   let q = sb
@@ -338,7 +372,7 @@ export async function getConversationMessages(
     .or(conversationFilter(conversationIdOrSlug))
     .single();
   if (!conv) return { messages: [], title: null, hasMore: false };
-  const title = (conv as { title: string }).title ?? null;
+  const title = ((conv as { title: string | null }).title ?? null) as string | null;
 
   let q = sb
     .from("messages")
