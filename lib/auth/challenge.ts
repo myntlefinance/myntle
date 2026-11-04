@@ -16,7 +16,7 @@ export function buildMessage(args: {
   expiresAt: number;
 }): string {
   return (
-    `Sign in to Myntle\n` +
+    `Sign In to Myntle\n` +
     `\n` +
     `Chain: ${args.chain}\n` +
     `Address: ${args.address}\n` +

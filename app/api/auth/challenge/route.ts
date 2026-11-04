@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createChallenge } from "@/lib/auth/challenge";
+import { checkRateLimit, clientIp } from "@/lib/auth/rate-limit";
 
 const Body = z.object({
   chain: z.enum(["evm", "solana", "near"]),
@@ -21,6 +22,10 @@ function validAddress(chain: "evm" | "solana" | "near", address: string): boolea
 }
 
 export async function POST(req: Request) {
+  const { limited } = checkRateLimit(`challenge:${clientIp(req)}`, 20, 60_000);
+  if (limited) {
+    return NextResponse.json({ error: "An error occurred." }, { status: 429 });
+  }
   let body: unknown;
   try {
     body = await req.json();

@@ -1,4 +1,7 @@
-import { verifyMessage as verifyEvmMessage } from "viem";
+import {
+  recoverMessageAddress,
+  verifyMessage as verifyEvmMessage,
+} from "viem";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { JsonRpcProvider } from "near-api-js";
@@ -52,6 +55,20 @@ export async function verifyWalletSignature(args: {
   const { chain, address, message, signature } = args;
 
   if (chain === "evm") {
+    // Recover first so a signature from another account reads as a wallet
+    // change (reconnect and retry) rather than a generic rejection.
+    let recovered: string;
+    try {
+      recovered = await recoverMessageAddress({
+        message,
+        signature: signature as `0x${string}`,
+      });
+    } catch {
+      throw new Error("evm-verify");
+    }
+    if (recovered.toLowerCase() !== address.toLowerCase()) {
+      throw new Error("evm-mismatch");
+    }
     const ok = await verifyEvmMessage({
       address: address as `0x${string}`,
       message,
