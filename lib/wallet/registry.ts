@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import type { Wallet } from "@wallet-standard/base";
 import { useEvmWallet } from "./evm";
 import { useNearWalletAdapter } from "./near";
@@ -8,6 +8,7 @@ import { useSolanaWallet } from "./solana";
 import type { ChainKind, ConnectedWallet } from "./types";
 import { toHex } from "./types";
 import { clearThreadCache } from "@/components/app/threadCache";
+import { clearFinanceCaches } from "@/components/app/portfolioCache";
 
 /**
  * One wallet interface over three libraries.
@@ -67,13 +68,20 @@ function hexNonceToBytes(nonceHex: string): Uint8Array {
   return out;
 }
 
-function notifySignIn() {
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("myntle:sign-in"));
-  }
-}
+/**
+ * The one wallet instance the application shares.
+ *
+ * The adapters below are stateless readers of their libraries, but
+ * `pendingChain` and `authStage` are this hook's own state. Calling the hook
+ * from each component gave every one of them a private copy, so the sign-in
+ * dialog could be mid-signature while the button beside it reported idle.
+ * The provider owns the single copy; `useWallet` reads it.
+ */
+export type WalletValue = ReturnType<typeof useWalletState>;
 
-export function useWallet() {
+export const WalletContext = createContext<WalletValue | null>(null);
+
+export function useWalletState() {
   const evm = useEvmWallet();
   const solana = useSolanaWallet();
   const near = useNearWalletAdapter();
@@ -213,84 +221,46 @@ export function useWallet() {
 
   const connectEvm = useCallback(
     async (connectorId?: string) => {
+      // Connection ends at key access. Identity is a separate, explicit
+      // step (signIn) with its own dialog — connecting never signs.
       setPendingChain("evm");
       setAuthStage("approve");
-      let address: string;
       try {
-        address = await evm.connect(connectorId);
-      } catch (cause) {
-        setAuthStage(null);
-        setPendingChain(null);
-        throw cause;
-      }
-      setAuthStage("verify");
-      try {
-        await verifyEvmOwnership(address);
-        notifySignIn();
-      } catch (cause) {
-        await evm.disconnect().catch(() => {});
-        throw cause;
+        return await evm.connect(connectorId);
       } finally {
         setAuthStage(null);
         setPendingChain(null);
       }
     },
-    [evm, verifyEvmOwnership],
+    [evm],
   );
 
   const connectSolanaWallet = useCallback(
     async (wallet: Wallet) => {
+      // Connection ends at key access — see connectEvm.
       setPendingChain("solana");
       setAuthStage("approve");
-      let connection: Awaited<ReturnType<typeof solana.connect>>;
       try {
-        connection = await solana.connect(wallet);
-      } catch (cause) {
-        setAuthStage(null);
-        setPendingChain(null);
-        throw cause;
-      }
-      setAuthStage("verify");
-      try {
-        await verifySolanaOwnership(
-          connection.address,
-          new Uint8Array(connection.account.publicKey),
-        );
-        notifySignIn();
-      } catch (cause) {
-        solana.disconnect();
-        throw cause;
+        await solana.connect(wallet);
       } finally {
         setAuthStage(null);
         setPendingChain(null);
       }
     },
-    [solana, verifySolanaOwnership],
+    [solana],
   );
 
   const connectNear = useCallback(async () => {
+    // Connection ends at key access — see connectEvm.
     setPendingChain("near");
     setAuthStage("approve");
-    let address: string;
     try {
-      address = await near.connect();
-    } catch (cause) {
-      setAuthStage(null);
-      setPendingChain(null);
-      throw cause;
-    }
-    setAuthStage("verify");
-    try {
-      await verifyNearOwnership(address);
-      notifySignIn();
-    } catch (cause) {
-      await near.disconnect().catch(() => {});
-      throw cause;
+      await near.connect();
     } finally {
       setAuthStage(null);
       setPendingChain(null);
     }
-  }, [near, verifyNearOwnership]);
+  }, [near]);
 
   const connect = useCallback(
     async (kind: ChainKind) => {
@@ -306,12 +276,47 @@ export function useWallet() {
     [connectEvm, connectSolanaWallet, connectNear, solana.wallets],
   );
 
+  /**
+   * The explicit sign-in step, with its own dialog.
+   *
+   * Connection proves nothing; this signature binds the connected address
+   * to the Myntle account. Cancelling leaves the wallet connected but the
+   * account unsigned — chats stay gated and the wallet button offers
+   * another try instead of a dead end.
+   */
+  const signIn = useCallback(async () => {
+    setAuthStage("verify");
+    try {
+      if (evm.isConnected && evm.account) {
+        await verifyEvmOwnership(evm.account.address);
+      } else if (solana.connection) {
+        await verifySolanaOwnership(
+          solana.connection.address,
+          new Uint8Array(solana.connection.account.publicKey),
+        );
+      } else if (near.isConnected && near.account) {
+        await verifyNearOwnership(near.account.address);
+      } else {
+        throw new Error("No wallet is connected");
+      }
+      // The provider broadcasts `myntle:sign-in` once it has landed the new
+      // status, so every listener reads the state after it changed rather
+      // than re-checking the cookie while it is still being written.
+    } finally {
+      setAuthStage(null);
+    }
+  }, [evm, near, solana, verifyEvmOwnership, verifyNearOwnership, verifySolanaOwnership]);
+
   const disconnect = useCallback(async () => {
+    const { clearAllIntentsSessions } = await import("@/lib/intents/user-session");
+    clearAllIntentsSessions();
     void postJson("/api/auth/logout", {}).catch(() => {});
     clearThreadCache();
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("myntle:sign-out"));
-    }
+    // Balances and history belong to the account that just left, so the
+    // next person on this browser never sees a painted snapshot of them.
+    clearFinanceCaches();
+    // As with sign-in, the `myntle:sign-out` broadcast belongs to the
+    // provider so the session state and the event agree.
     if (evm.isConnected) await evm.disconnect();
     else if (solana.connection) solana.disconnect();
     else if (near.isConnected) await near.disconnect();
@@ -330,6 +335,52 @@ export function useWallet() {
     [evm, near, solana],
   );
 
+  /**
+   * Funds the 1Click deposit address from whichever wallet is connected.
+   * The caller passes the exact `amountIn` and token contract from the wet
+   * quote; routing by connected chain keeps the transfer on the origin chain.
+   */
+  const sendDeposit = useCallback(
+    async (input: {
+      depositAddress: string;
+      amount: string;
+      tokenAddress?: string | null;
+      tokenMint?: string | null;
+      tokenContract?: string | null;
+      chainId?: number | null;
+      chainName?: string | null;
+    }): Promise<{ txHash: string; senderAccount?: string }> => {
+      if (evm.isConnected) {
+        const txHash = await evm.sendDeposit({
+          depositAddress: input.depositAddress,
+          amount: input.amount,
+          tokenAddress: input.tokenAddress ?? input.tokenContract,
+          chainId: input.chainId,
+          chainName: input.chainName,
+        });
+        return { txHash };
+      }
+      if (solana.connection) {
+        const txHash = await solana.sendDeposit({
+          depositAddress: input.depositAddress,
+          amount: input.amount,
+          tokenMint: input.tokenMint ?? input.tokenAddress ?? input.tokenContract,
+        });
+        return { txHash };
+      }
+      if (near.isConnected) {
+        const txHash = await near.sendDeposit({
+          depositAddress: input.depositAddress,
+          amount: input.amount,
+          tokenContract: input.tokenContract ?? input.tokenAddress,
+        });
+        return { txHash, senderAccount: near.account?.address };
+      }
+      throw new Error("No wallet is connected");
+    },
+    [evm, near, solana],
+  );
+
   return {
     account,
     connected: !!account,
@@ -337,8 +388,10 @@ export function useWallet() {
     connectEvm,
     connectSolanaWallet,
     connectNear,
+    signIn,
     disconnect,
     signMessage,
+    sendDeposit,
     /** NEP-413 signing for NEAR approvals, with caller-chosen recipient. */
     signNEP413: near.signNEP413,
     pendingChain,
@@ -349,4 +402,16 @@ export function useWallet() {
     solanaWallets: solana.wallets,
     evmConnectors: evm.connectors,
   };
+}
+
+/**
+ * The shared wallet instance. Every component sees the same connection,
+ * the same pending chain, and the same signature stage.
+ */
+export function useWallet(): WalletValue {
+  const value = useContext(WalletContext);
+  if (!value) {
+    throw new Error("useWallet must be used inside the AuthProvider.");
+  }
+  return value;
 }

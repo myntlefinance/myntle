@@ -1,20 +1,35 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { IconChartBar, IconCheck, IconChevronDown, IconCopy, IconLoader2, IconLogout, IconUser, IconUserCircle, IconWallet, IconX } from "@tabler/icons-react";
+import { IconChartBar, IconCheck, IconChevronDown, IconChevronRight, IconCopy, IconFingerprint, IconLoader2, IconLockFilled, IconLockOpen, IconLogout, IconUser, IconUserCircle, IconWallet, IconX } from "@tabler/icons-react";
 import { Button } from "@/components/atoms/Button";
 import { ThemeToggle } from "@/components/site/ThemeToggle";
 import { OPEN_WALLET_EVENT } from "@/components/app/ConnectGate";
-import { useWallet } from "@/lib/wallet/registry";
+import { OPEN_SIGNIN_EVENT, SignInDialog } from "@/components/app/SignInDialog";
+import {
+  PasskeyOptions,
+  usePasskeyLogin,
+} from "@/components/app/PasskeyOptions";
+import {
+  OPEN_SUPER_EVENT,
+  SuperUnlockDialog,
+} from "@/components/app/SuperUnlockDialog";
+import { usePasskeysAvailable } from "@/lib/auth/passkey-client";
+import {
+  lockSuperAccount,
+  useSuperUnlocked,
+} from "@/lib/intents/user-session";
+import { useAuth } from "@/lib/auth/auth-provider";
+import type { WalletValue } from "@/lib/wallet/registry";
 
 /**
- * The wallet control.
+ * The account control.
  *
- * Disconnected it is a primary button that opens a centred picker: a chain
- * rail on the left, and a wallet card for each wallet the browser offers on
- * the right. Connected it is a secondary button showing the truncated
- * address, with an inline menu for the account actions.
+ * Signed out it is a primary button that opens one login dialog: a passkey
+ * card first, then the chain rail and the wallet cards the browser offers.
+ * Connected it is a secondary button showing the truncated address, with an
+ * inline menu for the account actions.
  */
 export function WalletButton({
   onProfile,
@@ -26,20 +41,37 @@ export function WalletButton({
   /** icon-only rail control for the collapsed sidebar */
   compact?: boolean;
 } = {}) {
-  const wallet = useWallet();
-  const { account, connected, pendingChain, authStage, isPending } = wallet;
+  const { wallet, account, signedIn, status: sessionStatus, signOut, busy } = useAuth();
+  const superUnlocked = useSuperUnlocked(account?.kind, account?.address);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [signinOpen, setSigninOpen] = useState(false);
+  const [superOpen, setSuperOpen] = useState(false);
+  const [superSource, setSuperSource] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
   // The gated assistant reply carries its own inline connect action, so the
   // footer control listens for the same open request. Only the full-size
   // control takes the request: the rail copy of it is mounted alongside for
   // the collapse cross-fade and would otherwise open a second picker.
+  // The sign-in dialog has its own request for the same reason, as does
+  // the super unlock dialog: the chat gate and inline cards open them.
   useEffect(() => {
     if (compact) return;
     const open = () => setPickerOpen(true);
+    const openSignin = () => setSigninOpen(true);
+    const openSuper = (event: Event) => {
+      const detail = (event as CustomEvent<{ callId?: string }>).detail;
+      setSuperSource(detail?.callId ?? null);
+      setSuperOpen(true);
+    };
     window.addEventListener(OPEN_WALLET_EVENT, open);
-    return () => window.removeEventListener(OPEN_WALLET_EVENT, open);
+    window.addEventListener(OPEN_SIGNIN_EVENT, openSignin);
+    window.addEventListener(OPEN_SUPER_EVENT, openSuper);
+    return () => {
+      window.removeEventListener(OPEN_WALLET_EVENT, open);
+      window.removeEventListener(OPEN_SIGNIN_EVENT, openSignin);
+      window.removeEventListener(OPEN_SUPER_EVENT, openSuper);
+    };
   }, [compact]);
 
   // Warm the logo cache long before the dialog opens. The picker itself
@@ -58,9 +90,8 @@ export function WalletButton({
   // The picker must stay mounted through approval AND signature. The wallet
   // account appears as soon as the connection is approved, which is before
   // the verification signature lands — unmounting here is what closed the
-  // popup early. One wallet instance is shared with the picker so the busy
-  // and stage flags are the same object the connection updates.
-  const busy = isPending || pendingChain !== null || authStage !== null;
+  // popup early. The busy and stage flags are the shared ones now, so this
+  // control and the sign-in dialog always agree on what is happening.
 
   // The rail has room for one 32px glyph, so every state collapses into the
   // same account icon instead of a button that would clip its own label.
@@ -84,51 +115,142 @@ export function WalletButton({
       className="w-full active:scale-[0.99]"
       onClick={() => setPickerOpen(true)}
     >
-      <IconWallet size={15} stroke={1.8} className="shrink-0" />
-      Connect Wallet
+      <IconUser size={15} stroke={1.8} className="shrink-0" />
+      Log In
     </Button>
   );
 
-  if (pickerOpen) {
-    return (
-      <>
-        {compact ? railTrigger(() => setPickerOpen(true), "Connecting a wallet") : connectButton}
-        <ConnectPicker
-          wallet={wallet}
-          onClose={() => {
-            if (!busy) setPickerOpen(false);
-          }}
-        />
-      </>
-    );
-  }
+  const signinButton = (
+    <Button
+      type="button"
+      variant="primary"
+      size="md"
+      className="w-full active:scale-[0.99]"
+      onClick={() => setSigninOpen(true)}
+    >
+      <IconUser size={15} stroke={1.8} className="shrink-0" />
+      Sign In
+    </Button>
+  );
 
-  if (connected && account) {
-    return (
+  // Connected, but the session check has not answered yet. The address is
+  // already known, so it shows: the alternative is claiming "Sign In" to a
+  // user who is signed in, which is the flash that made people click twice.
+  const checkingButton = account ? (
+    <Button
+      type="button"
+      variant="secondary"
+      size="md"
+      disabled
+      className="w-full font-mono text-[12px]"
+    >
+      <IconLoader2 size={14} stroke={1.8} className="shrink-0 animate-spin text-ink-3" />
+      <span className="min-w-0 flex-1 truncate text-left">
+        {truncateAddress(account.address)}
+      </span>
+    </Button>
+  ) : null;
+
+  // What this control is when no dialog is open. Every dialog branch renders
+  // it underneath, so the footer never claims a different state than the
+  // account it is describing.
+  const resting = account ? (
+    sessionStatus === "unknown" ? (
+      compact ? railTrigger(() => {}, "Checking your account") : checkingButton
+    ) : signedIn ? (
       <AccountMenu
         compact={compact}
         address={account.address}
         open={menuOpen}
         onToggle={() => setMenuOpen((v) => !v)}
         onClose={() => setMenuOpen(false)}
-        onDisconnect={() => void wallet.disconnect()}
+        onDisconnect={() => void signOut()}
         onProfile={onProfile}
         onUsage={onUsage}
+        onUnlock={() => {
+          setSuperSource(null);
+          setSuperOpen(true);
+        }}
+        onLock={() => {
+          if (!account) return;
+          lockSuperAccount(account.kind, account.address);
+          setMenuOpen(false);
+        }}
+        superUnlocked={superUnlocked}
+        suspendDismiss={superOpen}
       />
+    ) : compact ? (
+      railTrigger(() => setSigninOpen(true), "Sign In to Myntle")
+    ) : (
+      signinButton
+    )
+  ) : compact ? (
+    railTrigger(() => setPickerOpen(true), "Log in")
+  ) : (
+    connectButton
+  );
+
+  if (pickerOpen) {
+    return (
+      <>
+        {compact ? railTrigger(() => setPickerOpen(true), "Logging in") : connectButton}
+        <ConnectPicker
+          wallet={wallet}
+          onClose={() => {
+            if (!busy) setPickerOpen(false);
+          }}
+          onConnected={() => {
+            setPickerOpen(false);
+            // The picker only opens while disconnected, so a fresh
+            // connection is always unsigned: go straight to sign-in
+            // instead of leaving the user to find the button.
+            setSigninOpen(true);
+          }}
+        />
+      </>
     );
   }
 
-  return compact
-    ? railTrigger(() => setPickerOpen(true), "Connect a wallet")
-    : connectButton;
+  if (signinOpen) {
+    return (
+      <>
+        {resting}
+        <SignInDialog onClose={() => setSigninOpen(false)} />
+      </>
+    );
+  }
+
+  if (superOpen) {
+    return (
+      <>
+        {resting}
+        <SuperUnlockDialog
+          sourceCallId={superSource}
+          onClose={() => {
+            setSuperOpen(false);
+            setSuperSource(null);
+          }}
+          onUnlocked={() => setMenuOpen(false)}
+        />
+      </>
+    );
+  }
+
+  return resting;
 }
 
-function truncateAddress(address: string): string {
+export function truncateAddress(address: string): string {
   if (address.length <= 13) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-function AccountMenu({
+/**
+ * The account menu shared by the wallet and passkey controls.
+ *
+ * Both account kinds get the same actions on purpose: a passkey account is
+ * not a lesser account, and the private-balance lock belongs to it too.
+ */
+export function AccountMenu({
   address,
   open,
   onToggle,
@@ -136,6 +258,10 @@ function AccountMenu({
   onDisconnect,
   onProfile,
   onUsage,
+  onUnlock,
+  onLock,
+  superUnlocked,
+  suspendDismiss = false,
   compact = false,
 }: {
   address: string;
@@ -145,6 +271,11 @@ function AccountMenu({
   onDisconnect: () => void;
   onProfile?: () => void;
   onUsage?: () => void;
+  onUnlock?: () => void;
+  onLock?: () => void;
+  superUnlocked?: boolean | null;
+  /** keep the menu open while the super dialog owns the screen */
+  suspendDismiss?: boolean;
   /** rail form: an account icon whose menu opens beside the 52px shell */
   compact?: boolean;
 }) {
@@ -161,7 +292,7 @@ function AccountMenu({
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || suspendDismiss) return;
     const close = (event: PointerEvent) => {
       const target = event.target as Node;
       if (rootRef.current?.contains(target)) return;
@@ -177,7 +308,7 @@ function AccountMenu({
       document.removeEventListener("pointerdown", close);
       document.removeEventListener("keydown", closeOnEscape);
     };
-  }, [open, onClose]);
+  }, [open, onClose, suspendDismiss]);
 
   useEffect(() => {
     if (!compact || !open) return;
@@ -227,8 +358,49 @@ function AccountMenu({
   const itemClass =
     "flex h-9 w-full items-center gap-1.5 rounded-[8px] px-2 text-left text-[13.5px] text-ink hover:bg-hover-2 active:scale-[0.97] transition-[background-color,color,transform] duration-150 ease-out";
 
+  // Balance-backed actions need the super account; this entry is their
+  // permanent way in when the dialog is dismissed. While unlocked the same
+  // row becomes the lock action, which forgets the tokens in this browser.
+  const locked = superUnlocked === false;
+  const superItem = onUnlock ? (
+    superUnlocked === true ? (
+      <button
+        type="button"
+        role="menuitem"
+        className={itemClass}
+        onClick={() => {
+          onLock?.();
+        }}
+      >
+        <span className="flex size-5 shrink-0 items-center justify-center text-green">
+          <IconLockOpen size={16} stroke={1.8} />
+        </span>
+        <span className="min-w-0 flex-1 truncate">Lock super account</span>
+      </button>
+    ) : (
+      <button
+        type="button"
+        role="menuitem"
+        className={`${itemClass}${locked ? " super-lock-outline" : ""}`}
+        onClick={() => {
+          onUnlock();
+        }}
+      >
+        <span
+          className={`flex size-5 shrink-0 items-center justify-center ${
+            locked ? "text-attention super-lock-glow" : "text-ink-2"
+          }`}
+        >
+          <IconLockFilled size={16} />
+        </span>
+        <span className="min-w-0 flex-1 truncate">Unlock super account</span>
+      </button>
+    )
+  ) : null;
+
   const items = (
     <>
+      {superItem}
           <button
             type="button"
             role="menuitem"
@@ -407,14 +579,24 @@ function AccountMenu({
         <div ref={rootRef}>
           <button
             type="button"
-            aria-label="Account"
-            title="Account"
+            aria-label={locked ? "Account, super account locked" : "Account"}
+            title={locked ? "Account, super account locked" : "Account"}
             aria-haspopup="menu"
             aria-expanded={open}
             onClick={toggle}
             className="flex size-8 items-center justify-center rounded-[8px] text-ink-2 transition-[background-color,color,transform] duration-150 hover:bg-hover-2 hover:text-ink active:scale-[0.96]"
           >
-            <IconUserCircle size={21} stroke={1.7} />
+            <span className="relative flex items-center justify-center">
+              <IconUserCircle size={21} stroke={1.7} />
+              {locked ? (
+                <span
+                  aria-hidden
+                  className="super-lock-glow absolute -right-1 -top-1 text-attention"
+                >
+                  <IconLockFilled size={12} />
+                </span>
+              ) : null}
+            </span>
           </button>
         </div>
         {open && anchor && typeof document !== "undefined"
@@ -433,13 +615,23 @@ function AccountMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={toggle}
-        className="w-full font-mono text-[12px] active:scale-[0.99]"
+        className="relative w-full font-mono text-[12px] active:scale-[0.99]"
       >
         <IconUser size={14} stroke={1.8} className="shrink-0 text-ink-3" />
         <span className="min-w-0 flex-1 truncate text-left">
           {truncateAddress(address)}
         </span>
         <IconChevronDown size={14} stroke={1.8} className="shrink-0 text-ink-3" />
+        {locked ? (
+          <span
+            role="img"
+            aria-label="Super account locked"
+            title="Super account locked"
+            className="super-lock-glow absolute right-0 -top-1.5 z-10 text-attention"
+          >
+            <IconLockFilled size={15} />
+          </span>
+        ) : null}
       </Button>
 
       {open ? panel : null}
@@ -482,7 +674,7 @@ function WalletIcon({ src, name }: { src: string; name: string }) {
     return (
       <span
         aria-hidden
-        className="grid size-7 shrink-0 place-items-center rounded-[7px] bg-accent-tint text-[12px] font-semibold text-accent-ink"
+        className="grid size-7 shrink-0 place-items-center text-[12px] font-semibold text-accent-ink"
       >
         {name.slice(0, 1).toUpperCase()}
       </span>
@@ -491,8 +683,7 @@ function WalletIcon({ src, name }: { src: string; name: string }) {
   return (
     // Logos are static files the operator saves into `public/wallets/`.
     // They are preloaded on mount (see WALLET_LOGO_SOURCES) so the card
-    // never waits on the network. The tint behind the image keeps the slot
-    // from flashing empty on a cold cache.
+    // never waits on the network.
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={src}
@@ -503,7 +694,7 @@ function WalletIcon({ src, name }: { src: string; name: string }) {
       decoding="async"
       draggable={false}
       onError={() => setFailed(true)}
-      className="size-7 shrink-0 rounded-[7px] bg-accent-tint object-contain"
+      className="size-7 shrink-0 object-contain"
     />
   );
 }
@@ -667,9 +858,12 @@ function providerHasFlag(
 function ConnectPicker({
   wallet,
   onClose,
+  onConnected,
 }: {
-  wallet: ReturnType<typeof useWallet>;
+  wallet: WalletValue;
   onClose: () => void;
+  /** Fires after the picker dismisses on a fresh connection: sign-in next. */
+  onConnected: () => void;
 }) {
   const {
     connectEvm,
@@ -681,6 +875,9 @@ function ConnectPicker({
     solanaWallets,
     evmConnectors,
   } = wallet;
+  const passkeyAvailable = usePasskeysAvailable();
+  const passkeyFlow = usePasskeyLogin();
+  const [view, setView] = useState<"options" | "passkey">("options");
   const [mounted, setMounted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [installLink, setInstallLink] = useState<string | null>(null);
@@ -689,6 +886,49 @@ function ConnectPicker({
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const stageRef = useRef<string | null>(null);
   const closeTimer = useRef<number | null>(null);
+  const onCloseRef = useRef(onClose);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const bodyHeightRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  // The two views have different heights. Lock the wrapper to the height it
+  // had, then move it to the new content's height on the next frame so the
+  // dialog grows or shrinks instead of jumping.
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    const content = body?.firstElementChild as HTMLElement | null;
+    if (!body || !content) return;
+
+    const next = content.getBoundingClientRect().height;
+    const previous = bodyHeightRef.current;
+    if (previous === null) {
+      bodyHeightRef.current = next;
+      return;
+    }
+
+    body.style.height = `${previous}px`;
+    const frame = window.requestAnimationFrame(() => {
+      body.style.height = `${next}px`;
+    });
+    bodyHeightRef.current = next;
+    return () => window.cancelAnimationFrame(frame);
+  }, [view, mounted]);
+
+  // Track the visible height even mid-transition, so a quick second switch
+  // starts from where the dialog actually is rather than where it was going.
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const observer = new ResizeObserver(() => {
+      const height = body.getBoundingClientRect().height;
+      if (height > 0) bodyHeightRef.current = height;
+    });
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     setMounted(true);
@@ -697,13 +937,24 @@ function ConnectPicker({
     };
   }, []);
 
+  // The passkey ceremony ends in the session, not in a wallet connection.
+  // Hold the success notice briefly, then let the parent close the dialog.
+  useEffect(() => {
+    if (!passkeyFlow.succeeded) return;
+    const timer = window.setTimeout(() => onCloseRef.current(), 900);
+    return () => window.clearTimeout(timer);
+  }, [passkeyFlow.succeeded]);
+
+  const busy = isPending || pendingChain !== null || authStage !== null;
+  const dialogBusy = busy || passkeyFlow.submitting || passkeyFlow.succeeded;
+
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !dialogBusy) onClose();
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
+  }, [onClose, dialogBusy]);
 
   useEffect(() => {
     if (authStage) stageRef.current = authStage;
@@ -716,16 +967,12 @@ function ConnectPicker({
 
   if (!mounted) return null;
 
-  const busy = isPending || pendingChain !== null || authStage !== null;
-
-  // One notice slot serves every state, so the dialog extends the same way
-  // whether it is asking for approval, asking for a signature, or reporting
-  // the outcome.
+  // One notice slot serves every state. The picker only connects now —
+  // the signature has its own dialog — so there is exactly one asking
+  // state: approval in the wallet.
   const pendingNotice =
     pendingKey !== null && !error && !success
-      ? authStage === "verify"
-        ? "Sign message to verify ownership…"
-        : "Approve connection in your wallet…"
+      ? "Approve connection in your wallet…"
       : null;
 
   const choose = (key: string, run: () => Promise<unknown>) => {
@@ -740,9 +987,14 @@ function ConnectPicker({
     stageRef.current = null;
     void run()
       .then(() => {
-        // The picker stays open on the confirmation, then dismisses itself.
+        // The picker stays open on the confirmation, then hands straight to
+        // sign-in: a fresh connection without a session is unsigned, and
+        // leaving the user to find the Sign In button is a dead end.
         setSuccess("Connected successfully.");
-        closeTimer.current = window.setTimeout(onClose, 1200);
+        closeTimer.current = window.setTimeout(() => {
+          onClose();
+          onConnected();
+        }, 1200);
       })
       .catch((cause: unknown) =>
         setError(friendlyWalletError(cause, stageRef.current)),
@@ -827,33 +1079,101 @@ function ConnectPicker({
       className="fixed inset-0 z-[100] flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="Choose a wallet to connect"
+      aria-label="Choose an option to log in"
     >
       <div
         className="absolute inset-0 bg-black/60 dark:bg-black/75"
         style={{ animation: "fade-in 180ms ease-out both" }}
-        onClick={onClose}
+        onClick={() => {
+          if (!dialogBusy) onClose();
+        }}
       />
       <div
         className="relative flex max-h-full w-full max-w-[520px] flex-col overflow-hidden rounded-window border border-line bg-surface shadow-overlay"
         style={{ animation: "dialog-in 240ms var(--ease-out-strong) both" }}
       >
         <div className="flex h-11 shrink-0 items-center justify-between border-b border-line pl-4 pr-2.5">
-          <span className="text-[13px] font-semibold text-ink">
-            Choose a wallet to connect.
-          </span>
+          <div className="flex min-w-0 items-center gap-1.5">
+            {view === "passkey" ? (
+              <IconFingerprint
+                size={14}
+                stroke={2}
+                className="shrink-0 text-ink-2"
+                aria-hidden
+              />
+            ) : (
+              <IconUser
+                size={14}
+                stroke={2}
+                className="shrink-0 text-ink-2"
+                aria-hidden
+              />
+            )}
+            <span className="truncate text-[13px] font-semibold text-ink">
+              {view === "passkey"
+                ? "Passkey Login"
+                : "Choose an option to log in."}
+            </span>
+          </div>
           <button
             type="button"
             aria-label="Close"
             onClick={onClose}
-            disabled={busy}
-            className="flex size-7 items-center justify-center rounded-[7px] text-ink-3 transition-colors duration-100 hover:bg-hover hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink-3"
+            disabled={dialogBusy}
+            className="flex size-7 shrink-0 items-center justify-center rounded-[7px] text-ink-3 transition-colors duration-100 hover:bg-hover hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink-3"
           >
             <IconX size={15} />
           </button>
         </div>
 
-        <div className="flex min-h-[264px]">
+        <div
+          ref={bodyRef}
+          className="overflow-hidden"
+          style={{ transition: "height 320ms var(--ease-out-strong)" }}
+          onTransitionEnd={(event) => {
+            if (event.target !== event.currentTarget) return;
+            if (event.propertyName !== "height") return;
+            const el = event.currentTarget;
+            bodyHeightRef.current = el.getBoundingClientRect().height;
+            el.style.height = "auto";
+          }}
+        >
+          <div key={view} style={{ animation: "fade-in 180ms ease-out both" }}>
+            {view === "options" ? (
+              <>
+                {passkeyAvailable ? (
+                  <div className="border-b border-line p-2.5">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        passkeyFlow.reset();
+                        setView("passkey");
+                      }}
+                      className="flex w-full items-center gap-3 rounded-[10px] border border-line bg-page px-3.5 py-3 text-left transition-colors duration-100 hover:border-line-strong hover:bg-hover disabled:opacity-60"
+                    >
+                      <span className="flex size-9 shrink-0 items-center justify-center text-accent">
+                        <IconFingerprint size={17} stroke={1.8} aria-hidden />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[13px] font-medium text-ink">
+                          Passkey
+                        </span>
+                        <span className="mt-0.5 block text-[12.5px] leading-relaxed text-ink-2">
+                          Sign in securely with your device passkey.
+                        </span>
+                      </span>
+                      <IconChevronRight
+                        size={15}
+                        stroke={1.8}
+                        className="shrink-0 text-ink-3"
+                        aria-hidden
+                      />
+                    </button>
+                  </div>
+                ) : null}
+
+                <div className="flex min-h-[264px]">
           <div className="w-[124px] shrink-0 border-r border-line p-1.5 sm:w-[148px]">
             {CHAINS.map((item) => (
               <button
@@ -877,7 +1197,7 @@ function ConnectPicker({
                   fetchPriority="high"
                   decoding="async"
                   draggable={false}
-                  className="size-6 shrink-0 rounded-[6px] bg-accent-tint object-contain"
+                  className="size-6 shrink-0 object-contain"
                 />
                 <span className="min-w-0 flex-1 truncate">{item.label}</span>
                 {item.id === "near" ? spin("near") : null}
@@ -934,7 +1254,7 @@ function ConnectPicker({
                             fetchPriority="high"
                             decoding="async"
                             draggable={false}
-                            className="size-7 shrink-0 rounded-[7px] bg-accent-tint"
+                            className="size-7 shrink-0"
                           />
                         ) : null}
                         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
@@ -989,7 +1309,7 @@ function ConnectPicker({
                           fetchPriority="high"
                           decoding="async"
                           draggable={false}
-                          className="size-7 shrink-0 rounded-[7px] bg-accent-tint"
+                          className="size-7 shrink-0"
                         />
                       ) : null}
                       <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
@@ -1025,11 +1345,30 @@ function ConnectPicker({
             )}
           </div>
         </div>
+              </>
+            ) : (
+              <div className="p-2.5">
+                <PasskeyOptions
+                  flow={passkeyFlow}
+                  onBack={() => {
+                    passkeyFlow.reset();
+                    setView("options");
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
 
         <div
           className="grid shrink-0"
+          aria-hidden={view !== "options"}
+          inert={view !== "options"}
           style={{
-            gridTemplateRows: error ?? success ?? pendingNotice ? "1fr" : "0fr",
+            gridTemplateRows:
+              view === "options" && (error ?? success ?? pendingNotice)
+                ? "1fr"
+                : "0fr",
             transition: "grid-template-rows 240ms var(--ease-out-strong)",
           }}
         >

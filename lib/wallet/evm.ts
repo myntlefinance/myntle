@@ -1,7 +1,9 @@
 "use client";
 
-import { useAccount, useConnect, useDisconnect, useSignMessage } from "wagmi";
+import { useAccount, useChainId, useConfig, useConnect, useDisconnect, useSendTransaction, useSignMessage, useSwitchChain, useWriteContract } from "wagmi";
+import { waitForTransactionReceipt } from "wagmi/actions";
 import { useCallback, useMemo } from "react";
+import { erc20Abi } from "viem";
 import { fromHex, type ConnectedWallet } from "./types";
 
 /**
@@ -17,6 +19,11 @@ export function useEvmWallet() {
   const { connectAsync, connectors, isPending } = useConnect();
   const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
+  const { sendTransactionAsync } = useSendTransaction();
+  const { writeContractAsync } = useWriteContract();
+  const chainId = useChainId();
+  const config = useConfig();
+  const { switchChainAsync } = useSwitchChain();
 
   const account = useMemo<ConnectedWallet | null>(() => {
     if (!address) return null;
@@ -74,5 +81,68 @@ export function useEvmWallet() {
     },
     disconnect: async () => disconnect(),
     signMessage: sign,
+    /**
+     * Funds the 1Click deposit address from the connected EVM wallet.
+     *
+     * Native assets travel as value; ERC-20 assets travel as `transfer`.
+     * The amount must be the exact `amountIn` from the wet quote.
+     */
+    sendDeposit: async (input: {
+      depositAddress: string;
+      amount: string;
+      tokenAddress?: string | null;
+      chainId?: number | null;
+      chainName?: string | null;
+    }): Promise<string> => {
+      if (!input.depositAddress || !input.amount) throw new Error("Missing deposit details");
+      // An EVM token with no known origin chain would send on whatever
+      // network the wallet happens to be on. Refuse instead of mis-sending.
+      if (input.tokenAddress?.startsWith("0x") && !input.chainId) {
+        throw new Error("unsupported-network");
+      }
+      // Fund the deposit on the quote's origin chain. Without the switch the
+      // transfer lands on the wallet's current network — an Arbitrum deposit
+      // quoted while the wallet sits on Ethereum sends on Ethereum.
+      if (input.chainId && chainId !== input.chainId) {
+        try {
+          await switchChainAsync({ chainId: input.chainId });
+        } catch {
+          throw new Error("chain-switch-rejected");
+        }
+      }
+      // Wait for the deposit to confirm onchain before returning the hash,
+      // so the card only advances once the funds have actually moved. A
+      // slow confirmation still returns the broadcast hash — the status poll,
+      // not this wait, is authoritative.
+      const confirmed = async (hash: `0x${string}`): Promise<string> => {
+        try {
+          await waitForTransactionReceipt(config, {
+            hash,
+            chainId: input.chainId ?? undefined,
+            confirmations: 1,
+            timeout: 120_000,
+          });
+        } catch {
+          // Continue with the hash; the poll watches the deposit address.
+        }
+        return hash;
+      };
+      if (input.tokenAddress) {
+        return confirmed(
+          await writeContractAsync({
+            address: input.tokenAddress as `0x${string}`,
+            abi: erc20Abi,
+            functionName: "transfer",
+            args: [input.depositAddress as `0x${string}`, BigInt(input.amount)],
+          }),
+        );
+      }
+      return confirmed(
+        await sendTransactionAsync({
+          to: input.depositAddress as `0x${string}`,
+          value: BigInt(input.amount),
+        }),
+      );
+    },
   };
 }

@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { IconWallet } from "@tabler/icons-react";
 import { Button } from "@/components/atoms/Button";
 import LoadingState from "@/components/primitives/LoadingState";
+import { useAuth } from "@/lib/auth/auth-provider";
+import { openSignIn } from "@/components/app/SignInDialog";
 
 /**
  * The wallet gate.
  *
- * Shown as the assistant's reply when a visitor without a wallet tries to
+ * Shown as the assistant's reply when a visitor without a session tries to
  * send. It reuses the live reply's wrapper and the thinking loader, so the
  * gated turn reads as a simulated round trip rather than an error state.
  */
@@ -21,13 +22,16 @@ export function openWalletPicker() {
 
 export function ConnectGate() {
   const [ready, setReady] = useState(false);
+  const { connected, signedIn, status } = useAuth();
 
   useEffect(() => {
     const t = setTimeout(() => setReady(true), 700);
     return () => clearTimeout(t);
   }, []);
 
-  if (!ready) {
+  // The session check answers before the gate does, so the button below is
+  // never the wrong one for a moment.
+  if (!ready || status === "unknown") {
     return (
       <div
         className="flex min-h-6 items-center"
@@ -37,6 +41,11 @@ export function ConnectGate() {
       </div>
     );
   }
+
+  // A connected wallet without a session is unsigned: the gate offers the
+  // signature, not another connection. Cancelling that signature leaves
+  // this gate exactly where it was.
+  const unsigned = connected && !signedIn;
 
   return (
     <article
@@ -50,11 +59,10 @@ export function ConnectGate() {
             type="button"
             variant="primary"
             size="sm"
-            onClick={openWalletPicker}
+            onClick={unsigned ? openSignIn : openWalletPicker}
             className="inline-flex shrink-0"
           >
-            <IconWallet size={13} stroke={1.8} className="shrink-0" />
-            Connect Wallet
+            {unsigned ? "Sign In" : "Log In"}
           </Button>
           <span>to start a chat with myntle.</span>
         </p>

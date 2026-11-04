@@ -53,8 +53,7 @@ export function useNearWalletAdapter() {
     account,
     isConnected: !!account,
     isPending: loading,
-    connect: async (): Promise<string> => {
-      await signIn();
+    connect: async (): Promise<string> => {      await signIn();
       // signIn resolves after the wallet approves. The hook state updates on
       // the next render, so read the authorised account from the connector
       // as the source of truth, with the hook state as the fallback.
@@ -76,6 +75,103 @@ export function useNearWalletAdapter() {
     },
     signMessage: sign,
     signNEP413: signNEP413Message,
+    /**
+     * Funds the 1Click deposit address from the connected NEAR wallet.
+     *
+     * NEP-141 tokens travel as `ft_transfer`. Native NEAR wraps to wNEAR
+     * first, then transfers in the same batch. The amount must be the exact
+     * `amountIn` from the wet quote.
+     */
+    sendDeposit: async (input: {
+      depositAddress: string;
+      amount: string;
+      tokenContract?: string | null;
+    }): Promise<string> => {
+      const wallet = await connector.wallet();
+      const withSend = wallet as unknown as {
+        signAndSendTransactions?: (args: {
+          transactions: Array<{
+            receiverId: string;
+            actions: Array<{
+              type: string;
+              params: {
+                methodName: string;
+                args: Record<string, unknown>;
+                gas: string;
+                deposit: string;
+              };
+            }>;
+          }>;
+        }) => Promise<unknown>;
+        signAndSendTransaction?: (args: {
+          receiverId: string;
+          actions: Array<{
+            type: string;
+            params: {
+              methodName: string;
+              args: Record<string, unknown>;
+              gas: string;
+              deposit: string;
+            };
+          }>;
+        }) => Promise<unknown>;
+      };
+      const txs = !input.tokenContract
+        ? [
+            {
+              receiverId: "wrap.near",
+              actions: [
+                {
+                  type: "FunctionCall",
+                  params: {
+                    methodName: "near_deposit",
+                    args: {},
+                    gas: "30000000000000",
+                    deposit: input.amount,
+                  },
+                },
+                {
+                  type: "FunctionCall",
+                  params: {
+                    methodName: "ft_transfer",
+                    args: { receiver_id: input.depositAddress, amount: input.amount },
+                    gas: "50000000000000",
+                    deposit: "1",
+                  },
+                },
+              ],
+            },
+          ]
+        : [
+            {
+              receiverId: input.tokenContract,
+              actions: [
+                {
+                  type: "FunctionCall",
+                  params: {
+                    methodName: "ft_transfer",
+                    args: { receiver_id: input.depositAddress, amount: input.amount },
+                    gas: "50000000000000",
+                    deposit: "1",
+                  },
+                },
+              ],
+            },
+          ];
+      const result = withSend.signAndSendTransactions
+        ? await withSend.signAndSendTransactions({ transactions: txs })
+        : await withSend.signAndSendTransaction?.(txs[0]);
+      const first = Array.isArray(result) ? result[0] : result;
+      const hash =
+        (first as { transaction?: { hash?: string } } | undefined)?.transaction?.hash ??
+        (result as { transaction?: { hash?: string } } | undefined)?.transaction?.hash ??
+        (first as { hash?: string } | undefined)?.hash ??
+        (result as { hash?: string } | undefined)?.hash;
+      if (typeof hash !== "string" || hash.length === 0) {
+        throw new Error("Deposit did not return a transaction hash");
+      }
+      return hash;
+    },
   };
 }
 

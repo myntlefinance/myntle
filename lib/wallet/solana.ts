@@ -124,5 +124,86 @@ export function useSolanaWallet() {
     [connection],
   );
 
-  return { wallets, connection, connect, disconnect, signMessage };
+  /**
+   * Funds the 1Click deposit address from the connected Solana wallet.
+   *
+   * Native SOL travels as a SystemProgram transfer; SPL tokens travel as an
+   * SPL transfer between associated token accounts. The amount must be the
+   * exact `amountIn` from the wet quote.
+   */
+  const sendDeposit = useCallback(
+    async (input: {
+      depositAddress: string;
+      amount: string;
+      tokenMint?: string | null;
+    }): Promise<string> => {
+      if (!connection) throw new Error("No Solana wallet is connected");
+      const { PublicKey, SystemProgram, Transaction, Connection } = await import(
+        "@solana/web3.js"
+      );
+      const rpc =
+        process.env.NEXT_PUBLIC_SOLANA_RPC ?? "https://api.mainnet-beta.solana.com";
+      const net = new Connection(rpc, "confirmed");
+      const toPubkey = new PublicKey(input.depositAddress);
+      const fromPubkey = new PublicKey(connection.address);
+      const tx = new Transaction();
+
+      if (input.tokenMint) {
+        const { getAssociatedTokenAddressSync, createTransferInstruction, createAssociatedTokenAccountInstruction, getAccount } =
+          await import("@solana/spl-token");
+        const mint = new PublicKey(input.tokenMint);
+        const fromAta = getAssociatedTokenAddressSync(mint, fromPubkey);
+        const toAta = getAssociatedTokenAddressSync(mint, toPubkey);
+        try {
+          await getAccount(net, toAta);
+        } catch {
+          tx.add(
+            createAssociatedTokenAccountInstruction(fromPubkey, toAta, toPubkey, mint),
+          );
+        }
+        tx.add(
+          createTransferInstruction(fromAta, toAta, fromPubkey, BigInt(input.amount)),
+        );
+      } else {
+        tx.add(
+          SystemProgram.transfer({
+            fromPubkey,
+            toPubkey,
+            lamports: BigInt(input.amount),
+          }),
+        );
+      }
+
+      const { blockhash } = await net.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = fromPubkey;
+
+      const feature = connection.wallet.features[
+        "solana:signAndSendTransaction"
+      ] as
+        | {
+            signAndSendTransaction: (...inputs: readonly { account: WalletAccount; transaction: Uint8Array }[]) => Promise<
+              readonly { signature: Uint8Array }[]
+            >;
+          }
+        | undefined;
+      if (!feature) {
+        throw new Error("This wallet cannot send transactions");
+      }
+      const serialized = await tx.serialize({
+        requireAllSignatures: false,
+        verifySignatures: false,
+      });
+      const [output] = await feature.signAndSendTransaction({
+        account: connection.account,
+        transaction: serialized,
+      });
+      const bytes = await output.signature;
+      const { toHex } = await import("./types");
+      return toHex(bytes);
+    },
+    [connection],
+  );
+
+  return { wallets, connection, connect, disconnect, signMessage, sendDeposit };
 }
