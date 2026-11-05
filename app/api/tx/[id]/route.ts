@@ -1,13 +1,30 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth/session";
-import { getTransaction } from "@/lib/db/transactions";
+import {
+  getTransaction,
+  setTransactionState,
+} from "@/lib/db/transactions";
+import { getStatus } from "@/lib/intents/service";
+import { readDepositMetadata } from "@/lib/intents/deposit-metadata";
+import {
+  depositTransitionForStatus,
+  isRefreshableDepositRecord,
+} from "@/lib/intents/deposit-status";
 
-/** The settlement record for one trade, with its timeline. */
+/**
+ * The settlement record for one trade, with its timeline.
+ *
+ * `?refresh=1` asks for exactly one authoritative status check on a pending
+ * deposit and writes what it found back to the record. The browser never
+ * talks to 1Click: the partner key stays on the server, and a card makes one
+ * such request per mount instead of a second polling loop. The status check is
+ * best effort; when it is unavailable the record is returned unchanged.
+ */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await requireSession(_req);
+  const session = await requireSession(req);
   if (!session) {
     return NextResponse.json({ error: "Not signed in." }, { status: 401 });
   }
@@ -19,17 +36,50 @@ export async function GET(
   }
 
   const { tx, events } = result;
+  const deposit = readDepositMetadata(tx.refs, tx.deposit_address);
+  let current = tx;
+  let statusCheck: "ok" | "unavailable" | "skipped" = "skipped";
+
+  const refresh = new URL(req.url).searchParams.get("refresh") === "1";
+  if (refresh && deposit?.address && isRefreshableDepositRecord(tx.state)) {
+    try {
+      const status = await getStatus(deposit.address, deposit.memo);
+      statusCheck = "ok";
+      const next = depositTransitionForStatus(
+        status.status,
+        deposit.expiresAt,
+        Date.now(),
+      );
+      const outcome = { ...(tx.outcome ?? {}) };
+      if (status.explorerUrls.length > 0) {
+        outcome.explorerUrls = status.explorerUrls;
+      }
+      const urlsChanged =
+        JSON.stringify(outcome.explorerUrls) !==
+        JSON.stringify(tx.outcome?.explorerUrls);
+      if (next.state !== tx.state || urlsChanged) {
+        await setTransactionState(tx.id, next.state, outcome);
+      }
+      current = { ...tx, state: next.state, outcome };
+    } catch {
+      // Keep the last known state. A failed check is not a failed deposit.
+      statusCheck = "unavailable";
+    }
+  }
+
   return NextResponse.json({
-    id: tx.id,
-    state: tx.state,
-    depositAddress: tx.deposit_address,
-    recipient: tx.recipient,
-    originAsset: tx.origin_asset,
-    destinationAsset: tx.destination_asset,
-    amountIn: tx.amount_in,
-    expectedOut: tx.expected_out,
-    outcome: tx.outcome,
-    updatedAt: tx.updated_at,
+    id: current.id,
+    state: current.state,
+    depositAddress: current.deposit_address,
+    recipient: current.recipient,
+    originAsset: current.origin_asset,
+    destinationAsset: current.destination_asset,
+    amountIn: current.amount_in,
+    expectedOut: current.expected_out,
+    outcome: current.outcome,
+    updatedAt: current.updated_at,
+    deposit,
+    statusCheck,
     events: events.map((e) => ({
       state: e.state,
       message: e.message,

@@ -14,6 +14,8 @@ export type TradeApprovalParams = {
   /** Amount in the smallest unit of the token being sold. */
   amount: string;
   recipient: string;
+  /** Account refunds return to on the origin chain. Bound so funds cannot be rerouted. */
+  refundTo: string;
   slippageBps: number;
   /** Minimum accepted output, in the smallest unit of the token being bought. */
   minAmountOut: string;
@@ -43,6 +45,7 @@ export function buildTradeApprovalMessage(p: TradeApprovalParams): string {
     `Send: ${p.amount} ${p.fromAssetId}\n` +
     `Receive at least: ${p.minAmountOut} ${p.toAssetId}\n` +
     `To: ${p.recipient}\n` +
+    `Refund to: ${p.refundTo}\n` +
     `Slippage: ${p.slippageBps} bps\n` +
     `Quote expires: ${p.expiresAt}\n` +
     `Requested: ${p.requestedAt}`

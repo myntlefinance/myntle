@@ -1,0 +1,216 @@
+import { NextResponse } from "next/server";
+import { start } from "workflow/api";
+import { z } from "zod";
+import { swapLifecycle } from "@/workflows/swap-lifecycle";
+import { requireSession } from "@/lib/auth/session";
+import { checkRateLimit, clientIp } from "@/lib/auth/rate-limit";
+import {
+  createExecutionQuote,
+  getAssets,
+  type Asset,
+} from "@/lib/intents/service";
+import { evmChainForSlug } from "@/lib/wallet/evm-chains";
+import {
+  createApproval,
+  createQuote,
+  createTransaction,
+  setTransactionRunId,
+} from "@/lib/db/transactions";
+
+/**
+ * An external deposit into the account.
+ *
+ * There is no stored dry quote to rebuild here: the user asks to fund the
+ * account with one asset and one amount, and the card shows the exact
+ * one-time address the wet quote returns. The asset is checked against the
+ * live catalogue and the amount must be a positive integer in the smallest
+ * unit, so a malformed body cannot ask 1Click to price an arbitrary string.
+ *
+ * The recipient and refund are the session's Intents account, never the
+ * browser body. There is no signed intent and no passkey prompt: the sender
+ * is an exchange or another wallet, and the settlement reader starts
+ * immediately so the status poll is already waiting when the funds arrive.
+ */
+
+const DEPOSIT_ERROR = "An error occurred.";
+const DEPOSIT_UNAVAILABLE = "The deposit could not be prepared. Please try again.";
+
+const depositBodySchema = z.strictObject({
+  assetId: z.string().min(1).max(300),
+  /** Smallest unit, positive integer, no decimals or sign. */
+  amount: z.string().regex(/^[1-9]\d{0,77}$/),
+  conversationId: z.string().uuid().nullish(),
+  /** Tool approval id (aitxt-…), so the card can rejoin the record. */
+  approvalId: z.string().max(200).nullish(),
+});
+
+export async function POST(req: Request) {
+  const { limited } = checkRateLimit(
+    `intents-deposit:${clientIp(req)}`,
+    10,
+    60_000,
+  );
+  if (limited) {
+    return NextResponse.json({ error: DEPOSIT_ERROR }, { status: 429 });
+  }
+
+  const session = await requireSession(req);
+  if (!session) {
+    return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+  }
+
+  let body: z.infer<typeof depositBodySchema>;
+  try {
+    body = depositBodySchema.parse(await req.json());
+  } catch {
+    console.error("[intents/deposit] invalid body");
+    return NextResponse.json({ error: DEPOSIT_ERROR }, { status: 400 });
+  }
+
+  // The catalogue is the authority on which assets can be priced. An id that
+  // is not in it is a malformed request, not a quote to attempt.
+  let asset: Asset | undefined;
+  try {
+    const assets = await getAssets();
+    asset = assets.find((entry) => entry.assetId === body.assetId);
+  } catch {
+    console.error("[intents/deposit] asset catalogue unavailable");
+    return NextResponse.json({ error: DEPOSIT_UNAVAILABLE }, { status: 502 });
+  }
+  if (!asset) {
+    console.error("[intents/deposit] unknown asset");
+    return NextResponse.json({ error: DEPOSIT_ERROR }, { status: 400 });
+  }
+
+  let execution: Awaited<ReturnType<typeof createExecutionQuote>>;
+  try {
+    execution = await createExecutionQuote({
+      fromAssetId: body.assetId,
+      toAssetId: body.assetId,
+      amount: body.amount,
+      recipient: session.intentsAccountId,
+      refundTo: session.intentsAccountId,
+      mode: "confidential-external",
+      confidentiality: "basic",
+      // P0.6 describes an external deposit as a passive funding route, where
+      // the sender chooses the amount. The exact-input default is for swaps.
+      swapType: "FLEX_INPUT",
+    });
+  } catch {
+    console.error("[intents/deposit] execution quote failed");
+    return NextResponse.json({ error: DEPOSIT_UNAVAILABLE }, { status: 502 });
+  }
+
+  let wetQuoteId: string;
+  let approvalId: string;
+  let transactionId: string;
+  let expectedOut: string;
+  // What the address needs in order to be funded again after a reload: the
+  // exact token, chain, raw amount, and deadline the quote priced. It is
+  // stored with the record so the card never has to re-quote to draw the QR.
+  const originChain = evmChainForSlug(asset.chain);
+  const deposit = {
+    depositAddress: execution.depositAddress,
+    depositMemo: execution.depositMemo ?? null,
+    expiresAt: execution.expiresAt,
+    amountInRaw: execution.amountIn || body.amount,
+    tokenContract: asset.contractAddress || null,
+    chainId: originChain?.id ?? null,
+    chainName: originChain?.name ?? null,
+    chainSlug: asset.chain || null,
+    decimals: asset.decimals ?? null,
+    symbol: asset.symbol || null,
+  };
+
+  try {
+    wetQuoteId = await createQuote({
+      userId: session.userId,
+      conversationId: body.conversationId ?? null,
+      request: {
+        assetId: body.assetId,
+        amount: body.amount,
+        mode: "confidential-external",
+        swapType: "FLEX_INPUT",
+        accountKind: session.accountKind,
+        intentsAccountId: session.intentsAccountId,
+        recipient: session.intentsAccountId,
+        refundTo: session.intentsAccountId,
+        confidentiality: "basic",
+        toolApprovalId: body.approvalId ?? null,
+      },
+      response: { ...execution },
+      expiresAt: execution.expiresAt,
+    });
+
+    approvalId = await createApproval({
+      quoteId: wetQuoteId,
+      userId: session.userId,
+      parameters: {
+        action: "deposit",
+        mode: "confidential-external",
+        assetId: body.assetId,
+        amount: body.amount,
+        recipient: session.intentsAccountId,
+        refundTo: session.intentsAccountId,
+        amountIn: execution.amountIn,
+        amountOut: execution.amountOut,
+        accountKind: session.accountKind,
+        intentsAccountId: session.intentsAccountId,
+        toolApprovalId: body.approvalId ?? null,
+        ...deposit,
+      },
+    });
+
+    const tx = await createTransaction({
+      userId: session.userId,
+      approvalId,
+      conversationId: body.conversationId ?? null,
+      recipient: session.intentsAccountId,
+      refundTo: session.intentsAccountId,
+      originAsset: body.assetId,
+      destinationAsset: body.assetId,
+      amountIn: execution.amountInFormatted,
+      expectedOut: execution.amountOutFormatted,
+      depositAddress: execution.depositAddress,
+      refs: {
+        mode: "confidential-external",
+        assetId: body.assetId,
+        amount: body.amount,
+        approvalId: body.approvalId ?? null,
+        conversationId: body.conversationId ?? null,
+        // The settlement reader joins on this key, exactly as the signed
+        // path does, so a reloaded conversation can still find the deposit.
+        toolApprovalId: body.approvalId ?? null,
+        ...deposit,
+      },
+      state: "submitted",
+    });
+
+    transactionId = tx.id;
+    expectedOut = tx.expected_out ?? execution.amountOutFormatted;
+  } catch {
+    console.error("[intents/deposit] record failed");
+    return NextResponse.json({ error: DEPOSIT_ERROR }, { status: 500 });
+  }
+
+  try {
+    const run = await start(swapLifecycle, [
+      {
+        transactionId,
+        depositAddress: execution.depositAddress,
+        expectedOut,
+      },
+    ]);
+    await setTransactionRunId(transactionId, run.runId);
+
+    return NextResponse.json({
+      transactionId,
+      ...deposit,
+      amountIn: execution.amountIn,
+      runId: run.runId,
+    });
+  } catch {
+    console.error("[intents/deposit] workflow start failed", { transactionId });
+    return NextResponse.json({ error: DEPOSIT_ERROR }, { status: 500 });
+  }
+}

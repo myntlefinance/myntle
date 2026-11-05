@@ -10,6 +10,7 @@ const PARAMS = {
   toAssetId: "nep141:wrap.near",
   amount: "14000000",
   recipient: "0x3259",
+  refundTo: "0x3259",
   slippageBps: 100,
   minAmountOut: "13850000",
   expiresAt: "2026-10-29T00:30:00.000Z",
@@ -42,6 +43,16 @@ describe("approval window", () => {
     const moved = buildTradeApprovalMessage({
       ...PARAMS,
       requestedAt: "2026-10-29T00:01:00.000Z",
+    });
+    expect(moved).not.toBe(message);
+  });
+
+  it("binds the refund address into the signed message", () => {
+    const message = buildTradeApprovalMessage(PARAMS);
+    expect(message).toContain("Refund to: 0x3259");
+    const moved = buildTradeApprovalMessage({
+      ...PARAMS,
+      refundTo: "0x9999",
     });
     expect(moved).not.toBe(message);
   });

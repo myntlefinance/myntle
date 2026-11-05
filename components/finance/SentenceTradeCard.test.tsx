@@ -115,23 +115,26 @@ describe("SentenceTradeCard", () => {
 });
 
 describe("TokenPopup", () => {
-  it("names the chain and the unit price", () => {
+  it("names the chain, the unit price, and the 24-hour chart", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <TokenPopup symbol="USDC" chain="arb" price="$1.00" />,
     );
     expect(html).toContain("USDC");
     expect(html).toContain("Arbitrum");
     expect(html).toContain("$1.00");
+    expect(html).toContain("24h");
+    expect(html).toContain("<canvas");
     // Popup rows center; baselining lets image and truncation baselines
     // float the value above the label.
     expect(html).not.toContain("items-baseline");
   });
 
-  it("leaves the price row out when the asset was never priced", () => {
+  it("keeps a price slot at the title edge when no price is known yet", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <TokenPopup symbol="USDC" chain="arb" />,
     );
     expect(html).toContain("Arbitrum");
+    expect(html).toContain("—");
     expect(html).not.toContain("Price");
   });
 });
