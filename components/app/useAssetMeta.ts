@@ -34,6 +34,7 @@ export function useResolvedAssetMeta(ids: string[]): Map<string, AssetMeta> {
             assetId: string;
             symbol: string;
             chain: string;
+            decimals?: number;
             priceUsd: number;
           }>;
         } | null,
@@ -47,6 +48,10 @@ export function useResolvedAssetMeta(ids: string[]): Map<string, AssetMeta> {
             symbol: a.symbol,
             chain: a.chain,
             priceUsd: typeof a.priceUsd === "number" ? a.priceUsd : undefined,
+            decimals:
+              typeof a.decimals === "number" && Number.isInteger(a.decimals)
+                ? a.decimals
+                : undefined,
           });
         }
         for (const id of missing) {

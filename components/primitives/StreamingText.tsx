@@ -227,7 +227,7 @@ export default function StreamingText({
         <div className="mt-0.5 flex flex-col">
           {followUps.map((text, i) => (
             <button
-              key={text}
+              key={`${i}-${text}`}
               onClick={() => onFollowUp?.(text, i)}
               className="-mx-1.5 flex items-center gap-2 rounded-[7px] border-b border-line
                 px-1.5 py-1.5 text-left text-[12.5px] text-ink transition-colors

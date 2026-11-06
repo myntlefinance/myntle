@@ -40,16 +40,37 @@ import {
   getMessageTimestamp,
   shouldShowTimestampPill,
 } from "@/components/app/TimestampPill";
-import AgentScreen from "@/components/primitives/AgentScreen";
+import dynamic from "next/dynamic";
 import ApprovalCard from "@/components/primitives/ApprovalCard";
-import ContextCards from "@/components/primitives/ContextCards";
-import DiffTable from "@/components/primitives/DiffTable";
-import InsightCards from "@/components/primitives/InsightCards";
+// Demo-only primitives load in a separate chunk so the live chat bundle
+// never downloads them. They render only when `live == null`.
+const AgentScreen = dynamic(
+  () => import("@/components/primitives/AgentScreen"),
+  { ssr: false, loading: () => null },
+);
+const ContextCards = dynamic(
+  () => import("@/components/primitives/ContextCards"),
+  { ssr: false, loading: () => null },
+);
+const DiffTable = dynamic(
+  () => import("@/components/primitives/DiffTable"),
+  { ssr: false, loading: () => null },
+);
+const InsightCards = dynamic(
+  () => import("@/components/primitives/InsightCards"),
+  { ssr: false, loading: () => null },
+);
+const RecordsTable = dynamic(
+  () => import("@/components/primitives/RecordsTable"),
+  { ssr: false, loading: () => null },
+);
+const SelectionActions = dynamic(
+  () => import("@/components/primitives/SelectionActions"),
+  { ssr: false, loading: () => null },
+);
 import LoadingState from "@/components/primitives/LoadingState";
 import PromptBar, { type PromptModel } from "@/components/primitives/PromptBar";
 import RecommendationCard from "@/components/primitives/RecommendationCard";
-import RecordsTable from "@/components/primitives/RecordsTable";
-import SelectionActions from "@/components/primitives/SelectionActions";
 import SidebarNav from "@/components/primitives/SidebarNav";
 import StreamingText from "@/components/primitives/StreamingText";
 import TaskRows, { SpinnerRing } from "@/components/primitives/TaskRows";
@@ -408,6 +429,8 @@ function SuggestionIcon({ kind }: { kind: string }) {
       return <IconRepeat {...props} />;
     case "balances":
       return <IconWallet {...props} />;
+    case "portfolio":
+      return <IconWallet {...props} />;
     case "routes":
       return <IconRoute {...props} />;
     default:
@@ -419,6 +442,7 @@ const LIVE_SUGGESTIONS: { id: string; label: string }[] = [
   { id: "quote", label: "What would 100 USDC buy in NEAR?" },
   { id: "swap", label: "Swap 100 USDC for NEAR" },
   { id: "balances", label: "What do I hold?" },
+  { id: "portfolio", label: "Show my portfolio balances" },
   { id: "routes", label: "What can I trade from here?" },
 ];
 
@@ -817,6 +841,10 @@ export default function Harness({
   trashCount,
   trashActive,
   onOpenTrash,
+  portfolioActive,
+  onOpenPortfolio,
+  historyActive,
+  onOpenHistory,
   loadingThread,
   footer,
   footerCompact,
@@ -835,8 +863,10 @@ export default function Harness({
   onNewChat?: () => void;
   /** renames the live thread */
   onRename?: (next: string) => void;
-  /** all live threads for the sidebar; falls back to current title alone */
-  threads?: Array<{ id: string; label: string }>;
+  /** all live threads for the sidebar; falls back to current title alone.
+   * NULL labels are untitled and render as "New chat"; a stored "New chat"
+   * string is a manual rename and renders as-is (identical text). */
+  threads?: Array<{ id: string; label: string | null }>;
   /** navigate to a live thread */
   onPickThread?: (id: string) => void;
   /** unique id of the open live thread; highlight matches by this, not title */
@@ -853,6 +883,14 @@ export default function Harness({
   trashActive?: boolean;
   /** opens the Trash page */
   onOpenTrash?: () => void;
+  /** the Portfolio page is open; highlights the sidebar row */
+  portfolioActive?: boolean;
+  /** opens the Portfolio page */
+  onOpenPortfolio?: () => void;
+  /** the History page is open; highlights the sidebar row */
+  historyActive?: boolean;
+  /** opens the History page */
+  onOpenHistory?: () => void;
   /** a saved thread is loading its history; show a skeleton in place of messages */
   loadingThread?: boolean;
   /** replaces the sidebar's footer button */
@@ -1125,13 +1163,17 @@ export default function Harness({
    * right inset the thread reserves via `[scrollbar-gutter:stable]`.
    * Mirroring the measured gutter width as a right margin on the composer
    * locks both edges together in every state; overlay scrollbars report
-   * zero and change nothing. */
+   * zero and change nothing.
+   *
+   * Measured in a layout effect, and measured while the thread is still
+   * loading. A passive effect lands after the first frame, and the loading
+   * state is not "active" yet, so the bar used to paint at the centre of the
+   * pane and then hop left by half a scrollbar the moment the gutter was
+   * known — on every reload and every return to a thread. The skeleton
+   * inside the scroll container is already inset, so the bar has to be too,
+   * from its first frame. */
   const [scrollGutter, setScrollGutter] = useState(0);
-  useEffect(() => {
-    if (!active) {
-      setScrollGutter(0);
-      return;
-    }
+  useIsomorphicLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const measure = () => {
@@ -1149,7 +1191,7 @@ export default function Harness({
       mo.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [active, messagesCount]);
+  }, [active, loadingThread]);
 
   /* While streaming, as the assistant response grows, the empty space below shrinks
    * so that (prompt + assistant + empty space) fills the viewport naturally.
@@ -1404,6 +1446,34 @@ export default function Harness({
                   message.role === "assistant" &&
                   message.id === live.messages[live.messages.length - 1]?.id;
                 const messageStatus = isLastAssistant ? live.status : "ready";
+                // "Latest" is too strict: a turn can have several assistant
+                // messages, and only a new user message means the user moved
+                // on. That is what disables an unlock request.
+                const messageIndex = live.messages.findIndex(
+                  (entry) => entry.id === message.id,
+                );
+                const superseded =
+                  messageIndex >= 0 &&
+                  live.messages
+                    .slice(messageIndex + 1)
+                    .some((entry) => entry.role === "user");
+                // The request this card belongs to, so a new prompt from an
+                // old card retries that request rather than the newest one.
+                let priorUserText = "";
+                for (let i = messageIndex - 1; i >= 0; i -= 1) {
+                  const candidate = live.messages[i];
+                  if (candidate?.role !== "user") continue;
+                  const text = candidate.parts
+                    .filter((part) => part.type === "text")
+                    .map((part) => part.text)
+                    .join(" ")
+                    .trim();
+                  if (text) {
+                    priorUserText = text;
+                    break;
+                  }
+                }
+                const retryText = priorUserText || "Retry my last request.";
                 return (
                   <Fragment key={message.id}>
                     {showTimestamp && (
@@ -1441,6 +1511,9 @@ export default function Harness({
                         <LiveResponse
                           message={message}
                           status={messageStatus}
+                          interactive
+                          superseded={superseded}
+                          onRetry={() => live.send(retryText)}
                           onRegenerate={
                             live.regenerate
                               ? () => live.regenerate?.(message.id)
@@ -1581,7 +1654,7 @@ export default function Harness({
         recents={
           live
             ? (threads && threads.length > 0
-                ? threads
+                ? threads.map((t) => ({ id: t.id, label: t.label ?? "New chat" }))
                 : title
                   ? [{ id: "current", label: title }]
                   : [])
@@ -1602,6 +1675,10 @@ export default function Harness({
         trashCount={live ? (trashCount ?? 0) : 0}
         trashActive={trashActive}
         onOpenTrash={live ? onOpenTrash : undefined}
+        portfolioActive={portfolioActive}
+        onOpenPortfolio={live ? onOpenPortfolio : undefined}
+        historyActive={historyActive}
+        onOpenHistory={live ? onOpenHistory : undefined}
         onNewChat={() => {
           if (live) onNewChat?.();
           else newDemoChat();

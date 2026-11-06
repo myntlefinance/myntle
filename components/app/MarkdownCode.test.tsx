@@ -118,13 +118,25 @@ def churn():
     expect(html).toContain("\u00A0");
   });
 
-  it("routes mermaid blocks to PeleDiagram", () => {
+  it("keeps mermaid blocks out of the static bundle (lazy PeleDiagram boundary)", () => {
     const md = `\`\`\`mermaid
 graph TD;
 A-->B;
 \`\`\``;
     const html = ReactDOMServer.renderToString(<Markdown>{md}</Markdown>);
 
+    // ssr:false boundary renders nothing on the server; the Pele chunk loads on the client
+    expect(html).not.toContain("pele-diagram");
+  });
+
+  it("mermaid target still renders the diagram with preview/code tabs", async () => {
+    const { PeleDiagram } = await import("@/components/app/PeleDiagram");
+    const html = ReactDOMServer.renderToString(
+      <PeleDiagram code={"graph TD;\nA-->B;"} language="mermaid" />,
+    );
+
     expect(html).toContain("pele-diagram");
+    expect(html).toContain("Preview");
+    expect(html).toContain("Code");
   });
 });

@@ -87,6 +87,8 @@ export type AssetMeta = {
   symbol: string;
   chain?: string;
   priceUsd?: number;
+  /** Smallest-unit exponent, used to show a raw deposit amount as units. */
+  decimals?: number;
 };
 
 export function harvestAssetMeta(
@@ -105,6 +107,7 @@ export function harvestAssetMeta(
         chain?: unknown;
         priceUsd?: unknown;
         price?: unknown;
+        decimals?: unknown;
       };
       if (typeof asset.assetId !== "string" || typeof asset.symbol !== "string") {
         continue;
@@ -119,6 +122,12 @@ export function harvestAssetMeta(
             : typeof asset.price === "number"
               ? asset.price
               : undefined,
+        decimals:
+          typeof asset.decimals === "number" &&
+          Number.isInteger(asset.decimals) &&
+          asset.decimals >= 0
+            ? asset.decimals
+            : undefined,
       });
     }
   }

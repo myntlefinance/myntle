@@ -5,12 +5,15 @@ import { useRouter } from "next/navigation";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import Harness from "@/components/site/Harness";
-import { WalletButton } from "@/components/app/WalletButton";
+import { AccountControl } from "@/components/app/AccountControl";
 import { MODELS, DEFAULT_MODEL } from "@/lib/ai/provider";
 import { TITLE_MAX_CHARS } from "@/lib/ai/title";
 import { focusComposer } from "@/lib/composer";
 import { openWalletPicker } from "@/components/app/ConnectGate";
-import { useWallet } from "@/lib/wallet/registry";
+import { openSignIn } from "@/components/app/SignInDialog";
+import { SUPER_CONTINUE_EVENT } from "@/lib/intents/user-session";
+import { useAuth } from "@/lib/auth/auth-provider";
+import { chatRequestHeaders, chatSuperUnlocked } from "@/components/app/chatTransport";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useThreads,
@@ -26,14 +29,43 @@ import {
   messageCache,
   prefetchInflight,
   prefetchThread,
+  readThreadsCache,
+  readTrashedCache,
   setCachedMessages,
   threadPagination,
+  writeThreadsCache,
+  writeTrashedCache,
   type ThreadItem,
   type TrashedItem,
 } from "@/components/app/threadCache";
 import type { SettlementSnapshot } from "@/components/app/approvals";
+import type { DepositMetadata } from "@/lib/intents/deposit-metadata";
+import {
+  isToolPart,
+  outputOf,
+  toolNameOf,
+  type ToolPart,
+} from "@/components/app/toolParts";
 
 export type GatedExchange = { id: number; prompt: string };
+
+/**
+ * True when the assistant's last turn stopped on the super account: either it
+ * asked for the unlock, or the private read came back locked. Only then is
+ * there a paused request worth resuming after the user unlocks.
+ */
+function stoppedOnUnlock(message: UIMessage | undefined): boolean {
+  if (!message || message.role !== "assistant") return false;
+  return message.parts.some((part) => {
+    if (!isToolPart(part.type)) return false;
+    const tool = toolNameOf(part as ToolPart);
+    if (tool === "request_super_unlock") return true;
+    return (
+      tool === "get_super_balances" &&
+      outputOf(part as ToolPart)?.needsSuperUnlock === true
+    );
+  });
+}
 
 export default function ChatView({
   initialConversationId = null,
@@ -44,9 +76,16 @@ export default function ChatView({
   const { data: threads = [] } = useThreads();
   const { data: trashed = [] } = useTrashed();
   const [model, setModel] = useState(DEFAULT_MODEL);
-  const { connected, account } = useWallet();
+  const { connected, account, identity, signedIn, status: sessionStatus, refresh: refreshSession } = useAuth();
+  // Chats require a signed-in session, not merely a connected wallet. A
+  // connected-but-unsigned visitor queues prompts exactly like a
+  // disconnected one; the gate offers the signature instead of a send.
   const accountRef = useRef(account);
   accountRef.current = account;
+  // A passkey session is signed in with no connected wallet, so the
+  // transport reads its identity from a ref rather than from `account`.
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
   const router = useRouter();
   const [conversationId, setConversationId] = useState<string | null>(
     initialConversationId,
@@ -66,8 +105,6 @@ export default function ChatView({
   const titleRef = useRef<string | null>(title);
   titleRef.current = title;
   const titleDirtyRef = useRef(false);
-  const titleReqRef = useRef(0);
-  const titlePromiseRef = useRef<Promise<void> | null>(null);
 
   const [gated, setGated] = useState<GatedExchange[]>([]);
   const gatedIdRef = useRef(0);
@@ -106,12 +143,24 @@ export default function ChatView({
       : [],
     transport: new DefaultChatTransport({
       api: "/api/chat",
+      // A fresh access token per request, refreshed silently from the
+      // browser-held refresh token. The server borrows it for the turn. A
+      // passkey session is keyed by its account, not by a wallet.
+      headers: async (): Promise<Record<string, string>> =>
+        chatRequestHeaders({
+          identity: identityRef.current,
+          account: accountRef.current,
+        }),
       body: () => ({
         model,
         conversationId: conversationIdRef.current,
         title: titleRef.current,
         walletAddress: accountRef.current?.address,
         walletChain: accountRef.current?.kind,
+        superUnlocked: chatSuperUnlocked({
+          identity: identityRef.current,
+          account: accountRef.current,
+        }),
       }),
     }),
   });
@@ -152,13 +201,14 @@ export default function ChatView({
     clearError();
   }, [status, setMessages, clearError]);
 
-  // Private chat route guard: an unauthenticated visitor cannot view a saved thread.
+  // Private chat route guard: a signed-out visitor cannot view a saved
+  // thread. While the session check is still in flight, nothing redirects.
   useEffect(() => {
-    if (initialConversationId && !connected) {
+    if (initialConversationId && sessionStatus === "signed-out") {
       clearThreadCache();
       router.replace("/");
     }
-  }, [initialConversationId, connected, router]);
+  }, [initialConversationId, sessionStatus, router]);
 
   // Global sign-out: clear React state, empty lists, and return to composer.
   useEffect(() => {
@@ -256,6 +306,7 @@ export default function ChatView({
               state: string;
               depositAddress?: string | null;
               explorerUrls?: string[];
+              deposit?: DepositMetadata | null;
             }>;
           } | null,
         ) => {
@@ -268,6 +319,7 @@ export default function ChatView({
                 transactionId: s.transactionId,
                 depositAddress: s.depositAddress,
                 explorerUrls: s.explorerUrls,
+                deposit: s.deposit,
               };
             }
           }
@@ -291,9 +343,7 @@ export default function ChatView({
         setCachedMessages(conversationIdRef.current, messagesRef.current);
       }
 
-      // Cancel any in-flight title generation
-      titleReqRef.current += 1;
-      titlePromiseRef.current = null;
+      // Cancel any pending rename retry state on switch.
       titleDirtyRef.current = false;
       pendingRef.current = null;
       setGated([]);
@@ -378,9 +428,15 @@ export default function ChatView({
       setMessages(cached);
       setLoadingThread(false);
       const threadLabel = threads.find((t) => t.id === conversationId)?.label;
-      if (threadLabel) {
+      // NULL is untitled; a stored "New chat" string is a manual rename and
+      // must survive untouched.
+      if (threadLabel != null) {
         titleDirtyRef.current = false;
         setTitle(threadLabel);
+      } else if (titleRef.current?.trim() === "New chat") {
+        // Stale placeholder from before untitled became NULL.
+        titleDirtyRef.current = false;
+        setTitle(null);
       }
       const pag = threadPagination.get(conversationId);
       if (pag) setHasMoreOlder(pag.hasMore);
@@ -398,6 +454,9 @@ export default function ChatView({
           setConversationId(null);
           setTitle(null);
           setLoadingThread(false);
+          // The cookie is gone or expired. Say so everywhere at once
+          // instead of only on this screen.
+          void refreshSession();
           try {
             window.history.replaceState(null, "", "/");
           } catch {
@@ -429,9 +488,13 @@ export default function ChatView({
             });
           }
           // Title comes from the database here, so it must not mark dirty.
-          if (body.title) {
+          // NULL means untitled; only a stored string counts as named.
+          if (body.title != null) {
             titleDirtyRef.current = false;
             setTitle(body.title);
+          } else if (titleRef.current?.trim() === "New chat") {
+            titleDirtyRef.current = false;
+            setTitle(null);
           }
           setLoadingThread(false);
         },
@@ -442,7 +505,7 @@ export default function ChatView({
     return () => {
       cancelled = true;
     };
-  }, [conversationId, messages.length, setMessages, threads]);
+  }, [conversationId, messages.length, setMessages, threads, refreshSession]);
 
   // Learn the server conversation after the first saved turn, persist the
   // local title, refresh the list, then move off the composer onto its
@@ -467,34 +530,9 @@ export default function ChatView({
       }
       if (!latest || cancelled) return;
       const slug = latest.slug;
-      // The generated title is usually back long before the stream ends,
-      // but a fast reply can win the race. Wait for it (bounded) so it is
-      // not lost on the unmounted composer and both surfaces agree.
-      if (!titleRef.current && titlePromiseRef.current) {
-        try {
-          await Promise.race([
-            titlePromiseRef.current,
-            new Promise((resolve) => setTimeout(resolve, 4000)),
-          ]);
-        } catch {
-          // Title failure already falls back to the prompt inside requestTitle.
-        }
-      }
-      // Persist the locally generated title first so every later read —
-      // the refresh below, the remount after navigation — sees it.
-      if (titleRef.current && titleDirtyRef.current) {
-        titleDirtyRef.current = false;
-        try {
-          await fetch(`/api/conversations/${encodeURIComponent(slug)}`, {
-            method: "PATCH",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ title: titleRef.current }),
-          });
-        } catch {
-          // The title effect below retries on its next run.
-          titleDirtyRef.current = true;
-        }
-      }
+      // The server `after()` in /api/chat owns title generation; the
+      // post-turn threads invalidation carries it to the sidebar. No local
+      // wait or PATCH here.
       await queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
       if (cancelled) return;
       setConversationId(slug);
@@ -545,34 +583,11 @@ export default function ChatView({
     return () => window.removeEventListener("popstate", handlePopState);
   }, [switchConversation]);
 
-  const requestTitle = useCallback((prompt: string) => {
-    const id = (titleReqRef.current += 1);
-    titlePromiseRef.current = fetch("/api/title", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body: { title?: string } | null) => {
-        if (id !== titleReqRef.current) return;
-        const cleaned = body?.title?.trim();
-        // No prompt fallback: a failed generation leaves the title null
-        // ("New chat") and the next turn retries, when the latest prompt
-        // describes the thread better anyway.
-        if (!cleaned) return;
-        setTitle(cleaned);
-        titleDirtyRef.current = true;
-      })
-      .catch(() => {
-        // Keep null so the next turn retries.
-      });
-  }, []);
-
   const send = useCallback(
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
-      if (!connected) {
+      if (!signedIn) {
         gatedIdRef.current += 1;
         setGated((current) => [
           ...current,
@@ -581,28 +596,44 @@ export default function ChatView({
         pendingRef.current = trimmed;
         return;
       }
-      if (!title) requestTitle(trimmed);
       void sendMessage({
         text: trimmed,
         metadata: { createdAt: new Date().toISOString() },
       });
     },
-    [connected, sendMessage, title, requestTitle],
+    [signedIn, sendMessage],
   );
 
-  // Once the wallet lands, the gated turns clear and the latest prompt starts
+  // After unlocking, continue the paused turn instead of resending the
+  // prompt as a new user message. Regenerating drops the "locked" reply and
+  // answers the same request now that the token exists.
+  useEffect(() => {
+    const onContinue = () => {
+      const lastAssistant = [...messagesRef.current]
+        .reverse()
+        .find((message) => message.role === "assistant");
+      if (!lastAssistant || !stoppedOnUnlock(lastAssistant)) return;
+      void regenerate({
+        messageId: lastAssistant.id,
+        body: { superJustUnlocked: true },
+      });
+    };
+    window.addEventListener(SUPER_CONTINUE_EVENT, onContinue);
+    return () => window.removeEventListener(SUPER_CONTINUE_EVENT, onContinue);
+  }, [regenerate]);
+
+  // Once the sign-in lands, the gated turns clear and the latest prompt starts
   // the real conversation, so the thread reads as a fresh chat.
   useEffect(() => {
-    if (!connected || !pendingRef.current) return;
+    if (!signedIn || !pendingRef.current) return;
     const next = pendingRef.current;
     pendingRef.current = null;
     setGated([]);
-    if (!title) requestTitle(next);
     void sendMessage({
       text: next,
       metadata: { createdAt: new Date().toISOString() },
     });
-  }, [connected, sendMessage, title, requestTitle]);
+  }, [signedIn, sendMessage]);
 
   const newChat = useCallback(() => {
     switchConversation(null);
@@ -613,8 +644,6 @@ export default function ChatView({
     (next: string) => {
       const cleaned = next.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX_CHARS);
       if (!cleaned || cleaned === titleRef.current?.trim()) return;
-      // A manual rename wins over an in-flight generated title.
-      titleReqRef.current += 1;
       setTitle(cleaned);
       titleDirtyRef.current = true;
     },
@@ -623,7 +652,10 @@ export default function ChatView({
 
   // Rename from a sidebar row. A row can name any saved chat, not only the
   // open one, so this writes through directly instead of going through the
-  // title state the open thread owns.
+  // title state the open thread owns. Paints instantly via the query cache
+  // + memory cache; no list refetch — the row keeps its place and the PATCH
+  // settles in the background. A failed write rolls back to the previous
+  // label so the row never sticks on a name the server rejected.
   const renameThread = useCallback(
     (id: string, next: string) => {
       const cleaned = next.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX_CHARS);
@@ -631,11 +663,23 @@ export default function ChatView({
       const current =
         (id === conversationId ? titleRef.current : null) ?? findThreadLabel(id);
       if (current && cleaned === current.trim()) return;
-      titleReqRef.current += 1;
+      const prevTitle = titleRef.current;
       if (id === conversationId) {
         // Already saved below; the dirty-title effect must not send it twice.
         titleDirtyRef.current = false;
         setTitle(cleaned);
+      }
+      const prevThreads = queryClient.getQueryData<ThreadItem[]>(THREADS_QUERY_KEY);
+      const prevCache = readThreadsCache();
+      queryClient.setQueryData<ThreadItem[]>(THREADS_QUERY_KEY, (old) => {
+        if (!old) return old;
+        if (!old.some((t) => t.id === id)) return old;
+        return old.map((t) => (t.id === id ? { ...t, label: cleaned } : t));
+      });
+      if (prevCache.some((t) => t.id === id)) {
+        writeThreadsCache(
+          prevCache.map((t) => (t.id === id ? { ...t, label: cleaned } : t)),
+        );
       }
       void fetch(`/api/conversations/${encodeURIComponent(id)}`, {
         method: "PATCH",
@@ -645,8 +689,11 @@ export default function ChatView({
         .then((res) => {
           if (!res.ok) throw new Error("rename failed");
         })
-        .then(() => queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY }))
-        .catch(() => queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY }));
+        .catch(() => {
+          if (prevThreads) queryClient.setQueryData(THREADS_QUERY_KEY, prevThreads);
+          writeThreadsCache(prevCache);
+          if (id === conversationId) setTitle(prevTitle);
+        });
     },
     [conversationId, queryClient],
   );
@@ -654,22 +701,51 @@ export default function ChatView({
   // Delete from a sidebar row. The row collapses first and only then calls
   // in, so this runs after the exit animation. A soft delete moves the chat
   // to trash; deleting the open thread returns to the composer, and the
-  // cache entry goes too, so a stale history cannot be served.
+  // cache entry goes too, so a stale history cannot be served. No list
+  // refetch: the DELETE response carries the authoritative deletedAt, so
+  // both lists are patched locally (query cache + persisted cache).
   const deleteThread = useCallback(
     (id: string) => {
+      const label =
+        queryClient.getQueryData<ThreadItem[]>(THREADS_QUERY_KEY)?.find((t) => t.id === id)?.label ??
+        findThreadLabel(id) ??
+        "New chat";
       void fetch(`/api/conversations/${encodeURIComponent(id)}`, {
         method: "DELETE",
       })
-        .then((res) => {
+        .then(async (res) => {
           if (!res.ok) throw new Error("delete failed");
+          let deletedAt = new Date().toISOString();
+          try {
+            const body = (await res.json()) as { deletedAt?: string };
+            if (typeof body?.deletedAt === "string" && body.deletedAt) {
+              deletedAt = body.deletedAt;
+            }
+          } catch {
+            // DELETE succeeded; fall back to now for the trash ordering.
+          }
+          return deletedAt;
         })
-        .then(() => {
+        .then((deletedAt) => {
           deleteCachedMessages(id);
           if (id === conversationId) newChat();
-          void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
-          void queryClient.invalidateQueries({ queryKey: TRASHED_QUERY_KEY });
+          const entry: TrashedItem = { id, label, deletedAt };
+          queryClient.setQueryData<ThreadItem[]>(THREADS_QUERY_KEY, (old) =>
+            old ? old.filter((t) => t.id !== id) : old,
+          );
+          writeThreadsCache(readThreadsCache().filter((t) => t.id !== id));
+          queryClient.setQueryData<TrashedItem[]>(TRASHED_QUERY_KEY, (old) =>
+            old
+              ? [entry, ...old.filter((t) => t.id !== id)]
+              : [entry],
+          );
+          const prevTrashed = readTrashedCache().filter((t) => t.id !== id);
+          writeTrashedCache([entry, ...prevTrashed]);
         })
-        .catch(() => queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY }));
+        .catch(() => {
+          // No list change was made, so nothing to roll back. SidebarNav's
+          // safety timer releases the collapsed row so it glides back.
+        });
     },
     [conversationId, newChat, queryClient],
   );
@@ -678,39 +754,69 @@ export default function ChatView({
     router.push("/trash");
   }, [router]);
 
-  // Persist locally-set titles (generated or renamed) once. Titles loaded
-  // from the database never mark dirty, so opening a chat doesn't reorder it.
+  const openPortfolio = useCallback(() => {
+    router.push("/portfolio");
+  }, [router]);
+
+  const openHistory = useCallback(() => {
+    router.push("/history");
+  }, [router]);
+
+  // Persist header renames once. Titles loaded from the database never
+  // mark dirty, so opening a chat doesn't touch it. Generated titles land
+  // via the server `after()` + sidebar refresh, not from here. Paints instantly via the query cache + memory cache; no list
+  // refetch — a rename keeps its row in place. New rows arrive through the
+  // post-turn list refresh, not from here. A failed write marks dirty again
+  // so the next run retries.
   useEffect(() => {
     if (!conversationId || !title || !titleDirtyRef.current) return;
     titleDirtyRef.current = false;
-    void fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+    const id = conversationId;
+    const label = title;
+    queryClient.setQueryData<ThreadItem[]>(THREADS_QUERY_KEY, (old) => {
+      if (!old) return old;
+      if (!old.some((t) => t.id === id)) return old;
+      return old.map((t) => (t.id === id ? { ...t, label } : t));
+    });
+    const cached = readThreadsCache();
+    if (cached.some((t) => t.id === id)) {
+      writeThreadsCache(
+        cached.map((t) => (t.id === id ? { ...t, label } : t)),
+      );
+    }
+    void fetch(`/api/conversations/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title }),
-    })
-      .then(() => queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY }))
-      .catch(() => {
-        titleDirtyRef.current = true;
-      });
+      body: JSON.stringify({ title: label }),
+    }).catch(() => {
+      titleDirtyRef.current = true;
+    });
   }, [conversationId, title, queryClient]);
+
+  // A connected wallet still has to sign in, so the prompt matches the
+  // gate rather than sending an unsigned visitor to the connect picker.
+  const askToSignIn = useCallback(() => {
+    if (connected) openSignIn();
+    else openWalletPicker();
+  }, [connected]);
 
   const regenerateTurn = useCallback(
     (messageId?: string) => {
-      if (!connected) {
-        openWalletPicker();
+      if (!signedIn) {
+        askToSignIn();
         return;
       }
       void regenerate({ messageId });
     },
-    [connected, regenerate],
+    [signedIn, askToSignIn, regenerate],
   );
 
   const editAndSend = useCallback(
     (messageId: string, nextText: string) => {
       const trimmed = nextText.trim();
       if (!trimmed) return;
-      if (!connected) {
-        openWalletPicker();
+      if (!signedIn) {
+        askToSignIn();
         return;
       }
       void sendMessage({
@@ -719,7 +825,7 @@ export default function ChatView({
         metadata: { createdAt: new Date().toISOString() },
       });
     },
-    [connected, sendMessage],
+    [signedIn, askToSignIn, sendMessage],
   );
 
   const respondToApproval = useCallback(
@@ -747,13 +853,19 @@ export default function ChatView({
   );
 
   // Seeded mounts skip the history fetch (messages already present) but
-  // still need the saved title. The sidebar list carries it.
+  // still need the saved title. The sidebar list carries it. NULL is
+  // untitled; a stored "New chat" string is a manual rename.
   useEffect(() => {
-    if (!conversationId || title || messages.length === 0) return;
-    const threadLabel = threads.find((t) => t.id === conversationId)?.label;
-    if (threadLabel) {
+    const needsTitle = !title || title.trim() === "New chat";
+    if (!conversationId || !needsTitle || messages.length === 0) return;
+    const found = threads.find((t) => t.id === conversationId);
+    if (!found) return;
+    if (found.label != null) {
       titleDirtyRef.current = false;
-      setTitle(threadLabel);
+      setTitle(found.label);
+    } else if (title?.trim() === "New chat") {
+      titleDirtyRef.current = false;
+      setTitle(null);
     }
   }, [conversationId, title, messages.length, threads]);
 
@@ -829,12 +941,14 @@ export default function ChatView({
       onDeleteThread={deleteThread}
       trashCount={trashed.length}
       onOpenTrash={openTrash}
+      onOpenPortfolio={openPortfolio}
+      onOpenHistory={openHistory}
       loadingThread={loadingThread}
       onLoadOlder={loadOlderMessages}
       hasMoreOlder={hasMoreOlder}
       loadingOlder={loadingOlder}
-      footer={<WalletButton />}
-      footerCompact={<WalletButton compact />}
+      footer={<AccountControl />}
+      footerCompact={<AccountControl compact />}
       models={MODELS}
       onModelChange={setModel}
     />

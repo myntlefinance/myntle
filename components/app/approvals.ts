@@ -1,5 +1,7 @@
 import type { UIMessage } from "ai";
 import { parseTradeAction, type TradeAction } from "@/lib/trade/action";
+import { formatUsdPrice } from "@/lib/format/price";
+import type { DepositMetadata } from "@/lib/intents/deposit-metadata";
 import {
   assetName,
   formatAmount,
@@ -25,6 +27,8 @@ export type SettlementSnapshot = {
   transactionId: string;
   depositAddress?: string | null;
   explorerUrls?: string[];
+  /** The deposit address's token, chain, raw amount, and deadline. */
+  deposit?: DepositMetadata | null;
 };
 
 /** Terminal database states painted directly; anything else keeps polling. */
@@ -65,6 +69,7 @@ export type ApprovalInfo = {
   minAmountOut?: string;
   minAmountOutRaw?: string;
   recipient: string;
+  refundTo?: string;
   expiresAt?: string;
   slippageBps: number;
   swapInput?: {
@@ -72,7 +77,9 @@ export type ApprovalInfo = {
     toAssetId: string;
     amount: string;
     recipient: string;
+    refundTo?: string;
     slippageBps?: number;
+    quoteId?: string;
   };
   transactionId?: string;
   depositAddress?: string;
@@ -123,7 +130,6 @@ export function collectApprovals(
       if (out.amountIn && out.amountOut) quoted = out;
     }
   }
-
   const out: ApprovalInfo[] = [];
   for (const part of parts) {
     const p = part as ToolPart;
@@ -137,6 +143,8 @@ export function collectApprovals(
     const toAssetId = str(input.toAssetId);
     const amount = str(input.amount);
     const recipient = str(input.recipient);
+    const refundTo = str(input.refundTo) || undefined;
+    const quoteId = str(quoted?.quoteId) || undefined;
     if (!fromAssetId || !toAssetId || !amount || !recipient) continue;
 
     // The part state is the primary record; the store covers snapshots saved
@@ -152,8 +160,12 @@ export function collectApprovals(
         : "awaiting";
 
     // Display figures are truncated for humans; the raw values stay on
-    // the signed message and the server record.
-    const rawIn = str(quoted?.amountIn) ?? amount;
+    // the signed message and the server record. When there is no quote in
+    // this turn, there is nothing human-readable to show: the input amount
+    // is a raw smallest-unit integer (1200000 = 1.2 USDC), so rendering it
+    // as whole units would read as millions. Show an em dash instead; the
+    // card already refuses to sign without fresh quote figures.
+    const quotedIn = str(quoted?.amountIn);
     const rawOut = str(quoted?.amountOut);
     const rawMin = str(quoted?.minAmountOut);
     // The action names what the money does, decided by the application —
@@ -182,15 +194,16 @@ export function collectApprovals(
       toAssetId,
       toSymbol,
       toChain: meta.get(toAssetId)?.chain,
-      amountIn: formatAmount(rawIn),
-      amountInUsd: usd(rawIn, meta.get(fromAssetId)?.priceUsd),
+      amountIn: quotedIn ? formatAmount(quotedIn) : "—",
+      amountInUsd: quotedIn ? usd(quotedIn, meta.get(fromAssetId)?.priceUsd) : undefined,
       amountOut: rawOut ? formatAmount(rawOut) : "—",
       amountOutUsd: asUsd(str(quoted?.amountOutUsd)),
-      fromPriceUsd: formatUnitPrice(meta.get(fromAssetId)?.priceUsd),
-      toPriceUsd: formatUnitPrice(meta.get(toAssetId)?.priceUsd),
+      fromPriceUsd: formatUsdPrice(meta.get(fromAssetId)?.priceUsd),
+      toPriceUsd: formatUsdPrice(meta.get(toAssetId)?.priceUsd),
       minAmountOut: rawMin ? formatAmount(rawMin) : undefined,
       minAmountOutRaw: str(quoted?.minAmountOutRaw) ?? undefined,
       recipient,
+      refundTo,
       expiresAt: str(quoted?.expiresAt) ?? undefined,
       slippageBps:
         typeof input.slippageBps === "number" ? input.slippageBps : 100,
@@ -201,8 +214,10 @@ export function collectApprovals(
               toAssetId,
               amount,
               recipient,
+              refundTo,
               slippageBps:
                 typeof input.slippageBps === "number" ? input.slippageBps : 100,
+              quoteId,
             }
           : undefined,
       transactionId: stored?.transactionId,
@@ -217,14 +232,148 @@ export function collectApprovalAssetIds(parts: UIMessage["parts"]): string[] {
   const ids = new Set<string>();
   for (const part of parts) {
     const p = part as ToolPart;
-    if (toolNameOf(p) !== "prepare_swap") continue;
+    const name = toolNameOf(p);
+    if (
+      name !== "prepare_swap" &&
+      name !== "prepare_deposit" &&
+      name !== "get_withdrawal_quote" &&
+      name !== "prepare_withdrawal"
+    ) {
+      continue;
+    }
     const input = inputOf(p);
+    if (name === "prepare_deposit") {
+      const asset = str(input.assetId);
+      if (asset) ids.add(asset);
+      continue;
+    }
     const from = str(input.fromAssetId);
     const to = str(input.toAssetId);
     if (from) ids.add(from);
     if (to) ids.add(to);
   }
   return [...ids];
+}
+
+/* ------------------------------------------------------------------ */
+/* withdrawals                                                         */
+/* ------------------------------------------------------------------ */
+
+export type WithdrawalInfo = {
+  approvalId: string;
+  status: ApprovalStatus;
+  requestedAt: string;
+  fromAssetId: string;
+  toAssetId: string;
+  fromSymbol: string;
+  toSymbol: string;
+  fromChain?: string;
+  toChain?: string;
+  /** The raw smallest-unit amount the tool proposed. */
+  amount: string;
+  /** Whole units from the stored quote, when the turn priced one. */
+  amountIn?: string;
+  amountOut?: string;
+  minAmountOut?: string;
+  fee?: string;
+  /** The server-normalised destination from the stored quote. */
+  destination?: string;
+  destinationChain?: string;
+  expiresAt?: string;
+  quoteId?: string;
+  transactionId?: string;
+  depositAddress?: string;
+};
+
+/**
+ * Collects the withdrawal proposals in one turn.
+ *
+ * The figures and the destination come from the stored `get_withdrawal_quote`
+ * output, never from the model's prose. `prepare_withdrawal` only names the
+ * user's asset, amount, and destination; the card's authoritative address is
+ * the one the quote server normalised and stored.
+ */
+export function collectWithdrawals(
+  message: UIMessage,
+  symbols: Map<string, string>,
+  meta: Map<string, AssetMeta>,
+): WithdrawalInfo[] {
+  const metadata = message.metadata as { createdAt?: unknown } | undefined;
+  const requestedAt =
+    typeof metadata?.createdAt === "string" && metadata.createdAt.length > 0
+      ? metadata.createdAt
+      : new Date().toISOString();
+
+  let quoted: Record<string, unknown> | null = null;
+  for (const part of message.parts) {
+    const p = part as ToolPart;
+    if (toolNameOf(p) !== "get_withdrawal_quote") continue;
+    if (!stateOf(p).startsWith("output")) continue;
+    const out = outputOf(p);
+    if (out.mode !== "confidential-withdrawal") continue;
+    if (typeof out.quoteId === "string" && out.quoteId.length > 0) quoted = out;
+  }
+
+  const out: WithdrawalInfo[] = [];
+  for (const part of message.parts) {
+    const p = part as ToolPart;
+    if (toolNameOf(p) !== "prepare_withdrawal") continue;
+    const approvalId = approvalIdOf(p);
+    if (!approvalId) continue;
+
+    const input = inputOf(p);
+    // The stored quote names the assets it priced. The tool input is only a
+    // fallback for a proposal that arrived without a quote.
+    const fromAssetId =
+      str(quoted?.fromAssetId) || str(input.fromAssetId);
+    const toAssetId =
+      str(quoted?.toAssetId) || str(input.toAssetId) || fromAssetId;
+    const amount = str(input.amount);
+    if (!fromAssetId || !toAssetId || !amount) continue;
+
+    const state = stateOf(p);
+    const executed = state === "output-available" || state === "output-error";
+    const decision = approvalDecision(p);
+    if (decision === false) rememberApprovalDenied(approvalId);
+    const stored = getApprovalTx(approvalId);
+    const denied = decision === false || isApprovalDenied(approvalId);
+    const status: ApprovalStatus = denied
+      ? "denied"
+      : decision === true || stored || executed
+        ? "approved"
+        : "awaiting";
+
+    const quoteId = str(quoted?.quoteId) || undefined;
+    // The destination is only ever the stored quote's value. A proposal with
+    // no quote has no authoritative address to show, and the card disables
+    // Approve rather than display the model's string.
+    const destination = str(quoted?.destination) || undefined;
+    const destinationChain = str(quoted?.destinationChain) || undefined;
+
+    out.push({
+      approvalId,
+      status,
+      requestedAt,
+      fromAssetId,
+      toAssetId,
+      fromSymbol: assetName(fromAssetId, symbols),
+      toSymbol: assetName(toAssetId, symbols),
+      fromChain: meta.get(fromAssetId)?.chain,
+      toChain: meta.get(toAssetId)?.chain,
+      amount,
+      amountIn: str(quoted?.amountIn) || undefined,
+      amountOut: str(quoted?.amountOut) || undefined,
+      minAmountOut: str(quoted?.minAmountOut) || undefined,
+      fee: str(quoted?.withdrawFeeFormatted) || undefined,
+      destination,
+      destinationChain,
+      expiresAt: str(quoted?.expiresAt) || undefined,
+      quoteId,
+      transactionId: stored?.transactionId,
+      depositAddress: stored?.depositAddress,
+    });
+  }
+  return out;
 }
 
 /** Dollar value for a formatted amount and a catalogue price, or nothing
@@ -252,17 +401,4 @@ function asUsd(raw?: string | null): string | undefined {
   return n < 1000
     ? `$${n.toFixed(2)}`
     : `$${Math.round(n).toLocaleString("en-US")}`;
-}
-
-/** Unit price for a token popup, or nothing when the catalogue never
- * priced the asset. Precision follows magnitude so dust stays readable. */
-function formatUnitPrice(priceUsd?: number): string | undefined {
-  if (priceUsd === undefined || !Number.isFinite(priceUsd)) return undefined;
-  if (priceUsd >= 1000) {
-    return `$${Math.round(priceUsd).toLocaleString("en-US")}`;
-  }
-  if (priceUsd >= 1) return `$${priceUsd.toFixed(2)}`;
-  if (priceUsd >= 0.01) return `$${priceUsd.toFixed(4)}`;
-  if (priceUsd > 0) return `$${priceUsd.toPrecision(2)}`;
-  return "$0.00";
 }

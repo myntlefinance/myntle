@@ -15,8 +15,10 @@ import {
   IconPencil,
   IconSearch,
   IconLayoutSidebarLeftCollapse,
+  IconHistory,
   IconTrash,
   IconUserPlus,
+  IconWallet,
   IconX,
 } from "@tabler/icons-react";
 import { focusComposer } from "@/lib/composer";
@@ -83,6 +85,14 @@ type SidebarNavProps = {
   trashActive?: boolean;
   /** opens the Trash page */
   onOpenTrash?: () => void;
+  /** the Portfolio page is open; highlights the Portfolio row */
+  portfolioActive?: boolean;
+  /** opens the Portfolio page */
+  onOpenPortfolio?: () => void;
+  /** the History page is open; highlights the History row */
+  historyActive?: boolean;
+  /** opens the History page */
+  onOpenHistory?: () => void;
   /** replaces the footer button when the application needs its own control there */
   footer?: ReactNode;
   /** the icon-only footer control the rail keeps once the copy is gone */
@@ -194,10 +204,21 @@ export default function SidebarNav({
   trashCount = 0,
   trashActive = false,
   onOpenTrash,
+  portfolioActive = false,
+  onOpenPortfolio,
+  historyActive = false,
+  onOpenHistory,
 }: SidebarNavProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [internalNav, setInternalNav] = useState("chats");
   const currentNav = activeNav ?? internalNav;
+  /* The Trash shortcut is the top of the pinned system zone (Trash + footer).
+   * When it shows, it carries the single hairline that separates the
+   * scrolling chats above from the pinned rows below, and the footer drops
+   * its own hairline so the two never stack into a double rule. */
+  const showTrash = Boolean(onOpenTrash ?? trashActive);
+  const showPortfolio = Boolean(onOpenPortfolio ?? portfolioActive);
+  const showHistory = Boolean(onOpenHistory ?? historyActive);
   const selectNav = (key: string) => {
     setInternalNav(key);
     onNavigate?.(key);
@@ -222,12 +243,21 @@ export default function SidebarNav({
   const [armedDelete, setArmedDelete] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  /* The row collapsing out of the list, mirroring the insert keyframes in
-   * reverse. Cleared once the list stops containing the row. */
-  const [exitingId, setExitingId] = useState<string | null>(null);
+  /* Optimistic labels paint the new name the moment Enter is pressed,
+   * while the PATCH + refetch settle in the background. Each entry keeps
+   * the server label it replaced, so it clears as soon as the incoming
+   * list moves — to the new name on success, or back on a failed write. */
+  const [optimisticLabels, setOptimisticLabels] = useState<
+    Record<string, { next: string; base: string | null }>
+  >({});
+  /* Rows collapsing out of the list, mirroring the insert keyframes in
+   * reverse. A set (not a single id) so back-to-back deletes each hold
+   * their own row through the collapse. Entries clear once the list
+   * stops containing the row. */
+  const [exitingIds, setExitingIds] = useState<Set<string>>(new Set());
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const exitTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   /* newly persisted chat: the row grows from 0 to full height so the rows
    * below it glide down instead of jumping. Cleared once the keyframes end. */
@@ -327,9 +357,34 @@ export default function SidebarNav({
 
   const selectedTitle =
     activeTitle === undefined ? demoActiveTitle : activeTitle;
-  const visibleRecents = displayedRecents.filter((item) =>
-    item.label.toLowerCase().includes(query.trim().toLowerCase()),
-  );
+  // Drop an optimistic label once the server list moves past the label it
+  // replaced — to the new name on success, or back on a failed write — so
+  // a retry never sticks a stale name on screen.
+  useEffect(() => {
+    setOptimisticLabels((prev) => {
+      const ids = Object.keys(prev);
+      if (ids.length === 0) return prev;
+      let changed = false;
+      const next = { ...prev };
+      for (const id of ids) {
+        const server = recents.find((item) => item.id === id)?.label ?? null;
+        if (server !== prev[id].base) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [recents]);
+  const visibleRecents = displayedRecents
+    .map((item) =>
+      optimisticLabels[item.id]
+        ? { ...item, label: optimisticLabels[item.id].next }
+        : item,
+    )
+    .filter((item) =>
+      item.label.toLowerCase().includes(query.trim().toLowerCase()),
+    );
 
   useEffect(() => {
     if (searchOpen) searchRef.current?.focus();
@@ -446,23 +501,30 @@ export default function SidebarNav({
     const next = renameDraft.replace(/\s+/g, " ").trim();
     setRenamingId(null);
     if (!next) return;
-    const current = (
+    const serverLabel =
       displayedRecents.find((item) => item.id === id)?.label ??
       recents.find((item) => item.id === id)?.label ??
-      ""
-    )
+      "";
+    const current = (optimisticLabels[id]?.next ?? serverLabel)
       .replace(/\s+/g, " ")
       .trim();
     if (current && next === current) return;
+    // Paint instantly; the server write + refetch happen behind it.
+    setOptimisticLabels((prev) => ({
+      ...prev,
+      [id]: { next, base: serverLabel },
+    }));
     onRenameChat?.(id, next);
   };
 
   const deleteChat = (id: string) => {
-    if (exitingId === id) return;
+    if (exitingIds.has(id)) return;
     closeMenu();
     // Hold the row through the collapse, then hand it to the application.
-    // The list refresh unmounts it; the effect below clears a row that a
-    // failed request leaves behind, so it glides back instead of sticking.
+    // Each id owns its timer so a second delete never cancels the first.
+    // The list update unmounts the row; the effect below clears an id the
+    // list drops, and the safety timer glides back a row a failed request
+    // leaves behind — all without any list refetch.
     const reduced =
       typeof window !== "undefined" &&
       typeof window.matchMedia === "function" &&
@@ -471,22 +533,56 @@ export default function SidebarNav({
       onDeleteChat?.(id);
       return;
     }
-    setExitingId(id);
-    if (exitTimerRef.current) clearTimeout(exitTimerRef.current);
-    exitTimerRef.current = setTimeout(() => {
-      exitTimerRef.current = null;
+    setExitingIds((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    const timer = setTimeout(() => {
+      exitTimerRef.current.delete(id);
       onDeleteChat?.(id);
+      // Safety: a failed delete never drops the row from the list, so
+      // release the collapse and let it glide back instead of sticking.
+      const safety = setTimeout(() => {
+        exitTimerRef.current.delete(id);
+        setExitingIds((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }, 4000);
+      exitTimerRef.current.set(id, safety);
     }, 275);
+    exitTimerRef.current.set(id, timer);
   };
 
   useEffect(() => {
-    if (exitingId && !recents.some((item) => item.id === exitingId))
-      setExitingId(null);
-  }, [recents, exitingId]);
+    if (exitingIds.size === 0) return;
+    const gone = [...exitingIds].filter(
+      (id) => !recents.some((item) => item.id === id),
+    );
+    if (gone.length === 0) return;
+    for (const id of gone) {
+      const timer = exitTimerRef.current.get(id);
+      if (timer) clearTimeout(timer);
+      exitTimerRef.current.delete(id);
+    }
+    setExitingIds((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const id of gone) {
+        if (next.delete(id)) changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [recents, exitingIds]);
 
   useEffect(
     () => () => {
-      if (exitTimerRef.current) clearTimeout(exitTimerRef.current);
+      for (const timer of exitTimerRef.current.values()) clearTimeout(timer);
+      exitTimerRef.current.clear();
     },
     [],
   );
@@ -571,14 +667,34 @@ export default function SidebarNav({
               onClick={() => selectNav(item.key)}
             />
           ))}
+          {showPortfolio && (
+            <RailButton
+              icon={<IconWallet size={18} />}
+              label="Portfolio"
+              active={portfolioActive}
+              onClick={() => onOpenPortfolio?.()}
+            />
+          )}
+          {showHistory && (
+            <RailButton
+              icon={<IconHistory size={18} />}
+              label="History"
+              active={historyActive}
+              onClick={() => onOpenHistory?.()}
+            />
+          )}
         </div>
 
+        {/* The scroll region is bracketed by hairlines: this one above, the
+            Trash one below. The border sits on the scroll container itself so
+            it stays put while the rows move, and the Chats header sticks to
+            it while rows slide underneath on the canvas background. */}
         <div
-          className="sidebar-chats scroll-slim mt-3 min-h-0 flex-1 overflow-y-auto"
+          className="sidebar-chats scroll-slim mt-2 min-h-0 flex-1 overflow-y-auto border-t border-line pt-2"
           aria-hidden={collapsed}
           inert={collapsed}
         >
-          <div className="sidebar-copy relative mx-2 mb-1 h-8">
+          <div className="sidebar-copy sticky top-0 z-10 mx-2 h-8 bg-canvas pb-1">
             <button
               type="button"
               aria-hidden={searchOpen}
@@ -663,7 +779,7 @@ export default function SidebarNav({
                 const menuOpen = menu?.id === item.id;
                 const renaming = renamingId === item.id;
                 const isEntering = item.id === enteringId || isEnteringAll;
-                const isExiting = item.id === exitingId || isExitingAll;
+                const isExiting = exitingIds.has(item.id) || isExitingAll;
                 return (
                   <div
                     key={item.id}
@@ -694,11 +810,15 @@ export default function SidebarNav({
                       <>
                         <input
                           autoFocus
+                          ref={(el) => {
+                            el?.select();
+                          }}
                           value={renameDraft}
                           onChange={(event) =>
                             setRenameDraft(event.target.value)
                           }
                           onBlur={() => commitRename(item.id)}
+                          onFocus={(event) => event.currentTarget.select()}
                           onKeyDown={(event) => {
                             if (event.key === "Enter") {
                               event.preventDefault();
@@ -865,9 +985,9 @@ export default function SidebarNav({
 
         </div>
 
-        {(onOpenTrash ?? trashActive) && (
+        {showTrash && (
           <div
-            className="sidebar-trash relative mb-1 shrink-0"
+            className="sidebar-trash relative mx-2 mb-1 mt-2 shrink-0 border-t border-line pt-2 [&_.sidebar-row]:mx-0"
             aria-hidden={collapsed}
             inert={collapsed}
           >
@@ -881,7 +1001,9 @@ export default function SidebarNav({
           </div>
         )}
 
-        <div className="sidebar-foot relative mx-2 mt-3 shrink-0 border-t border-line pb-1.5 pt-3">
+        <div
+          className={`sidebar-foot relative mx-2 shrink-0 border-t pb-1.5 ${showTrash ? "mt-1 border-transparent pt-2" : "mt-3 border-line pt-3"}`}
+        >
           <div
             className="sidebar-copy w-[219px]"
             aria-hidden={collapsed}

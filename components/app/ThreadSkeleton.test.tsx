@@ -8,6 +8,8 @@ describe("ThreadSkeleton", () => {
     const html = ReactDOMServer.renderToStaticMarkup(<ThreadSkeleton />);
     expect(html).toContain("Loading chat.");
     expect(html).toContain("padding-bottom:2rem");
+    // Each bar is a skullet box, so the page's one shimmer paints it.
+    expect(html).toContain("skullet-bar");
   });
 
   it("applies bottomPad when provided", () => {

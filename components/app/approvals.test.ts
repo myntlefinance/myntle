@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { UIMessage } from "ai";
-import { collectApprovalAssetIds, collectApprovals } from "./approvals";
+import {
+  collectApprovalAssetIds,
+  collectApprovals,
+  collectWithdrawals,
+  settlementCardState,
+} from "./approvals";
 import { rememberApprovalTx, resetApprovalStore } from "./approvalStore";
 
 const INPUT = {
@@ -67,12 +72,35 @@ describe("collectApprovals", () => {
     resetApprovalStore();
   });
 
+  it("leaves a quote-less approval without signable figures", () => {
+    // prepare_swap ran with no get_quote in the turn: the card must not
+    // invent figures, so the approval carries inputs only and the card asks
+    // for a fresh quote instead of signing blind.
+    const [info] = collect([swapPart("approval-requested", { id: "ap-0" })]);
+    expect(info?.status).toBe("awaiting");
+    expect(info?.minAmountOutRaw).toBeUndefined();
+    expect(info?.expiresAt).toBeUndefined();
+    expect(info?.swapInput).toMatchObject({
+      fromAssetId: INPUT.fromAssetId,
+      amount: INPUT.amount,
+    });
+  });
+
   it("leaves a requested approval awaiting with its inputs", () => {
     const [info] = collect([quotePart(), swapPart("approval-requested", { id: "ap-1" })]);
     expect(info.status).toBe("awaiting");
     expect(info.swapInput).toMatchObject({ amount: "14000000" });
     expect(info.amountOut).toBe("13.99");
     expect(info.transactionId).toBeUndefined();
+  });
+
+  it("carries the stored quote id and refund into the signable input", () => {
+    const quoted = quotePart();
+    (quoted.output as Record<string, unknown>).quoteId = "11111111-2222-4333-8444-555555555555";
+    const [info] = collect([quoted, swapPart("approval-requested", { id: "ap-9" })]);
+    expect(info.swapInput).toMatchObject({
+      quoteId: "11111111-2222-4333-8444-555555555555",
+    });
   });
 
   it("marks an approved response approved without inputs", () => {
@@ -294,5 +322,167 @@ describe("collectApprovals", () => {
     expect(info.minAmountOut).toBe("1.974122");
     // Dollar math still runs on the raw figure (rounded past thousands).
     expect(info.amountInUsd).toBe("$14,000,000");
+  });
+});
+
+describe("collectWithdrawals", () => {
+  const ASSET = "arb:usdc";
+  const DESTINATION = "0xc8aEcA3431542a1340D7Ef0EEb4684311b5A3148";
+  const INPUT = {
+    fromAssetId: ASSET,
+    toAssetId: ASSET,
+    amount: "500000",
+    destinationAddress: DESTINATION.toLowerCase(),
+  };
+
+  function quotePart(withQuote = true) {
+    return {
+      type: "tool-get_withdrawal_quote",
+      state: "output-available",
+      input: INPUT,
+      output: {
+        mode: "confidential-withdrawal",
+        quoteId: withQuote
+          ? "11111111-2222-4333-8444-555555555555"
+          : null,
+        fromAssetId: ASSET,
+        toAssetId: ASSET,
+        amountIn: "0.5",
+        amountOut: "0.4894",
+        minAmountOut: "0.484506",
+        withdrawFeeFormatted: "0.0106",
+        destination: DESTINATION,
+        destinationChain: "arb",
+        expiresAt: "2026-11-05T00:00:00.000Z",
+      },
+    };
+  }
+
+  function withdrawalPart(state: string, approval: unknown) {
+    return {
+      type: "tool-prepare_withdrawal",
+      state,
+      input: INPUT,
+      approval,
+    };
+  }
+
+  function collect(parts: unknown[]) {
+    return collectWithdrawals(
+      {
+        id: "msg-w",
+        role: "assistant",
+        parts: parts as unknown as UIMessage["parts"],
+        metadata: { createdAt: "2026-11-02T12:00:00.000Z" },
+      } as UIMessage,
+      new Map([["arb:usdc", "USDC"]]),
+      new Map([
+        [ASSET, { symbol: "USDC", chain: "arb", priceUsd: 1 }],
+      ]),
+    );
+  }
+
+  it("takes the destination from the stored quote, never the tool input", () => {
+    const [withdrawal] = collect([
+      quotePart(),
+      withdrawalPart("approval-requested", { id: "ap-w1" }),
+    ]);
+
+    expect(withdrawal).toMatchObject({
+      approvalId: "ap-w1",
+      status: "awaiting",
+      fromAssetId: ASSET,
+      toAssetId: ASSET,
+      fromSymbol: "USDC",
+      toSymbol: "USDC",
+      destination: DESTINATION,
+      destinationChain: "arb",
+      quoteId: "11111111-2222-4333-8444-555555555555",
+      amountIn: "0.5",
+      amountOut: "0.4894",
+      minAmountOut: "0.484506",
+      fee: "0.0106",
+      amount: "500000",
+    });
+  });
+
+  it("keeps a proposal without a quote and leaves the quote id out", () => {
+    const [withdrawal] = collect([
+      quotePart(false),
+      withdrawalPart("approval-requested", { id: "ap-w2" }),
+    ]);
+
+    expect(withdrawal.quoteId).toBeUndefined();
+    expect(withdrawal.destination).toBeUndefined();
+  });
+
+  it("paints an executed proposal as approved", () => {
+    const [withdrawal] = collect([
+      quotePart(),
+      withdrawalPart("output-available", {
+        id: "ap-w3",
+        approved: true,
+      }),
+    ]);
+
+    expect(withdrawal.status).toBe("approved");
+  });
+
+  it("paints a rejected proposal as denied", () => {
+    const [withdrawal] = collect([
+      quotePart(),
+      withdrawalPart("approval-responded", {
+        id: "ap-w4",
+        approved: false,
+      }),
+    ]);
+
+    expect(withdrawal.status).toBe("denied");
+  });
+
+  it("takes the assets from the stored quote, not the tool input", () => {
+    const part = withdrawalPart("approval-requested", { id: "ap-w6" }) as {
+      input: Record<string, unknown>;
+    };
+    part.input = {
+      ...part.input,
+      fromAssetId: "arb:other",
+      toAssetId: "arb:other",
+    };
+
+    const [withdrawal] = collect([quotePart(), part]);
+
+    expect(withdrawal.fromAssetId).toBe(ASSET);
+    expect(withdrawal.toAssetId).toBe(ASSET);
+    expect(withdrawal.fromSymbol).toBe("USDC");
+  });
+
+  it("collects both withdrawal tools' assets for metadata resolution", () => {
+    expect(
+      collectApprovalAssetIds([
+        quotePart(),
+        withdrawalPart("approval-requested", { id: "ap-w5" }),
+      ] as unknown as UIMessage["parts"]),
+    ).toEqual([ASSET]);
+  });
+});
+
+describe("settlementCardState", () => {
+  // Failed vs refunded is the distinction the card must never blur: one
+  // means the money may be gone, the other means it is coming back.
+  it.each([
+    ["failed", "failed"],
+    ["incomplete_deposit", "failed"],
+    ["needs_reconciliation", "failed"],
+    ["refunded", "refunded"],
+    ["settled", "settled"],
+  ])("paints %s as %s", (state, painted) => {
+    expect(settlementCardState(state)).toBe(painted);
+  });
+
+  it("leaves live states to the poll", () => {
+    for (const state of ["pending", "confirming", "processing", "submitted"]) {
+      expect(settlementCardState(state)).toBeNull();
+    }
   });
 });

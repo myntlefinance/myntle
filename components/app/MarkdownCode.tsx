@@ -1,10 +1,17 @@
 "use client";
 
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import dynamic from "next/dynamic";
 import CodeBlock from "@/components/primitives/CodeBlock";
-import { PeleDiagram } from "@/components/app/PeleDiagram";
 import { useWallet } from "@/lib/wallet/registry";
 import { detectTechData, TechDataChip } from "@/components/atoms/TechDataChip";
+
+// Pele (~1MB with its graph layout) stays out of the initial chat bundle:
+// this chunk loads only when a mermaid fence actually mounts it.
+const PeleDiagramLazy = dynamic(
+  () => import("./PeleDiagram").then((m) => m.PeleDiagram),
+  { ssr: false, loading: () => null },
+);
 
 type HastNode = {
   properties?: {
@@ -106,9 +113,9 @@ export function MarkdownCode({
   const language = langMatch ? langMatch[1] : undefined;
   const meta = metastring ?? (node?.properties?.metastring as string | undefined);
 
-  // If Mermaid diagram, delegate to PeleDiagram
+  // If Mermaid diagram, delegate to the lazily-loaded PeleDiagram
   if (language === "mermaid") {
-    return <PeleDiagram code={rawCode} language={language} meta={meta} />;
+    return <PeleDiagramLazy code={rawCode} language={language} meta={meta} />;
   }
 
   const filename = resolveFilename(meta, language);

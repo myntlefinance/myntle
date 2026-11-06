@@ -18,7 +18,11 @@ const DENIED_KEY = "myntle.approval-denied.v1";
 const OUTCOME_KEY = "myntle.approval-outcome.v1";
 const MAX_ENTRIES = 200;
 
-export type ApprovalOutcome = "settled" | "refunded" | "failed";
+export type ApprovalOutcome =
+  | "settled"
+  | "refunded"
+  | "incomplete"
+  | "failed";
 
 const tx = new Map<string, ApprovalTx>();
 const denied = new Set<string>();
@@ -69,7 +73,7 @@ function hydrate(): void {
     if (rawOutcome) {
       const parsed = JSON.parse(rawOutcome) as Record<string, ApprovalOutcome>;
       for (const [id, value] of Object.entries(parsed).slice(-MAX_ENTRIES)) {
-        if (value === "settled" || value === "refunded" || value === "failed") {
+        if (value === "settled" || value === "refunded" || value === "failed" || value === "incomplete") {
           outcome.set(id, value);
         }
       }

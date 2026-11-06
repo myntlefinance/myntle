@@ -8,9 +8,9 @@ import type { UIMessage } from "ai";
  * never flashes an empty list. Nothing here touches React.
  * ───────────────────────────────────────────────────────── */
 
-export type ThreadItem = { id: string; label: string };
+export type ThreadItem = { id: string; label: string | null };
 
-export type TrashedItem = { id: string; label: string; deletedAt: string };
+export type TrashedItem = { id: string; label: string | null; deletedAt: string };
 
 // Per-chat history cache for the session. Clicking a visited chat renders
 // instantly from here; a background revalidate keeps it honest. Hovering a
@@ -41,8 +41,12 @@ export function getCachedMessages(slug: string): UIMessage[] | undefined {
   return undefined;
 }
 
-export function setCachedMessages(slug: string, messages: UIMessage[]) {
-  messageCache.set(slug, messages);
+const persistAt = new Map<string, number>();
+const persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const persistPending = new Map<string, UIMessage[]>();
+const PERSIST_THROTTLE_MS = 1000;
+
+function persistMessages(slug: string, messages: UIMessage[]) {
   try {
     if (typeof sessionStorage !== "undefined") {
       sessionStorage.setItem(`myntle-msgs-${slug}`, JSON.stringify(messages));
@@ -50,11 +54,64 @@ export function setCachedMessages(slug: string, messages: UIMessage[]) {
   } catch {
     // Quota or private mode.
   }
+  persistAt.set(slug, Date.now());
+  persistPending.delete(slug);
+}
+
+export function setCachedMessages(slug: string, messages: UIMessage[]) {
+  messageCache.set(slug, messages);
+  const now = Date.now();
+  const last = persistAt.get(slug) ?? 0;
+  if (now - last >= PERSIST_THROTTLE_MS && !persistTimers.has(slug)) {
+    persistMessages(slug, messages);
+    return;
+  }
+  // Throttled: remember the latest and flush once the window passes, so the
+  // turn-end state still lands in storage without stringifying every token.
+  persistPending.set(slug, messages);
+  if (!persistTimers.has(slug)) {
+    const delay = Math.max(0, PERSIST_THROTTLE_MS - (now - last));
+    persistTimers.set(
+      slug,
+      setTimeout(() => {
+        persistTimers.delete(slug);
+        const pending = persistPending.get(slug);
+        if (pending) persistMessages(slug, pending);
+      }, delay),
+    );
+  }
+}
+
+/** Flush any throttled sessionStorage write for a slug (or all slugs). */
+export function flushCachedMessages(slug?: string) {
+  if (slug) {
+    const timer = persistTimers.get(slug);
+    if (timer) {
+      clearTimeout(timer);
+      persistTimers.delete(slug);
+    }
+    const pending = persistPending.get(slug);
+    if (pending) persistMessages(slug, pending);
+    return;
+  }
+  for (const [key, timer] of persistTimers) {
+    clearTimeout(timer);
+    persistTimers.delete(key);
+    const pending = persistPending.get(key);
+    if (pending) persistMessages(key, pending);
+  }
 }
 
 export function deleteCachedMessages(slug: string) {
   messageCache.delete(slug);
   prefetchInflight.delete(slug);
+  const timer = persistTimers.get(slug);
+  if (timer) {
+    clearTimeout(timer);
+    persistTimers.delete(slug);
+  }
+  persistPending.delete(slug);
+  persistAt.delete(slug);
   try {
     if (typeof sessionStorage !== "undefined") {
       sessionStorage.removeItem(`myntle-msgs-${slug}`);
@@ -71,7 +128,17 @@ let trashedMemoryCache: TrashedItem[] | null = null;
 let threadsInflightPromise: Promise<ThreadItem[]> | null = null;
 let trashedInflightPromise: Promise<TrashedItem[]> | null = null;
 
+// v2 keys: v1 stored the literal "New chat" for untitled chats, which is
+// now NULL in the database. Old keys are dropped on first read so a stale
+// placeholder can never masquerade as a manual rename.
+const THREADS_KEY = "myntle-threads-v2";
+const TRASHED_KEY = "myntle-trashed-v2";
+
 export function clearThreadCache() {
+  for (const [, timer] of persistTimers) clearTimeout(timer);
+  persistTimers.clear();
+  persistPending.clear();
+  persistAt.clear();
   messageCache.clear();
   trashedMessageCache.clear();
   prefetchInflight.clear();
@@ -85,6 +152,8 @@ export function clearThreadCache() {
     if (typeof localStorage !== "undefined") {
       localStorage.removeItem("myntle-threads");
       localStorage.removeItem("myntle-trashed");
+      localStorage.removeItem(THREADS_KEY);
+      localStorage.removeItem(TRASHED_KEY);
       localStorage.removeItem("myntle-conv");
     }
     if (typeof sessionStorage !== "undefined") {
@@ -103,7 +172,7 @@ export function clearThreadCache() {
 export function readThreadsCache(): ThreadItem[] {
   if (threadsMemoryCache) return threadsMemoryCache;
   try {
-    const raw = localStorage.getItem("myntle-threads");
+    const raw = localStorage.getItem(THREADS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as ThreadItem[];
       if (Array.isArray(parsed)) {
@@ -111,6 +180,8 @@ export function readThreadsCache(): ThreadItem[] {
         return parsed;
       }
     }
+    // One-time drop of v1 entries whose "New chat" labels are ambiguous.
+    localStorage.removeItem("myntle-threads");
   } catch {
     // Ignore and fall through to empty.
   }
@@ -120,28 +191,29 @@ export function readThreadsCache(): ThreadItem[] {
 export function writeThreadsCache(items: ThreadItem[]) {
   threadsMemoryCache = items;
   try {
-    localStorage.setItem("myntle-threads", JSON.stringify(items));
+    localStorage.setItem(THREADS_KEY, JSON.stringify(items));
   } catch {
     // Private mode. Memory cache still covers the session.
   }
 }
 
 // Synchronous name lookup so a switching chat never paints "New chat"
-// for a frame. Memory first, then the persisted sidebar list.
+// for a frame. Memory first, then the persisted sidebar list. NULL means
+// untitled; a stored "New chat" string means the user typed exactly that.
 export function findThreadLabel(slug: string | null): string | null {
   if (!slug) return null;
   if (threadsMemoryCache) {
     const hit = threadsMemoryCache.find((t) => t.id === slug);
-    if (hit) return hit.label;
+    if (hit) return hit.label ?? null;
   }
   try {
-    const raw = localStorage.getItem("myntle-threads");
+    const raw = localStorage.getItem(THREADS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as ThreadItem[];
       const hit = Array.isArray(parsed)
         ? parsed.find((t) => t.id === slug)
         : undefined;
-      if (hit) return hit.label;
+      if (hit) return (hit.label ?? null) as string | null;
     }
   } catch {
     // Ignore and fall through to null.
@@ -152,7 +224,7 @@ export function findThreadLabel(slug: string | null): string | null {
 export function readTrashedCache(): TrashedItem[] {
   if (trashedMemoryCache) return trashedMemoryCache;
   try {
-    const raw = localStorage.getItem("myntle-trashed");
+    const raw = localStorage.getItem(TRASHED_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as TrashedItem[];
       if (Array.isArray(parsed)) {
@@ -160,6 +232,7 @@ export function readTrashedCache(): TrashedItem[] {
         return parsed;
       }
     }
+    localStorage.removeItem("myntle-trashed");
   } catch {
     // Ignore and fall through to empty.
   }
@@ -169,7 +242,7 @@ export function readTrashedCache(): TrashedItem[] {
 export function writeTrashedCache(items: TrashedItem[]) {
   trashedMemoryCache = items;
   try {
-    localStorage.setItem("myntle-trashed", JSON.stringify(items));
+    localStorage.setItem(TRASHED_KEY, JSON.stringify(items));
   } catch {
     // Private mode. Memory cache still covers the session.
   }
@@ -187,12 +260,12 @@ export async function fetchThreads(limit = 20): Promise<ThreadItem[]> {
       }
       if (!res.ok) return readThreadsCache();
       const body = (await res.json()) as {
-        conversations?: Array<{ slug: string; title: string }>;
+        conversations?: Array<{ slug: string; title: string | null }>;
       } | null;
       if (!body?.conversations) return readThreadsCache();
       const items = body.conversations.map((c) => ({
         id: c.slug,
-        label: c.title,
+        label: (c.title ?? null) as string | null,
       }));
       writeThreadsCache(items);
       return items;
@@ -218,12 +291,12 @@ export async function fetchTrashed(limit = 100): Promise<TrashedItem[]> {
       }
       if (!res.ok) return readTrashedCache();
       const body = (await res.json()) as {
-        conversations?: Array<{ slug: string; title: string; deletedAt: string }>;
+        conversations?: Array<{ slug: string; title: string | null; deletedAt: string }>;
       } | null;
       if (!body?.conversations) return readTrashedCache();
       const items = body.conversations.map((c) => ({
         id: c.slug,
-        label: c.title,
+        label: (c.title ?? null) as string | null,
         deletedAt: c.deletedAt,
       }));
       writeTrashedCache(items);

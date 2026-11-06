@@ -20,6 +20,7 @@ import {
   IconThumbUpFilled,
 } from "@tabler/icons-react";
 import { Button } from "@/components/atoms/Button";
+import { writeAgentCopy } from "@/components/app/agentCopy";
 import {
   activateWarmState,
   globalIsWarm,
@@ -306,10 +307,16 @@ export function UserMessageActions({
  */
 export function AgentMessageActions({
   text,
+  copyText,
+  copyHtml,
   onRegenerate,
   className = "",
 }: {
   text: string;
+  /** Full visible transcript (prose + cards). Falls back to `text`. */
+  copyText?: string;
+  /** Rich HTML twin for paste targets that keep tables. */
+  copyHtml?: string;
   onRegenerate?: () => void;
   className?: string;
 }) {
@@ -326,26 +333,28 @@ export function AgentMessageActions({
     };
   }, []);
 
+  const payloadText = copyText?.trim() ? copyText : text;
+
   const handleCopy = useCallback(() => {
-    if (typeof navigator === "undefined" || !navigator.clipboard) return;
-    navigator.clipboard
-      .writeText(text)
-      .then(() => {
+    if (typeof navigator === "undefined") return;
+    void writeAgentCopy({ text: payloadText, html: copyHtml })
+      .then((ok) => {
+        if (!ok) return;
         setCopied(true);
         if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
         copyTimerRef.current = setTimeout(() => setCopied(false), 1800);
       })
       .catch(() => {});
-  }, [text]);
+  }, [payloadText, copyHtml]);
 
   const handleShare = useCallback(() => {
     if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
-      navigator.share({ text }).catch(() => {});
+      navigator.share({ text: payloadText }).catch(() => {});
       return;
     }
     if (typeof navigator !== "undefined" && navigator.clipboard) {
       navigator.clipboard
-        .writeText(text)
+        .writeText(payloadText)
         .then(() => {
           setShared(true);
           if (shareTimerRef.current) clearTimeout(shareTimerRef.current);
@@ -353,7 +362,7 @@ export function AgentMessageActions({
         })
         .catch(() => {});
     }
-  }, [text]);
+  }, [payloadText]);
 
   const toggleRating = useCallback((choice: "like" | "dislike") => {
     setRating((current) => (current === choice ? null : choice));

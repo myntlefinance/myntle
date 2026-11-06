@@ -13,9 +13,9 @@ import { useEffect, useState } from "react";
  *   Orbit  — a comet lapping the grid perimeter
  *   Surfer — the Drive loader paired with a meme video below
  *
- * Paired with a shimmering label and a live elapsed timer
- * in mono tabular figures. Reduced motion freezes the grid
- * to its dim state; the timer still ticks.
+ * Paired with a shimmering label. When no label is given one
+ * is picked per appearance from a small set of -ing verbs.
+ * Reduced motion freezes the grid to its dim state.
  * ───────────────────────────────────────────────────────── */
 
 const chevron = Array.from({ length: 9 }, (_, i) => {
@@ -34,6 +34,17 @@ const PATTERNS: Record<string, { delays: (number | null)[]; dur: number; round: 
   Dots: { delays: chevron, dur: 650, round: true },
   Orbit: { delays: orbit, dur: 950, round: false },
 };
+
+const DEFAULT_LABELS = ["Thinking", "Composing", "Churning", "Reasoning", "Drafting", "Shaping", "Planning", "Gathering"];
+
+function usePickedLabel(enabled: boolean) {
+  const [picked, setPicked] = useState(DEFAULT_LABELS[0]);
+  useEffect(() => {
+    if (!enabled) return;
+    setPicked(DEFAULT_LABELS[Math.floor(Math.random() * DEFAULT_LABELS.length)]);
+  }, [enabled]);
+  return picked;
+}
 
 function LoaderGrid({
   delays,
@@ -60,17 +71,6 @@ function LoaderGrid({
   );
 }
 
-function useElapsed() {
-  const [ds, setDs] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setDs((d) => d + 1), 100);
-    return () => clearInterval(t);
-  }, []);
-  const total = ds / 10;
-  if (total < 60) return `${total.toFixed(1)}s`;
-  return `${Math.floor(total / 60)}m ${(total % 60).toFixed(1)}s`;
-}
-
 export default function LoadingState({
   label,
   variant = "Drive",
@@ -84,9 +84,9 @@ export default function LoadingState({
   variant?: string;
   videoSrc?: string;
 }) {
-  const elapsed = useElapsed();
   const surfer = variant === "Surfer";
-  const resolvedLabel = label ?? (surfer ? "Subway surfing" : "Churning");
+  const pickedLabel = usePickedLabel(label == null && !surfer);
+  const resolvedLabel = label ?? (surfer ? "Subway surfing" : pickedLabel);
   const [videoOk, setVideoOk] = useState(true);
   const { delays, dur, round } = PATTERNS[variant] ?? PATTERNS.Drive;
 
@@ -103,15 +103,12 @@ export default function LoadingState({
       {resolvedLabel}
     </span>
   );
-  const elapsedEl = <span className="font-mono text-[12px] text-ink-3 tabular-nums">{elapsed}</span>;
-
   if (surfer) {
     return (
       <div role="status" className="flex w-fit flex-col items-start">
         <div className="flex items-center gap-2">
           <LoaderGrid {...PATTERNS.Drive} />
           {labelEl}
-          {elapsedEl}
         </div>
 
         {/* the context card follows the status text it is illustrating */}
@@ -148,7 +145,6 @@ export default function LoadingState({
     <div role="status" className="flex w-fit items-center gap-2">
       <LoaderGrid delays={delays} dur={dur} round={round} />
       {labelEl}
-      {elapsedEl}
     </div>
   );
 }
