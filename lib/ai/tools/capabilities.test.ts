@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildSystemPrompt } from "@/lib/ai/prompts";
 import { CAPABILITIES, createTools } from "./registry";
+import { TOOL_APPROVALS } from "./approval-policy";
 
 const signedIn = {
   activeAddress: "0x32596df10ff2ac5acde8406e6adcc8d047921073",
@@ -38,9 +39,26 @@ describe("tool capabilities", () => {
   it("gates every tool that moves money behind user approval", () => {
     const acting = CAPABILITIES.filter((c) => c.tier === "act");
 
-    expect(acting.map((c) => c.tool)).toEqual(["prepare_swap"]);
+    expect(acting.map((c) => c.tool)).toEqual([
+      "prepare_swap",
+      "prepare_deposit",
+      "prepare_withdrawal",
+    ]);
     for (const capability of acting) {
       expect(capability.approval, capability.tool).toBe("user-approval");
+    }
+  });
+
+  it("configures exactly the user-approval capabilities on the route", () => {
+    const acting = CAPABILITIES.filter((c) => c.approval === "user-approval")
+      .map((c) => c.tool)
+      .sort();
+
+    expect(Object.keys(TOOL_APPROVALS).sort()).toEqual(acting);
+    for (const tool of acting) {
+      expect(
+        TOOL_APPROVALS[tool as keyof typeof TOOL_APPROVALS],
+      ).toBe("user-approval");
     }
   });
 

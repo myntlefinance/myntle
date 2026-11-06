@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { convertToModelMessages } from "ai";
-import { backfillApprovedSwapOutputs } from "./prune";
+import {
+  backfillApprovedSwapOutputs,
+  pruneHistoricalToolOutputs,
+} from "./prune";
 import { createTools } from "@/lib/ai/tools/registry";
 
 const swapInput = {
@@ -97,5 +100,176 @@ describe("backfillApprovedSwapOutputs", () => {
     expect(repaired[3].parts[0]).toMatchObject({
       state: "approval-responded",
     });
+  });
+});
+
+describe("pruneHistoricalToolOutputs", () => {
+  function balanceHistory(showCard: boolean) {
+    return [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "check USDC" }] },
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-get_wallet_balances",
+            toolCallId: "call-check",
+            state: "output-available",
+            output: {
+              source: "session",
+              totalValueUsd: 5.2,
+              showCard,
+            },
+          },
+        ],
+      },
+      { id: "u2", role: "user", parts: [{ type: "text", text: "and then?" }] },
+      { id: "a2", role: "assistant", parts: [{ type: "text", text: "..." }] },
+    ] as never;
+  }
+
+  it("records that a single-asset check drew no table", () => {
+    const pruned = pruneHistoricalToolOutputs(balanceHistory(false));
+
+    expect(pruned[1].parts[0]).toMatchObject({
+      output: {
+        showCard: false,
+        summary: expect.stringContaining("no table was drawn"),
+      },
+    });
+  });
+
+  it("keeps the card summary for an inventory result", () => {
+    const pruned = pruneHistoricalToolOutputs(balanceHistory(true));
+
+    expect(pruned[1].parts[0]).toMatchObject({
+      output: {
+        showCard: true,
+        summary: expect.stringContaining("Detailed card was rendered"),
+      },
+    });
+  });
+
+  it("compacts older news outputs and leaves the newest turn intact", () => {
+    const newsOutput = {
+      source: "google-news",
+      query: "solana etf",
+      totalItems: 20,
+      searchId: "abc123",
+      items: Array.from({ length: 12 }, (_, i) => ({
+        title: `Story ${i + 1}`,
+        snippet: "x".repeat(2000),
+      })),
+    };
+    const messages = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "news on solana etf" }] },
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-get_google_news",
+            toolCallId: "call-news-old",
+            state: "output-available",
+            output: newsOutput,
+          },
+        ],
+      },
+      { id: "u2", role: "user", parts: [{ type: "text", text: "more on story 1" }] },
+      {
+        id: "a2",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-get_page_content",
+            toolCallId: "call-page-new",
+            state: "output-available",
+            output: { source: "page", query: "story 1", items: [{ title: "Full text here" }] },
+          },
+        ],
+      },
+    ] as never;
+    const pruned = pruneHistoricalToolOutputs(messages);
+
+    // Older turn compacted to a summary; full snippets gone.
+    expect(pruned[1].parts[0]).toMatchObject({
+      output: {
+        summary: {
+          source: "google-news",
+          query: "solana etf",
+          count: 20,
+          searchId: "abc123",
+          note: expect.stringContaining("compacted"),
+        },
+      },
+    });
+    expect((pruned[1].parts[0] as unknown as { output: { summary: { titles: unknown[] } } }).output.summary.titles).toHaveLength(8);
+    expect(JSON.stringify(pruned[1].parts[0])).not.toContain("x".repeat(100));
+    // Newest assistant turn untouched.
+    expect(pruned[3].parts[0]).toMatchObject({
+      output: { items: [{ title: "Full text here" }] },
+    });
+  });
+
+  it("compacts news outputs in the toolInvocation.result shape", () => {
+    const messages = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "x posts" }] },
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-get_x_posts",
+            toolInvocation: {
+              toolName: "get_x_posts",
+              result: {
+                source: "x",
+                query: "myntle",
+                items: [{ title: "Post one" }],
+              },
+            },
+          },
+        ],
+      },
+      { id: "u2", role: "user", parts: [{ type: "text", text: "ok" }] },
+      { id: "a2", role: "assistant", parts: [{ type: "text", text: "done" }] },
+    ] as never;
+    const pruned = pruneHistoricalToolOutputs(messages);
+
+    expect(pruned[1].parts[0]).toMatchObject({
+      toolInvocation: {
+        result: {
+          summary: {
+            source: "x",
+            query: "myntle",
+            count: 1,
+            titles: ["Post one"],
+          },
+        },
+      },
+    });
+  });
+
+  it("does not touch quote or status outputs", () => {
+    const messages = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "quote please" }] },
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-get_quote",
+            toolCallId: "call-quote",
+            state: "output-available",
+            output: { amountOut: "1.5", minAmountOut: "1.4" },
+          },
+        ],
+      },
+      { id: "u2", role: "user", parts: [{ type: "text", text: "and?" }] },
+      { id: "a2", role: "assistant", parts: [{ type: "text", text: "..." }] },
+    ] as never;
+    const pruned = pruneHistoricalToolOutputs(messages);
+
+    expect(pruned[1]).toBe(messages[1]);
   });
 });

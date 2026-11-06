@@ -21,6 +21,46 @@ import {
   createSupportedAssetsTool,
   GET_SUPPORTED_ASSETS_CAPABILITY,
 } from "./assets/catalogue";
+import {
+  createGoogleNewsTool,
+  GET_GOOGLE_NEWS_CAPABILITY,
+} from "./news/google-news";
+import {
+  createRedditPostsTool,
+  GET_REDDIT_POSTS_CAPABILITY,
+} from "./news/reddit-posts";
+import {
+  createXPostsTool,
+  GET_X_POSTS_CAPABILITY,
+} from "./news/x-posts";
+import {
+  createXUserPostsTool,
+  GET_X_USER_POSTS_CAPABILITY,
+} from "./news/x-user-posts";
+import {
+  createRequestSuperUnlockTool,
+  REQUEST_SUPER_UNLOCK_CAPABILITY,
+} from "./intents/unlock";
+import {
+  createSuperBalancesTool,
+  GET_SUPER_BALANCES_CAPABILITY,
+} from "./intents/balances";
+import {
+  createPrepareDepositTool,
+  PREPARE_DEPOSIT_CAPABILITY,
+} from "./intents/deposit";
+import {
+  createGetWithdrawalQuoteTool,
+  GET_WITHDRAWAL_QUOTE_CAPABILITY,
+} from "./intents/withdraw-quote";
+import {
+  createPrepareWithdrawalTool,
+  PREPARE_WITHDRAWAL_CAPABILITY,
+} from "./intents/withdraw";
+import {
+  createPageContentTool,
+  GET_PAGE_CONTENT_CAPABILITY,
+} from "./news/page-content";
 import type { Capability } from "./capability";
 
 /**
@@ -33,8 +73,18 @@ export const CAPABILITIES: Capability[] = [
   GET_TRANSACTION_HISTORY_CAPABILITY,
   GET_QUOTE_CAPABILITY,
   PREPARE_SWAP_CAPABILITY,
+  PREPARE_DEPOSIT_CAPABILITY,
+  GET_WITHDRAWAL_QUOTE_CAPABILITY,
+  PREPARE_WITHDRAWAL_CAPABILITY,
   GET_TRANSACTION_STATUS_CAPABILITY,
   GET_SUPPORTED_ASSETS_CAPABILITY,
+  GET_GOOGLE_NEWS_CAPABILITY,
+  GET_REDDIT_POSTS_CAPABILITY,
+  GET_X_POSTS_CAPABILITY,
+  GET_X_USER_POSTS_CAPABILITY,
+  GET_PAGE_CONTENT_CAPABILITY,
+  REQUEST_SUPER_UNLOCK_CAPABILITY,
+  GET_SUPER_BALANCES_CAPABILITY,
 ];
 
 export type ToolRegistryOptions = {
@@ -50,7 +100,7 @@ export function createTools(
   context?: ToolContext,
   options: ToolRegistryOptions = {},
 ) {
-  const domains = options.domains ?? ["portfolio", "trading", "assets"];
+  const domains = options.domains ?? ["portfolio", "trading", "assets", "news", "intents"];
   // The toolset is heterogeneous: each tool has its own input and output, so
   // it is typed as the union rather than as the first tool that was added.
   const toolset: Record<string, Tool> = {};
@@ -68,6 +118,22 @@ export function createTools(
 
   if (domains.includes("assets")) {
     toolset.get_supported_assets = createSupportedAssetsTool(context);
+  }
+
+  if (domains.includes("news")) {
+    toolset.get_google_news = createGoogleNewsTool(context);
+    toolset.get_reddit_posts = createRedditPostsTool(context);
+    toolset.get_x_posts = createXPostsTool(context);
+    toolset.get_x_user_posts = createXUserPostsTool(context);
+    toolset.get_page_content = createPageContentTool(context);
+  }
+
+  if (domains.includes("intents")) {
+    toolset.prepare_deposit = createPrepareDepositTool(context);
+    toolset.get_withdrawal_quote = createGetWithdrawalQuoteTool(context);
+    toolset.prepare_withdrawal = createPrepareWithdrawalTool();
+    toolset.get_super_balances = createSuperBalancesTool(context);
+    toolset.request_super_unlock = createRequestSuperUnlockTool();
   }
 
   return toolset;

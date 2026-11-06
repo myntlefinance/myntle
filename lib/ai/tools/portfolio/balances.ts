@@ -33,11 +33,23 @@ export async function readBalances(accountId: string, chain = "near") {
 }
 
 export function createWalletBalancesTool(context?: ToolContext) {
+  const accountKind = context?.accountKind ?? "wallet";
+
   return tool({
     description:
-      "Read the user's token balances. Returns on-chain balances in their connected wallet " +
-      "(EVM, Solana, or NEAR) and their NEAR Intents settlement ledger balance. " +
-      "Use this whenever the user asks about their balances, portfolio, or what they have available to trade.",
+      accountKind === "passkey"
+        ? "Read this account's token balances. A passkey account has no chain wallet, so this " +
+          "reads the account's NEAR Intents ledger only and never a wallet. The confidential " +
+          "private balance is read with get_super_balances. Use this whenever the user asks " +
+          "what the account holds or what is available to trade. Pass symbol for a single-token " +
+          "check and omit it for an inventory."
+        : "Read the user's public token balances. Returns on-chain balances in their connected wallet " +
+          "(EVM, Solana, or NEAR) and their public NEAR Intents settlement ledger balance. " +
+          "This tool cannot see confidential funds: for the private balance inside the super account, " +
+          "call get_super_balances instead. " +
+          "Use this whenever the user asks about their balances, portfolio, or what they have available to trade. " +
+          "A single-token question should pass symbol, and the one network when the user named one; a portfolio " +
+          "question should omit both.",
     inputSchema: z.object({
       address: z
         .string()
@@ -53,31 +65,35 @@ export function createWalletBalancesTool(context?: ToolContext) {
         .optional()
         .describe(
           "Specific networks to query (e.g. ['arbitrum'], ['base', 'ethereum']). " +
-          "When the user asks for a single network like 'my arbitrum balances', pass ['arbitrum'].",
+            "When the user asks for a single network like 'my arbitrum balances', pass ['arbitrum']. " +
+            "A single-token check should name the network when the user named one.",
         ),
       category: z
         .enum(["all", "stables", "dust", "native"])
         .optional()
         .describe(
           "Filter by asset category: 'stables' for stablecoins (USDC, USDT, USDS, AUSD, DAI), " +
-          "'dust' for balances under $1, 'native' for gas tokens (ETH, SOL, NEAR).",
+            "'dust' for balances under $1, 'native' for gas tokens (ETH, SOL, NEAR).",
         ),
       symbol: z
         .string()
         .optional()
-        .describe("Specific token symbol to filter by (e.g. 'USDC', 'ETH')."),
+        .describe(
+          "Specific token symbol to filter by (e.g. 'USDC', 'ETH'). Pass it for a " +
+            "single-token check; omit it when the user asked to see their holdings.",
+        ),
       includeZeroValue: z
         .boolean()
         .optional()
         .describe(
           "Whether to include zero-value or unpriced tokens. Defaults to false (hidden by default). " +
-          "Only set to true if the user explicitly asks to see zero-value tokens, unpriced assets, or fresh airdrops.",
+            "Only set to true if the user explicitly asks to see zero-value tokens, unpriced assets, or fresh airdrops.",
         ),
       includeSettlementLedger: z
         .boolean()
         .optional()
         .describe(
-          "Whether to include the NEAR Intents settlement ledger. Defaults to false when specific non-NEAR networks are queried, or true for general portfolio queries.",
+          "Whether to include the public NEAR Intents settlement ledger. Defaults to false when specific non-NEAR networks are queried, or true for general portfolio queries.",
         ),
     }),
     execute: async ({
@@ -89,6 +105,100 @@ export function createWalletBalancesTool(context?: ToolContext) {
       includeZeroValue,
       includeSettlementLedger,
     }) => {
+      // A passkey account has no chain wallet. The session names the only
+      // account this tool may read, so an address or chain from the model is
+      // ignored rather than pointed at someone else's holdings.
+      if (accountKind === "passkey") {
+        const accountId = context?.intentsAccountId?.trim();
+        if (!accountId) {
+          return {
+            source: "none" as const,
+            message:
+              "No account is signed in. Sign in with a passkey to read the account balance.",
+          };
+        }
+
+        const ledger = await getIntentsLedgerBalances(accountId, "near");
+        const allowZero = Boolean(includeZeroValue || symbol);
+        const wantedSymbol = symbol?.trim().toLowerCase() || null;
+
+        const balances: TokenBalance[] = [];
+        for (const b of ledger.balances) {
+          if (isPhishingToken(b.symbol, b.symbol)) continue;
+          if (wantedSymbol && b.symbol.toLowerCase() !== wantedSymbol) continue;
+          if (!allowZero && (!b.valueUsd || b.valueUsd <= 0)) continue;
+
+          balances.push({
+            chain: "near",
+            network: "intents",
+            symbol: b.symbol,
+            name: b.symbol,
+            contractAddress: b.assetId,
+            decimals: b.decimals,
+            balance: b.balance,
+            rawBalance: b.rawBalance,
+            priceUsd: b.priceUsd,
+            valueUsd: b.valueUsd,
+          });
+        }
+
+        const totalValueUsd = balances.reduce(
+          (sum, balance) => sum + (balance.valueUsd ?? 0),
+          0,
+        );
+        const initialFilter =
+          category && category !== "all" ? category : "all";
+        const groups = groupBalancesByNetwork(balances);
+        // A single token is a check, not an inventory: the reply carries the
+        // figure and the interface leaves the table off. Derived from the
+        // query rather than chosen by the model, so an inventory question can
+        // never lose its table.
+        const showCard = !(
+          symbol &&
+          groups.length === 1 &&
+          groups[0].items.length === 1
+        );
+
+        return {
+          source: "session" as const,
+          accountKind: "passkey" as const,
+          // The account id is not a wallet address, so it is returned as
+          // `accountId` and never as the wallet `address` field.
+          accountId,
+          chain: "near",
+          title:
+            category === "stables"
+              ? "Stablecoin balances"
+              : category === "dust"
+                ? "Dust balances"
+                : "Account balances",
+          showFilters: !category || category === "all",
+          initialFilter,
+          singleNetwork: null,
+          category: category ?? "all",
+          totalValueUsd: Number.parseFloat(totalValueUsd.toFixed(2)),
+          groups,
+          showCard,
+          // A passkey account has no wallet section. The ledger is the
+          // account, so nothing on this result is a chain wallet.
+          wallet: { balances: [], totalValueUsd: 0 },
+          settlementLedger: {
+            balances,
+            totalValueUsd: ledger.totalValueUsd ?? 0,
+            status: ledger.status,
+            message: ledger.message,
+          },
+          // The public ledger is not the private balance. A locked or
+          // unread private balance must never be presented as zero funds.
+          privateBalance: "separate" as const,
+          privateBalanceNote:
+            "This tool reads the public account ledger only. The private balance is separate; call get_super_balances before concluding the account has no funds.",
+          ...(ledger.status === "empty"
+            ? { message: "No public balances. The private balance is separate." }
+            : {}),
+        };
+      }
+
       const targetAddress = address || context?.activeAddress;
       const targetChain = chain || context?.activeChain;
 
@@ -114,21 +224,24 @@ export function createWalletBalancesTool(context?: ToolContext) {
           includeZeroValue,
         }),
         shouldIncludeLedger
-          ? getIntentsLedgerBalances(
-              targetAddress,
-              context?.authToken ?? undefined,
-            )
+          ? getIntentsLedgerBalances(targetAddress, targetChain ?? undefined)
           : Promise.resolve(null),
       ]);
 
       const allBalances: TokenBalance[] = [...walletRes.balances];
+      // The ledger is a second section of the same answer, so it obeys the
+      // same symbol filter. Otherwise a single-token check could pull every
+      // ledger token into the result and turn the card back on.
+      const wantedSymbol = symbol?.trim().toLowerCase() || null;
+      const ledgerBalances: TokenBalance[] = [];
       if (intentsRes?.balances) {
         const allowZero = Boolean(includeZeroValue || symbol);
         for (const b of intentsRes.balances) {
           if (isPhishingToken(b.symbol, b.symbol)) continue;
+          if (wantedSymbol && b.symbol.toLowerCase() !== wantedSymbol) continue;
           if (!allowZero && (!b.valueUsd || b.valueUsd <= 0)) continue;
 
-          allBalances.push({
+          const entry: TokenBalance = {
             chain: "near",
             network: "intents",
             symbol: b.symbol,
@@ -139,7 +252,9 @@ export function createWalletBalancesTool(context?: ToolContext) {
             rawBalance: b.rawBalance,
             priceUsd: b.priceUsd,
             valueUsd: b.valueUsd,
-          });
+          };
+          ledgerBalances.push(entry);
+          allBalances.push(entry);
         }
       }
 
@@ -159,10 +274,26 @@ export function createWalletBalancesTool(context?: ToolContext) {
 
       const showFilters = !singleNetwork && (!category || category === "all");
       const initialFilter = category && category !== "all" ? category : "all";
-      const totalCombinedUsd =
-        (walletRes.totalValueUsd ?? 0) + (intentsRes?.totalValueUsd ?? 0);
+      const totalCombinedUsd = allBalances.reduce(
+        (sum, balance) => sum + (balance.valueUsd ?? 0),
+        0,
+      );
 
       const groups = groupBalancesByNetwork(allBalances);
+      // A check is one asset, read for the connected wallet. The result shape
+      // carries the scope: if the token sits on more than one network, the
+      // groups keep the table. An address that names someone else also keeps
+      // the card, so their number never loses its attribution.
+      const isSessionAddress =
+        !address ||
+        (!!context?.activeAddress &&
+          address.trim().toLowerCase() ===
+            context.activeAddress.trim().toLowerCase());
+      const singleAssetCheck =
+        Boolean(symbol) &&
+        isSessionAddress &&
+        groups.length === 1 &&
+        groups[0].items.length === 1;
 
       return {
         // `session` means the connected wallet; `requested` means the model
@@ -178,6 +309,7 @@ export function createWalletBalancesTool(context?: ToolContext) {
         category: category ?? "all",
         totalValueUsd: Number.parseFloat(totalCombinedUsd.toFixed(2)),
         groups,
+        showCard: !singleAssetCheck,
         wallet: {
           balances: walletRes.balances.slice(0, 30),
           totalValueUsd: walletRes.totalValueUsd,
@@ -185,8 +317,12 @@ export function createWalletBalancesTool(context?: ToolContext) {
         },
         settlementLedger: intentsRes
           ? {
-              balances: intentsRes.balances,
-              totalValueUsd: intentsRes.totalValueUsd,
+              balances: ledgerBalances,
+              totalValueUsd: Number.parseFloat(
+                ledgerBalances
+                  .reduce((sum, balance) => sum + (balance.valueUsd ?? 0), 0)
+                  .toFixed(2),
+              ),
               status: intentsRes.status,
               message: intentsRes.message,
             }

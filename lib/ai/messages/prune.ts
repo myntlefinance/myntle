@@ -71,6 +71,45 @@ export function backfillApprovedSwapOutputs(
  * This function preserves full fidelity for the active/latest turn, while summarizing
  * or compacting stale historical tool results for earlier turns.
  */
+const NEWS_TOOL_NAMES = new Set([
+  "get_google_news",
+  "get_reddit_posts",
+  "get_x_posts",
+  "get_x_user_posts",
+  "get_page_content",
+  "getGoogleNews",
+  "getRedditPosts",
+  "getXPosts",
+  "getXUserPosts",
+  "getPageContent",
+]);
+
+function compactNewsOutput(output: Record<string, unknown>) {
+  const rawItems = Array.isArray(output.items) ? output.items : [];
+  const titles = rawItems
+    .slice(0, 8)
+    .map((item) =>
+      item && typeof item === "object"
+        ? (item as Record<string, unknown>).title
+        : undefined,
+    )
+    .filter((t): t is string => typeof t === "string" && t.length > 0);
+  const summary: Record<string, unknown> = {
+    source: output.source,
+    query: output.query,
+    count:
+      typeof output.totalItems === "number"
+        ? output.totalItems
+        : rawItems.length,
+    titles,
+    note: "Historical block compacted; re-search for full text.",
+  };
+  if (typeof output.searchId === "string" && output.searchId) {
+    summary.searchId = output.searchId;
+  }
+  return { summary };
+}
+
 export function pruneHistoricalToolOutputs(messages: UIMessage[]): UIMessage[] {
   if (messages.length <= 2) {
     return messages;
@@ -127,7 +166,11 @@ export function pruneHistoricalToolOutputs(messages: UIMessage[]): UIMessage[] {
           chain: output.chain,
           title: output.title,
           totalValueUsd: output.totalValueUsd,
-          summary: `Portfolio balance was retrieved ($${output.totalValueUsd ?? 0} total). Detailed card was rendered to the user.`,
+          showCard: output.showCard,
+          summary:
+            output.showCard === false
+              ? `Single-asset balance check was retrieved ($${output.totalValueUsd ?? 0} total). The figure was stated in the reply; no table was drawn.`
+              : `Portfolio balance was retrieved ($${output.totalValueUsd ?? 0} total). Detailed card was rendered to the user.`,
         };
 
         if (p.output) {
@@ -166,6 +209,28 @@ export function pruneHistoricalToolOutputs(messages: UIMessage[]): UIMessage[] {
               },
             };
           }
+        }
+      }
+
+      // Compact news/page results in historical turns. Blocks are ~6k
+      // chars each and stay verbatim in history otherwise, re-sent on every
+      // follow-up turn. The summary keeps what a later turn needs (what was
+      // asked, how many hits, their titles) without the full post text.
+      if (NEWS_TOOL_NAMES.has(toolName)) {
+        hasCompacted = true;
+        const compactedOutput = compactNewsOutput(output);
+
+        if (p.output) {
+          return { ...p, output: compactedOutput };
+        }
+        if (p.toolInvocation) {
+          return {
+            ...p,
+            toolInvocation: {
+              ...(p.toolInvocation as Record<string, unknown>),
+              result: compactedOutput,
+            },
+          };
         }
       }
 

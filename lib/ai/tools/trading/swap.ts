@@ -17,7 +17,9 @@ export function createPrepareSwapTool(_context?: ToolContext) {
     description:
       "Propose a trade for the user to approve. Returns the exact parameters that will " +
       "be signed, and waits for the user's decision. Call this only after the user has " +
-      "agreed on a pair and an amount, and only with figures that came from get_quote. " +
+      "agreed on a pair and an amount, and only with figures that came from get_quote " +
+      "in this same turn — figures from an earlier turn leave the card with " +
+      "nothing to sign. " +
       "Set action to deposit when the user funds their own balance — including " +
       "the same ticker in and out to their own address — withdraw when they " +
       "take funds out to an address, bridge when the same asset moves across " +
@@ -28,12 +30,21 @@ export function createPrepareSwapTool(_context?: ToolContext) {
         .enum(["deposit", "swap", "bridge", "withdraw", "trade"])
         .default("swap")
         .describe("What the user asked to do with their money"),
-      fromAssetId: z.string().describe("Full asset id of the token being sold"),
-      toAssetId: z.string().describe("Full asset id of the token being bought"),
+      fromAssetId: z.string().min(1).describe("Full asset id of the token being sold"),
+      toAssetId: z.string().min(1).describe("Full asset id of the token being bought"),
       amount: z
         .string()
+        .min(1)
+        .regex(/^\d+$/, "Amount must be digits only, in the smallest unit")
         .describe("Amount in the smallest unit of the token being sold"),
-      recipient: z.string().describe("The account that receives the output"),
+      recipient: z.string().min(1).describe("The account that receives the output"),
+      refundTo: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "The account refunds return to on the origin chain. Defaults to the connected wallet.",
+        ),
       slippageBps: z.number().int().min(1).max(300).default(100),
     }),
     // No settlement happens here. The interface signs the exact parameters
@@ -50,6 +61,7 @@ export function createPrepareSwapTool(_context?: ToolContext) {
         toAssetId: input.toAssetId,
         amount: input.amount,
         recipient: input.recipient,
+        refundTo: input.refundTo ?? null,
         note: "The user approved this trade in the interface. Settlement is handled separately by the application. Do not call prepare_swap again for it unless the user asks for a new trade.",
       };
     },
