@@ -4,19 +4,15 @@ import {
   type SupportedNetwork,
 } from "@/lib/wallet/balances";
 import { getIntentsLedgerBalances } from "@/lib/intents/balances";
-import { getSession, SESSION_COOKIE } from "@/lib/auth/session";
+import { requireSession } from "@/lib/auth/session";
 
 export async function GET(req: Request) {
+  const session = await requireSession(req);
+  if (!session) {
+    return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+  }
+
   const { searchParams } = new URL(req.url);
-  const cookieId = req.headers
-    .get("cookie")
-    ?.split(";")
-    .map((c) => c.trim())
-    .find((c) => c.startsWith(`${SESSION_COOKIE}=`))
-    ?.slice(SESSION_COOKIE.length + 1);
-  const session = cookieId
-    ? await getSession(decodeURIComponent(cookieId))
-    : null;
 
   const address = searchParams.get("address") || session?.address;
   const chain = searchParams.get("chain") || session?.chain;
@@ -36,7 +32,7 @@ export async function GET(req: Request) {
 
   const [wallet, intentsLedger] = await Promise.all([
     getConnectedWalletBalances(chain, address, { networks, symbol }),
-    getIntentsLedgerBalances(address),
+    getIntentsLedgerBalances(address, chain),
   ]);
 
   return NextResponse.json({

@@ -32,13 +32,34 @@ describe("AddressPill", () => {
     expect(near).toContain("alice.near");
   });
 
-  it("is a label, not a control", () => {
+  it("prefers the explicit chain over address-shape detection", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <AddressPill address={EVM} chain="near" />,
+    );
+    expect(html).toContain('src="/wallets/near.webp"');
+    expect(html).not.toContain('src="/wallets/evm.webp"');
+  });
+
+  it("prefers the connected wallet mark over the chain mark", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <AddressPill
+        address={EVM}
+        chain="near"
+        walletIcon="/wallets/metamask.webp"
+        walletName="MetaMask"
+      />,
+    );
+    expect(html).toContain('src="/wallets/metamask.webp"');
+    expect(html).toContain("MetaMask");
+  });
+
+  it("carries a copy control with the same address copy pattern", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <AddressPill address={EVM} chain="evm" />,
     );
 
-    expect(html).not.toContain("<button");
-    expect(html).not.toContain("Click to copy");
-    expect(html).not.toContain("<svg");
+    expect(html).toContain("<button");
+    expect(html).toContain('aria-label="Copy address"');
+    expect(html).toContain("<svg");
   });
 });

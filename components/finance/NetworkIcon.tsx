@@ -88,7 +88,7 @@ export function resolveUploadedNetwork(network: string): {
 
 /**
  * Direct inline vector SVG for blockchain networks.
- * Uses official uploaded SVGs rendered directly inside a <div> for 100% mathematical vector sharpness.
+ * Uses official uploaded SVGs rendered directly inside an inline <span> for 100% mathematical vector sharpness.
  */
 export function NetworkSvg({
   id,
@@ -127,7 +127,7 @@ export function NetworkIcon({
 
   if (resolved) {
     return (
-      <div
+      <span
         className={`inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden [&>svg]:w-full [&>svg]:h-full select-none ${resolved.paddingClass} ${className}`}
         style={{ width: size, height: size }}
         title={label}

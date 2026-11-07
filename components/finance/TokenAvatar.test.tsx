@@ -73,11 +73,12 @@ describe("TokenAvatar", () => {
     );
   });
 
-  it("renders monogram fallback when no source is available", () => {
+  it("renders a single-letter fallback when no source is available", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <TokenAvatar symbol="UNKNOWN" size={28} />,
     );
-    expect(html).toContain("UNK");
+    expect(html).toContain(">U<");
+    expect(html).not.toContain(">UNK<");
   });
 
   it("renders direct inline vector network badge at bottom right", () => {

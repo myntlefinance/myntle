@@ -44,7 +44,31 @@ describe("/api/assets", () => {
           assetId: "nep141:usdc.near",
           symbol: "USDC",
           chain: "near",
+          decimals: 6,
           priceUsd: 1,
+        },
+      ],
+    });
+  });
+
+  it("resolves tickers so an inline chip can price itself", async () => {
+    const res = await get("http://x/api/assets?symbols=usdc,WNEAR");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      assets: [
+        {
+          assetId: "nep141:usdc.near",
+          symbol: "USDC",
+          chain: "near",
+          decimals: 6,
+          priceUsd: 1,
+        },
+        {
+          assetId: "nep141:wrap.near",
+          symbol: "WNEAR",
+          chain: "near",
+          decimals: 24,
+          priceUsd: 5.33,
         },
       ],
     });

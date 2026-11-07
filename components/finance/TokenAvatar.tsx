@@ -126,7 +126,7 @@ export function TokenAvatar({
   // The ring separating badge from token thins out with small badges so the
   // stroke never eats the glyph; large avatars keep the wider ring.
   const badgeRing = badgeSize < 10 ? "ring-1" : "ring-2";
-  const monogram = sym.length <= 4 ? sym.slice(0, 3) : sym.slice(0, 2);
+  const monogram = sym.charAt(0);
 
   // 1. Direct inline SVG lookup for curated / uploaded tokens (instant, zero rasterization)
   const uploaded = resolveUploadedToken(symbol);
@@ -142,19 +142,19 @@ export function TokenAvatar({
   }, [uploaded, logo, contractAddress, chain]);
 
   return (
-    <div
+    <span
       className={`relative inline-flex shrink-0 select-none ${className}`}
       style={{ width: size, height: size }}
       title={label}
     >
       {uploaded ? (
-        <div
+        <span
           className={`w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden [&>svg]:w-full [&>svg]:h-full select-none ${uploaded.paddingClass}`}
           style={{ width: size, height: size }}
           dangerouslySetInnerHTML={{ __html: uploaded.svg }}
         />
       ) : remoteUrl && !remoteFailed ? (
-        <div
+        <span
           className="w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden bg-white/5"
           style={{ width: size, height: size }}
         >
@@ -167,7 +167,7 @@ export function TokenAvatar({
             onError={() => setRemoteFailed(true)}
             loading="lazy"
           />
-        </div>
+        </span>
       ) : (
         <span
           className="inline-flex shrink-0 items-center justify-center rounded-full bg-field font-semibold text-ink-2"
@@ -183,13 +183,13 @@ export function TokenAvatar({
 
       {/* Overlapping network badge at bottom-right corner */}
       {networkBadge && (
-        <div
+        <span
           className={`absolute -bottom-0.5 -right-0.5 flex items-center justify-center rounded-full ${badgeRing} ring-surface`}
         >
           <NetworkIcon network={networkBadge} size={badgeSize} />
-        </div>
+        </span>
       )}
-    </div>
+    </span>
   );
 }
 
