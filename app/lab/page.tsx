@@ -1,20 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
+import { ProvidersLoader } from "../providers-loader";
 import { LabFrame } from "@/components/lab/LabFrame";
 import { LAB } from "@/components/lab/registry";
 import { ThemeToggle } from "@/components/site/ThemeToggle";
-import ActionButton from "@/components/lab/samples/ActionButton";
-import QuotePreview from "@/components/lab/samples/QuotePreview";
-import ApprovalRow from "@/components/lab/samples/ApprovalRow";
-import AssetMatrix from "@/components/lab/samples/AssetMatrix";
-import AddressPill from "@/components/lab/samples/AddressPill";
 import DepositCard from "@/components/lab/samples/DepositCard";
 import SwapCard from "@/components/lab/samples/SwapCard";
 import BridgeCard from "@/components/lab/samples/BridgeCard";
 import WithdrawCard from "@/components/lab/samples/WithdrawCard";
 import LimitOrderCard from "@/components/lab/samples/LimitOrderCard";
-import PlainEnglishCard from "@/components/lab/samples/PlainEnglishCard";
 import ChipHoverCards from "@/components/lab/samples/ChipHoverCards";
+import AuthProbe from "@/components/lab/samples/AuthProbe";
+import UnlockCardStates from "@/components/lab/samples/UnlockCardStates";
 
 export const metadata = {
   title: "Lab",
@@ -30,18 +27,14 @@ export const metadata = {
  * them, so nothing here can break the product.
  */
 const PROTOTYPES: Record<string, React.ComponentType<{ variant?: string }>> = {
-  "action-button": ActionButton,
-  "quote-preview": QuotePreview,
-  "approval-row": ApprovalRow,
-  "asset-matrix": AssetMatrix,
-  "address-pill": AddressPill,
   "deposit-card": DepositCard,
   "swap-card": SwapCard,
   "bridge-card": BridgeCard,
   "withdraw-card": WithdrawCard,
   "limit-order-card": LimitOrderCard,
-  "plain-english-card": PlainEnglishCard,
   "chip-hover-cards": ChipHoverCards,
+  "auth-probe": AuthProbe,
+  "unlock-card": UnlockCardStates,
 };
 
 /** Sources are read at build time so each frame can offer its own file. */
@@ -62,6 +55,7 @@ function readSource(file: string): string {
 
 export default function LabPage() {
   return (
+    <ProvidersLoader>
     <main className="min-h-[100dvh] bg-page text-ink">
       <div className="mx-auto max-w-[880px] px-6 pb-24">
         <header className="flex items-start justify-between gap-4 py-9">
@@ -106,5 +100,6 @@ export default function LabPage() {
         </p>
       </div>
     </main>
+    </ProvidersLoader>
   );
 }

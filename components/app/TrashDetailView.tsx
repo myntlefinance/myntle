@@ -32,7 +32,13 @@ import {
   messageCache,
   prefetchInflight,
   prefetchThread,
+  readThreadsCache,
+  readTrashedCache,
   trashedMessageCache,
+  writeThreadsCache,
+  writeTrashedCache,
+  type ThreadItem,
+  type TrashedItem,
 } from "@/components/app/threadCache";
 import { ThreadSkeleton } from "@/components/app/ThreadSkeleton";
 import { TITLE_MAX_CHARS } from "@/lib/ai/title";
@@ -89,18 +95,45 @@ export default function TrashDetailView({ slug }: { slug: string }) {
 
   const deleteThread = useCallback(
     (threadId: string) => {
+      const label =
+        queryClient.getQueryData<ThreadItem[]>(THREADS_QUERY_KEY)?.find((t) => t.id === threadId)?.label ??
+        findThreadLabel(threadId) ??
+        "New chat";
       void fetch(`/api/conversations/${encodeURIComponent(threadId)}`, {
         method: "DELETE",
       })
-        .then((res) => {
+        .then(async (res) => {
           if (!res.ok) throw new Error("delete failed");
+          let deletedAt = new Date().toISOString();
+          try {
+            const body = (await res.json()) as { deletedAt?: string };
+            if (typeof body?.deletedAt === "string" && body.deletedAt) {
+              deletedAt = body.deletedAt;
+            }
+          } catch {
+            // DELETE succeeded; fall back to now for the trash ordering.
+          }
+          return deletedAt;
         })
-        .then(() => {
+        .then((deletedAt) => {
           deleteCachedMessages(threadId);
-          void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
-          void queryClient.invalidateQueries({ queryKey: TRASHED_QUERY_KEY });
+          const entry: TrashedItem = { id: threadId, label, deletedAt };
+          queryClient.setQueryData<ThreadItem[]>(THREADS_QUERY_KEY, (old) =>
+            old ? old.filter((t) => t.id !== threadId) : old,
+          );
+          writeThreadsCache(readThreadsCache().filter((t) => t.id !== threadId));
+          queryClient.setQueryData<TrashedItem[]>(TRASHED_QUERY_KEY, (old) =>
+            old
+              ? [entry, ...old.filter((t) => t.id !== threadId)]
+              : [entry],
+          );
+          const prevTrashed = readTrashedCache().filter((t) => t.id !== threadId);
+          writeTrashedCache([entry, ...prevTrashed]);
         })
-        .catch(() => queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY }));
+        .catch(() => {
+          // No list change was made, so nothing to roll back. SidebarNav's
+          // safety timer releases the collapsed row so it glides back.
+        });
     },
     [queryClient],
   );
@@ -178,7 +211,7 @@ export default function TrashDetailView({ slug }: { slug: string }) {
     router.push("/trash");
   }, [busy, id, router, queryClient]);
 
-  const headerTitle = title ?? trashed.find((t) => t.id === id)?.label ?? "Deleted chat";
+  const headerTitle = title ?? trashed.find((t) => t.id === id)?.label ?? "New chat";
   const effectiveDeletedAt =
     deletedAt ?? trashed.find((t) => t.id === id)?.deletedAt;
 
@@ -187,7 +220,7 @@ export default function TrashDetailView({ slug }: { slug: string }) {
       <SidebarNav
         fill
         className="hidden lg:flex"
-        recents={threads}
+        recents={threads.map((t) => ({ id: t.id, label: t.label ?? "New chat" }))}
         onPick={(threadId) => router.push(`/chat/${encodeURIComponent(threadId)}`)}
         onNewChat={() => router.push("/")}
         onHoverThread={prefetchThread}
@@ -196,6 +229,8 @@ export default function TrashDetailView({ slug }: { slug: string }) {
         trashCount={trashed.length}
         trashActive
         onOpenTrash={() => router.push("/trash")}
+        onOpenPortfolio={() => router.push("/portfolio")}
+        onOpenHistory={() => router.push("/history")}
         footer={<WalletButton />}
         footerCompact={<WalletButton compact />}
       />

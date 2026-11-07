@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
+import { SkeletonBox } from "skullet/react";
 import {
   IconArrowBackUp,
   IconChevronLeft,
@@ -33,6 +34,8 @@ import {
   readThreadsCache,
   readTrashedCache,
   trashedMessageCache,
+  writeThreadsCache,
+  writeTrashedCache,
   type ThreadItem,
   type TrashedItem,
 } from "@/components/app/threadCache";
@@ -295,7 +298,7 @@ export function ConfirmDialog({
   title: string;
   body: string;
   busy: boolean;
-  items?: { id: string; label: string; deletedAt?: string }[];
+  items?: { id: string; label: string | null; deletedAt?: string }[];
   confirmLabel?: string;
   onCancel: () => void;
   onConfirm: () => void;
@@ -343,7 +346,7 @@ export function ConfirmDialog({
                   className="flex w-full items-center gap-2.5 rounded-control px-1.5 py-1.5 text-left transition-colors duration-100 hover:bg-hover"
                 >
                   <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">
-                    {item.label}
+                    {item.label ?? "New chat"}
                   </span>
                   <TimeLeftBadge deletedAt={item.deletedAt} />
                 </div>
@@ -464,7 +467,7 @@ export default function TrashView() {
 
   const visible = query.trim()
     ? items.filter((item) =>
-        item.label.toLowerCase().includes(query.trim().toLowerCase()),
+        (item.label ?? "New chat").toLowerCase().includes(query.trim().toLowerCase()),
       )
     : items;
 
@@ -574,7 +577,27 @@ export default function TrashView() {
       const cleaned = next.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX_CHARS);
       if (!cleaned) return;
       const current = findThreadLabel(id);
-      if (current && cleaned === current.trim()) return;
+      if (current != null && cleaned === current.trim()) return;
+      // Paint instantly in place; no list refetch. The PATCH settles in the
+      // background and a failed write rolls back to the previous label.
+      const prevThreads = queryClient.getQueryData<ThreadItem[]>(THREADS_QUERY_KEY);
+      const prevCache = readThreadsCache();
+      const prevLabel = prevCache.find((t) => t.id === id)?.label ?? null;
+      setThreads((prev) =>
+        prev.some((t) => t.id === id)
+          ? prev.map((t) => (t.id === id ? { ...t, label: cleaned } : t))
+          : prev,
+      );
+      queryClient.setQueryData<ThreadItem[]>(THREADS_QUERY_KEY, (old) => {
+        if (!old) return old;
+        if (!old.some((t) => t.id === id)) return old;
+        return old.map((t) => (t.id === id ? { ...t, label: cleaned } : t));
+      });
+      if (prevCache.some((t) => t.id === id)) {
+        writeThreadsCache(
+          prevCache.map((t) => (t.id === id ? { ...t, label: cleaned } : t)),
+        );
+      }
       void fetch(`/api/conversations/${encodeURIComponent(id)}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -583,27 +606,64 @@ export default function TrashView() {
         .then((res) => {
           if (!res.ok) throw new Error("rename failed");
         })
-        .then(() => refresh())
-        .catch(() => refresh());
+        .catch(() => {
+          setThreads((prev) =>
+            prev.some((t) => t.id === id && t.label === cleaned)
+              ? prev.map((t) => (t.id === id ? { ...t, label: prevLabel ?? t.label } : t))
+              : prev,
+          );
+          if (prevThreads) queryClient.setQueryData(THREADS_QUERY_KEY, prevThreads);
+          writeThreadsCache(prevCache);
+        });
     },
-    [refresh],
+    [queryClient],
   );
 
   const deleteThread = useCallback(
     (id: string) => {
+      const label =
+        queryClient.getQueryData<ThreadItem[]>(THREADS_QUERY_KEY)?.find((t) => t.id === id)?.label ??
+        findThreadLabel(id) ??
+        "New chat";
       void fetch(`/api/conversations/${encodeURIComponent(id)}`, {
         method: "DELETE",
       })
-        .then((res) => {
+        .then(async (res) => {
           if (!res.ok) throw new Error("delete failed");
+          let deletedAt = new Date().toISOString();
+          try {
+            const body = (await res.json()) as { deletedAt?: string };
+            if (typeof body?.deletedAt === "string" && body.deletedAt) {
+              deletedAt = body.deletedAt;
+            }
+          } catch {
+            // DELETE succeeded; fall back to now for the trash ordering.
+          }
+          return deletedAt;
         })
-        .then(() => {
+        .then((deletedAt) => {
           deleteCachedMessages(id);
-          void refresh();
+          const entry: TrashedItem = { id, label, deletedAt };
+          setThreads((prev) => prev.filter((t) => t.id !== id));
+          setItems((prev) =>
+            prev.some((t) => t.id === id) ? prev : [entry, ...prev],
+          );
+          queryClient.setQueryData<ThreadItem[]>(THREADS_QUERY_KEY, (old) =>
+            old ? old.filter((t) => t.id !== id) : old,
+          );
+          writeThreadsCache(readThreadsCache().filter((t) => t.id !== id));
+          queryClient.setQueryData<TrashedItem[]>(TRASHED_QUERY_KEY, (old) =>
+            old ? [entry, ...old.filter((t) => t.id !== id)] : [entry],
+          );
+          const prevTrashed = readTrashedCache().filter((t) => t.id !== id);
+          writeTrashedCache([entry, ...prevTrashed]);
         })
-        .catch(() => refresh());
+        .catch(() => {
+          // No list change was made, so nothing to roll back. SidebarNav's
+          // safety timer releases the collapsed row so it glides back.
+        });
     },
-    [refresh],
+    [queryClient],
   );
 
   const dialogTitle =
@@ -627,7 +687,7 @@ export default function TrashView() {
       <SidebarNav
         fill
         className="hidden lg:flex"
-        recents={threads}
+        recents={threads.map((t) => ({ id: t.id, label: t.label ?? "New chat" }))}
         onPick={(id) => router.push(`/chat/${encodeURIComponent(id)}`)}
         onNewChat={() => router.push("/")}
         onHoverThread={prefetchThread}
@@ -636,6 +696,8 @@ export default function TrashView() {
         trashCount={items.length}
         trashActive
         onOpenTrash={() => router.push("/trash")}
+        onOpenPortfolio={() => router.push("/portfolio")}
+        onOpenHistory={() => router.push("/history")}
         footer={<WalletButton />}
         footerCompact={<WalletButton compact />}
       />
@@ -725,7 +787,7 @@ export default function TrashView() {
           {/* ── Compact Chat List with tight row spacing and instant hover ── */}
           <div className="min-h-0 flex-1 overflow-y-auto scroll-slim px-3 py-1.5 [scrollbar-gutter:stable]">
             {!loaded ? (
-              <div className="flex flex-col gap-0.5">
+              <div className="flex flex-col gap-0.5" aria-busy="true">
                 <span className="sr-only" role="status">
                   Loading deleted chats.
                 </span>
@@ -735,14 +797,11 @@ export default function TrashView() {
                     aria-hidden
                     className="flex h-9 items-center gap-2.5 rounded-[6px] px-2.5 py-1"
                   >
-                    <span className="size-3.5 shrink-0 animate-pulse rounded-[3px] bg-hover-2" />
+                    <SkeletonBox width={14} height={14} radius={3} />
                     <div className="min-w-0 flex-1">
-                      <div
-                        className="h-3 animate-pulse rounded-[3px] bg-hover-2"
-                        style={{ width: `${width}%` }}
-                      />
+                      <SkeletonBox width={`${width}%`} height={12} radius={3} />
                     </div>
-                    <div className="h-3 w-10 animate-pulse rounded-[3px] bg-hover-2" />
+                    <SkeletonBox width={40} height={12} radius={3} />
                   </div>
                 ))}
               </div>
@@ -780,7 +839,7 @@ export default function TrashView() {
                           <RowCheckbox
                             checked={isSelected}
                             onChange={() => toggleRow(item.id)}
-                            label={`Select ${item.label}`}
+                            label={`Select ${item.label ?? "New chat"}`}
                           />
                           <button
                             type="button"
@@ -788,12 +847,12 @@ export default function TrashView() {
                               e.stopPropagation();
                               void openChat(item.id);
                             }}
-                            title={item.label}
-                            aria-label={`Open ${item.label}`}
+                            title={item.label ?? "New chat"}
+                            aria-label={`Open ${item.label ?? "New chat"}`}
                             className="flex h-full min-w-0 flex-1 items-center select-none text-left"
                           >
                             <span className="truncate text-[13px] font-medium text-ink">
-                              {item.label}
+                              {item.label ?? "New chat"}
                             </span>
                           </button>
 
@@ -815,7 +874,7 @@ export default function TrashView() {
                                 e.stopPropagation();
                                 void restoreMany([item.id]);
                               }}
-                              aria-label={`Restore ${item.label}`}
+                              aria-label={`Restore ${item.label ?? "New chat"}`}
                               className="h-6 px-2 text-[11.5px]"
                             >
                               <IconArrowBackUp size={12} stroke={2} />
@@ -828,7 +887,7 @@ export default function TrashView() {
                                 e.stopPropagation();
                                 setDialog({ kind: "delete", ids: [item.id] });
                               }}
-                              aria-label={`Delete ${item.label}`}
+                              aria-label={`Delete ${item.label ?? "New chat"}`}
                               className="h-6 px-2 text-[11.5px] text-red hover:bg-red hover:text-white"
                             >
                               <IconTrash size={12} stroke={2} />

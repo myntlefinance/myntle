@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
-import { ProvidersLoader } from "./providers-loader";
 import { AgentationDev } from "@/components/app/AgentationDev";
+import { SkulletRoot } from "@/components/app/SkulletRoot";
 import { ThemeSync } from "@/components/site/ThemeSync";
 import "./globals.css";
 
@@ -69,7 +69,10 @@ export default function RootLayout({
     >
       <body>
         <ThemeSync />
-        <ProvidersLoader>{children}</ProvidersLoader>
+        {/* The wallet/session providers live in the pages that need them
+          (see ProvidersLoader), so the shell and static content prerender
+          instead of waiting for the full client bundle. */}
+        <SkulletRoot>{children}</SkulletRoot>
         <AgentationDev />
       </body>
     </html>

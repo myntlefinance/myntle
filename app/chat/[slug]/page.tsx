@@ -1,4 +1,5 @@
 import ChatView from "@/components/app/ChatView";
+import { ProvidersLoader } from "../../providers-loader";
 
 export default async function ChatPage({
   params,
@@ -6,5 +7,9 @@ export default async function ChatPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  return <ChatView initialConversationId={decodeURIComponent(slug)} />;
+  return (
+    <ProvidersLoader>
+      <ChatView initialConversationId={decodeURIComponent(slug)} />
+    </ProvidersLoader>
+  );
 }

@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WagmiProvider, createConfig, http } from "wagmi";
-import { mainnet, base, arbitrum, polygon } from "wagmi/chains";
+import { mainnet, base, arbitrum, polygon, optimism, bsc, avalanche, gnosis, scroll } from "wagmi/chains";
 import { injected, walletConnect } from "wagmi/connectors";
 import { NearProvider } from "near-connect-hooks";
+import { AuthProvider } from "@/lib/auth/auth-provider";
 
 /**
  * Every wallet provider lives in one client component.
@@ -17,7 +18,7 @@ import { NearProvider } from "near-connect-hooks";
  */
 
 const wagmiConfig = createConfig({
-  chains: [mainnet, base, arbitrum, polygon],
+  chains: [mainnet, base, arbitrum, polygon, optimism, bsc, avalanche, gnosis, scroll],
   connectors: [
     injected(),
     // The WalletConnect connector fetches its configuration from the network
@@ -36,6 +37,11 @@ const wagmiConfig = createConfig({
     [base.id]: http(),
     [arbitrum.id]: http(),
     [polygon.id]: http(),
+    [optimism.id]: http(),
+    [bsc.id]: http(),
+    [avalanche.id]: http(),
+    [gnosis.id]: http(),
+    [scroll.id]: http(),
   },
   // The provider tree is client-only (see providers-loader), so SSR
   // discovery is off. With `ssr: true` wagmi defers EIP-6963 (MIPD)
@@ -48,11 +54,49 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // and held for the life of the application.
   const [queryClient] = useState(() => new QueryClient());
 
+  /**
+   * A development wallet has to exist before wagmi first checks for one, or
+   * the injected connector reads "no accounts", calls itself disconnected, and
+   * never retries. The key arrives from a local route rather than a bundle
+   * constant, so the tree waits for it — in development only. A production
+   * build starts ready and never fetches anything.
+   */
+  const [walletReady, setWalletReady] = useState(
+    process.env.NODE_ENV === "production",
+  );
+
+  useEffect(() => {
+    if (walletReady) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/dev/wallet", { cache: "no-store" });
+        const body = res.ok
+          ? ((await res.json()) as { key?: string | null })
+          : null;
+        if (body?.key && !cancelled) {
+          const { installDevWallet } = await import("@/lib/wallet/dev-wallet");
+          installDevWallet(body.key);
+        }
+      } catch {
+        // No dev wallet. An installed extension still connects as usual.
+      } finally {
+        if (!cancelled) setWalletReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [walletReady]);
+
+  if (!walletReady) return null;
+
   return (
     <QueryClientProvider client={queryClient}>
       <WagmiProvider config={wagmiConfig}>
         <NearProvider config={{ network: "mainnet" }}>
-          {children}
+          {/* One wallet instance and one session answer for the whole app. */}
+          <AuthProvider>{children}</AuthProvider>
         </NearProvider>
       </WagmiProvider>
     </QueryClientProvider>
