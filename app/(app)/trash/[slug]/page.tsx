@@ -1,5 +1,4 @@
 import TrashDetailView from "@/components/app/TrashDetailView";
-import { ProvidersLoader } from "../../providers-loader";
 
 export const metadata = {
   title: "Trash",
@@ -13,9 +12,5 @@ export default async function TrashDetailPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  return (
-    <ProvidersLoader>
-      <TrashDetailView slug={decodeURIComponent(slug)} />
-    </ProvidersLoader>
-  );
+  return <TrashDetailView slug={decodeURIComponent(slug)} />;
 }

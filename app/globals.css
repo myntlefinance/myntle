@@ -24,6 +24,9 @@
  * ────────────────────────────────────────────────────────── */
 
 :root {
+  /* Native controls and scrollbars follow the document, not the OS. */
+  color-scheme: light;
+
   /* surfaces — cool, blue-tinted neutrals */
   --page: oklch(0.985 0.001 286.376);
   --canvas: oklch(0.961 0.002 247.84);
@@ -82,16 +85,17 @@
   --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-link: cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* skeletons — skullet reads these from the nearest element, so the
+  /* skeletons — skullet reads the colours from the nearest element, so the
    * shimmer inherits the same neutral family as the surfaces instead of
-   * trusting the operating system's colour scheme. */
-  --skullet-base: oklch(0.247 0.006 258.361 / 0.075);
-  --skullet-highlight: oklch(1 0 0 / 0.6);
-  --skullet-animation: shimmer;
-  --skullet-speed: slow;
+   * trusting the operating system's colour scheme. The rest of the theme
+   * (radius, animation, speed, text lines) is set once in SkulletRoot. */
+  --skullet-base: rgb(0 0 0 / 0.07);
+  --skullet-highlight: rgb(255 255 255 / 0.6);
 }
 
 .dark {
+  color-scheme: dark;
+
   --page: oklch(0.209 0.004 264.477);
   --canvas: oklch(0.231 0.004 264.487);
   --surface: oklch(0.26 0.006 271.191);
@@ -142,8 +146,8 @@
     0 0 0 1px oklch(1 0 0 / 0.15), 0 8px 28px oklch(0 0 0 / 0.34);
   --shadow-inset-field: inset 0 1px 2px oklch(0 0 0 / 0.4);
 
-  --skullet-base: oklch(1 0 0 / 0.09);
-  --skullet-highlight: oklch(1 0 0 / 0.12);
+  --skullet-base: rgb(255 255 255 / 0.1);
+  --skullet-highlight: rgb(255 255 255 / 0.08);
 }
 
 @theme inline {
@@ -211,6 +215,9 @@
 /* ── base ─────────────────────────────────────────────── */
 
 html {
+  /* The canvas is painted before <body> exists, so it needs the theme colour
+   * too or the browser shows its white default under the first frame. */
+  background-color: var(--stripe-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;

@@ -7,6 +7,8 @@ import { mainnet, base, arbitrum, polygon, optimism, bsc, avalanche, gnosis, scr
 import { injected, walletConnect } from "wagmi/connectors";
 import { NearProvider } from "near-connect-hooks";
 import { AuthProvider } from "@/lib/auth/auth-provider";
+import { ProvidersSkeleton } from "@/components/app/ProvidersSkeleton";
+import type { PortfolioTab } from "@/components/app/portfolioTabs";
 
 /**
  * Every wallet provider lives in one client component.
@@ -49,7 +51,13 @@ const wagmiConfig = createConfig({
   ssr: false,
 });
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({
+  children,
+  initialPortfolioTab,
+}: {
+  children: React.ReactNode;
+  initialPortfolioTab?: PortfolioTab;
+}) {
   // wagmi keeps its state in a query client, so the client is created once
   // and held for the life of the application.
   const [queryClient] = useState(() => new QueryClient());
@@ -89,7 +97,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
     };
   }, [walletReady]);
 
-  if (!walletReady) return null;
+  // Keep the shell painted while the dev wallet arrives. Returning null here
+  // unmounted the fallback and left a blank frame between the skeleton and
+  // the real application, which on a slow connection reads as a second load.
+  if (!walletReady) return <ProvidersSkeleton initialPortfolioTab={initialPortfolioTab} />;
 
   return (
     <QueryClientProvider client={queryClient}>

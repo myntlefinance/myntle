@@ -1,5 +1,4 @@
 import TrashView from "@/components/app/TrashView";
-import { ProvidersLoader } from "../providers-loader";
 
 export const metadata = {
   title: "Trash",
@@ -8,9 +7,5 @@ export const metadata = {
 };
 
 export default function TrashPage() {
-  return (
-    <ProvidersLoader>
-      <TrashView />
-    </ProvidersLoader>
-  );
+  return <TrashView />;
 }

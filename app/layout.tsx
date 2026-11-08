@@ -3,7 +3,15 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import { AgentationDev } from "@/components/app/AgentationDev";
 import { SkulletRoot } from "@/components/app/SkulletRoot";
 import { ThemeSync } from "@/components/site/ThemeSync";
+import { THEME_COLORS } from "@/lib/theme";
 import "./globals.css";
+
+/* The stored theme has to be on <html> before the first paint. An effect is
+ * always one paint too late, and on a slow connection that one paint is a
+ * white flash. This inline head script runs before the body parses. ThemeSync
+ * still re-applies the class after hydration, because React 19 reconciles
+ * <html>'s className. */
+const themeScript = `(function(){try{var t=localStorage.getItem("bui-theme");var dark=t!=="light";document.documentElement.classList.toggle("dark",dark);var color=dark?"${THEME_COLORS.dark}":"${THEME_COLORS.light}";var metas=document.querySelectorAll('meta[name="theme-color"]');for(var i=0;i<metas.length;i++)metas[i].setAttribute("content",color);}catch(e){document.documentElement.classList.add("dark");}})();`;
 
 /* The font variables live on <html>, not <body>. Tailwind's preflight puts
  * font-family on the html element and reads --default-font-family from there,
@@ -51,8 +59,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   // Matches the page surface token in each theme.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "oklch(0.985 0.001 286.376)" },
-    { media: "(prefers-color-scheme: dark)", color: "oklch(0.209 0.004 264.477)" },
+    { media: "(prefers-color-scheme: light)", color: THEME_COLORS.light },
+    { media: "(prefers-color-scheme: dark)", color: THEME_COLORS.dark },
   ],
 };
 
@@ -67,11 +75,14 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${inter.variable} ${jetbrains.variable}`}
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body>
         <ThemeSync />
-        {/* The wallet/session providers live in the pages that need them
-          (see ProvidersLoader), so the shell and static content prerender
-          instead of waiting for the full client bundle. */}
+        {/* The wallet/session providers live in the app layout (see
+          ProvidersLoader). Their first paint is the shell skeleton, so the
+          page never opens on an empty body while the wallet bundle loads. */}
         <SkulletRoot>{children}</SkulletRoot>
         <AgentationDev />
       </body>

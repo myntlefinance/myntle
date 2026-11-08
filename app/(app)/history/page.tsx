@@ -1,5 +1,4 @@
 import HistoryView from "@/components/app/HistoryView";
-import { ProvidersLoader } from "../providers-loader";
 
 export const metadata = {
   title: "History",
@@ -8,9 +7,5 @@ export const metadata = {
 };
 
 export default function HistoryPage() {
-  return (
-    <ProvidersLoader>
-      <HistoryView />
-    </ProvidersLoader>
-  );
+  return <HistoryView />;
 }
