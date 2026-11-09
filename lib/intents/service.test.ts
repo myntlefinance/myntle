@@ -331,8 +331,8 @@ describe("generateIntent", () => {
     const call = requests.find((r) => r.url.includes("/v0/generate-intent"));
     expect(call?.init?.method).toBe("POST");
     expect(
-      (call?.init?.headers as Record<string, string> | undefined)?.Authorization,
-    ).toBe(`Bearer ${PARTNER_KEY}`);
+      (call?.init?.headers as Record<string, string> | undefined)?.["X-API-Key"],
+    ).toBe(PARTNER_KEY);
     expect(requestBody(requests, "/v0/generate-intent")).toEqual({
       type: "swap_transfer",
       standard: "webauthn",
@@ -377,8 +377,8 @@ describe("submitIntent", () => {
     const call = requests.find((r) => r.url.includes("/v0/submit-intent"));
     expect(call?.init?.method).toBe("POST");
     expect(
-      (call?.init?.headers as Record<string, string> | undefined)?.Authorization,
-    ).toBe(`Bearer ${PARTNER_KEY}`);
+      (call?.init?.headers as Record<string, string> | undefined)?.["X-API-Key"],
+    ).toBe(PARTNER_KEY);
     expect(requestBody(requests, "/v0/submit-intent")).toEqual({
       type: "swap_transfer",
       signedData: SIGNED_DATA,

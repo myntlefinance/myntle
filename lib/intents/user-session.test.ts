@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  fetchPrivateBalances,
   getValidAccessToken,
   isSuperUnlocked,
   lockSuperAccount,
@@ -63,5 +64,74 @@ describe("lockSuperAccount", () => {
     expect(localStorage.getItem(key)).toBeNull();
     expect(locked).toBe(1);
     await expect(getValidAccessToken("evm", address)).resolves.toBeNull();
+  });
+});
+
+describe("fetchPrivateBalances", () => {
+  const fresh = (address: string) => {
+    saveIntentsSession({
+      chain: "evm",
+      address,
+      accessToken: "access",
+      refreshToken: "refresh",
+      expiresIn: 900,
+      refreshExpiresIn: 3600,
+    });
+  };
+
+  it("reports an unreachable service as an error and keeps the session", async () => {
+    const { events } = fakeBrowser();
+    vi.stubGlobal("window", events);
+    const address = "0xAbC0000000000000000000000000000000000002";
+    fresh(address);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    await expect(fetchPrivateBalances("evm", address)).resolves.toEqual({
+      ok: false,
+      reason: "error",
+    });
+    expect(isSuperUnlocked("evm", address)).toBe(true);
+  });
+
+  it("forgets a session the service refuses even after a refresh", async () => {
+    const { events } = fakeBrowser();
+    vi.stubGlobal("window", events);
+    const address = "0xAbC0000000000000000000000000000000000003";
+    fresh(address);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        // The balance read refuses the access token, then the refresh
+        // token itself is refused: the session is dead, not the service.
+        .mockResolvedValueOnce(new Response(null, { status: 401 }))
+        .mockResolvedValueOnce(new Response(null, { status: 401 })),
+    );
+
+    await expect(fetchPrivateBalances("evm", address)).resolves.toEqual({
+      ok: false,
+      reason: "locked",
+    });
+    expect(isSuperUnlocked("evm", address)).toBe(false);
+  });
+
+  it("keeps the session when only the refresh service fails", async () => {
+    const { events } = fakeBrowser();
+    vi.stubGlobal("window", events);
+    const address = "0xAbC0000000000000000000000000000000000004";
+    fresh(address);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response(null, { status: 401 }))
+        .mockResolvedValueOnce(new Response(null, { status: 503 })),
+    );
+
+    await expect(fetchPrivateBalances("evm", address)).resolves.toEqual({
+      ok: false,
+      reason: "error",
+    });
+    expect(isSuperUnlocked("evm", address)).toBe(true);
   });
 });

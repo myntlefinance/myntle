@@ -6,14 +6,20 @@
  * the endpoints that need a partner key.
  */
 
+import { settlementLinks } from "@/lib/intents/explorer";
+
 const BASE = process.env.NEXT_PUBLIC_ONE_CLICK_BASE_URL ?? "https://1click.chaindefuser.com";
 
-/** Bearer auth for 1Click. Server-side only; never expose the key to the browser. */
+/** Partner auth for 1Click. Server-side only; never expose the key to the browser. */
 function oneClickHeaders(extra: Record<string, string> = {}): Record<string, string> {
   const key = process.env.ONE_CLICK_API_KEY;
   return {
     "Content-Type": "application/json",
-    ...(key ? { Authorization: `Bearer ${key}` } : {}),
+    // The API documents `X-API-Key` as partner auth; `Authorization: Bearer`
+    // is the legacy JWT path and a raw partner key is not a JWT. The quote and
+    // generate endpoints tolerated the Bearer form, but `submit-intent` is
+    // strict about the auth scheme.
+    ...(key ? { "X-API-Key": key } : {}),
     ...extra,
   };
 }
@@ -421,7 +427,11 @@ async function logIntentFailure(operation: string, res: Response): Promise<void>
   } catch {
     // Not JSON; the status is enough.
   }
-  console.error(`[intents] ${operation} failed`, { status: res.status, code });
+  // The code travels in the message because the dev logger keeps the message
+  // and drops the metadata object. It is a short code, never the body.
+  console.error(
+    `[intents] ${operation} failed (HTTP ${res.status}${code ? `, ${code}` : ""})`,
+  );
 }
 
 function isIntentPayload(value: unknown): value is string | Record<string, unknown> {
@@ -579,6 +589,10 @@ const TERMINAL: Record<string, SwapStatus["state"]> = {
 export async function getStatus(
   depositAddress: string,
   depositMemo?: string | null,
+  assets?: {
+    originAssetId?: string | null;
+    destinationAssetId?: string | null;
+  },
 ): Promise<SwapStatus> {
   // A memo-bearing address (XRP, Stellar, and similar) is ambiguous without
   // its memo; the status endpoint takes it as a second query parameter.
@@ -593,23 +607,47 @@ export async function getStatus(
     status: string;
     swapDetails?: {
       amountOutFormatted?: string;
-      originChainTxHashes?: Array<{ explorerUrl?: string }>;
-      destinationChainTxHashes?: Array<{ explorerUrl?: string }>;
+      originChainTxHashes?: Array<{ hash?: string; explorerUrl?: string }>;
+      destinationChainTxHashes?: Array<{ hash?: string; explorerUrl?: string }>;
     };
   };
 
   const details = body.swapDetails ?? {};
+  const originHashes = details.originChainTxHashes ?? [];
+  const destinationHashes = details.destinationChainTxHashes ?? [];
+  // The URL is only resolved when the API left it empty, and only then is the
+  // catalogue read: the chain is what turns a hash into a link.
+  const missingUrl = [...originHashes, ...destinationHashes].some(
+    (h) => h.hash && !h.explorerUrl,
+  );
+  const [originChain, destinationChain] = missingUrl
+    ? await Promise.all([
+        chainOfAsset(assets?.originAssetId),
+        chainOfAsset(assets?.destinationAssetId),
+      ])
+    : [null, null];
 
   return {
     state: TERMINAL[body.status] ?? "pending",
     status: body.status,
     amountOut: details.amountOutFormatted,
     depositAddress,
-    explorerUrls: [
-      ...(details.originChainTxHashes ?? []),
-      ...(details.destinationChainTxHashes ?? []),
-    ]
-      .map((h) => h.explorerUrl)
-      .filter((u): u is string => !!u),
+    explorerUrls: settlementLinks([
+      { chain: originChain, hashes: originHashes },
+      { chain: destinationChain, hashes: destinationHashes },
+    ]),
   };
+}
+
+/** The catalogue's chain for an asset id; a missing catalogue is no link. */
+export async function chainOfAsset(
+  assetId?: string | null,
+): Promise<string | null> {
+  if (!assetId) return null;
+  try {
+    const assets = await getAssets();
+    return assets.find((asset) => asset.assetId === assetId)?.chain ?? null;
+  } catch {
+    return null;
+  }
 }

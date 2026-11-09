@@ -16,10 +16,21 @@ export const SUPER_LOCK_EVENT = "myntle:super-lock";
 export const SUPER_CONTINUE_EVENT = "myntle:super-continue";
 /** The unlock dialog closed without a token, and names the card that asked. */
 export const SUPER_CANCEL_EVENT = "myntle:super-cancel";
+/**
+ * The unlock dialog is gone. The read may already have finished behind it;
+ * this is when the portfolio is allowed to reveal what it fetched.
+ */
+export const SUPER_CLOSED_EVENT = "myntle:super-closed";
 
 export function notifySuperUnlock(): void {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent(SUPER_UNLOCK_EVENT));
+  }
+}
+
+export function notifySuperClosed(): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(SUPER_CLOSED_EVENT));
   }
 }
 
@@ -174,31 +185,45 @@ export function isSuperUnlocked(
   return !!s && refreshLive(s, now);
 }
 
-async function mintAccess(
-  s: StoredIntentsSession,
-): Promise<StoredIntentsSession | null> {
+/**
+ * A refresh either yields a token, proves the session is dead, or says the
+ * service could not be reached. The distinction matters: a network outage
+ * must not be rendered as "your account is locked", or the user re-signs to
+ * fix a problem that was never theirs.
+ */
+type TokenResult =
+  | { ok: true; token: string }
+  | { ok: false; reason: "locked" | "error" };
+
+async function mintAccess(s: StoredIntentsSession): Promise<TokenResult> {
   try {
     const res = await fetch(`${ONE_CLICK}/v0/auth/refresh`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ refreshToken: s.refreshToken }),
     });
-    if (!res.ok) return null;
+    // A refused refresh token is a dead session. A throttled or broken
+    // service is not, and the caller shows it as a read error instead.
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, reason: "locked" };
+    }
+    if (!res.ok) return { ok: false, reason: "error" };
     const data = (await res.json()) as {
       accessToken?: string;
       expiresIn?: number;
     };
-    if (!data.accessToken || typeof data.expiresIn !== "number") return null;
-    const next: StoredIntentsSession = {
+    if (!data.accessToken || typeof data.expiresIn !== "number") {
+      return { ok: false, reason: "error" };
+    }
+    saveIntentsSession({
       ...s,
       accessToken: data.accessToken,
       obtainedAt: Date.now(),
       expiresIn: data.expiresIn,
-    };
-    saveIntentsSession({ ...next, accessToken: data.accessToken });
-    return next;
+    });
+    return { ok: true, token: data.accessToken };
   } catch {
-    return null;
+    return { ok: false, reason: "error" };
   }
 }
 
@@ -215,8 +240,8 @@ export async function getValidAccessToken(
   if (!s) return null;
   if (accessLive(s, now) && s.accessToken) return s.accessToken;
   if (!refreshLive(s, now)) return null;
-  const next = await mintAccess(s);
-  return next ? next.accessToken : null;
+  const minted = await mintAccess(s);
+  return minted.ok ? minted.token : null;
 }
 
 export type PrivateBalances = {
@@ -229,8 +254,13 @@ export type PrivateBalances = {
 
 /**
  * Private balances for the user's own session. Direct browser→1Click;
- * the server never sees the token. Returns locked instead of throwing
- * when there is no session, so callers open the dialog.
+ * the server never sees the token.
+ *
+ * Three outcomes, not two: locked means there is no session or the service
+ * refused it, error means the service could not be reached, and success
+ * carries the ledger. A session that is refused even after a fresh token is
+ * forgotten here, so every surface agrees it is locked and offers the
+ * unlock action instead of a card that says "unlocked" over masked rows.
  */
 export async function fetchPrivateBalances(
   chain: string,
@@ -240,23 +270,62 @@ export async function fetchPrivateBalances(
   | { ok: true; balances: PrivateBalances["balances"] }
   | { ok: false; reason: "locked" | "error" }
 > {
-  const token = await getValidAccessToken(chain, address);
-  if (!token) return { ok: false, reason: "locked" };
+  const now = Date.now();
+  const stored = readStored(chain, address);
+  if (!stored || !refreshLive(stored, now)) {
+    return { ok: false, reason: "locked" };
+  }
+
+  let token = accessLive(stored, now) && stored.accessToken
+    ? stored.accessToken
+    : null;
+  if (!token) {
+    const minted = await mintAccess(stored);
+    if (!minted.ok) {
+      // A refused refresh token is proof the session is dead. Forget it so
+      // the card offers the unlock action instead of a green lie.
+      if (minted.reason === "locked") {
+        clearIntentsSession(chain, address);
+        notifySuperLock();
+      }
+      return { ok: false, reason: minted.reason };
+    }
+    token = minted.token;
+  }
+
   const query = tokenIds ? `?tokenIds=${encodeURIComponent(tokenIds)}` : "";
   const attempt = async (bearer: string) =>
     fetch(`${ONE_CLICK}/v0/account/balances${query}`, {
       headers: { authorization: `Bearer ${bearer}` },
     });
+
   try {
     let res = await attempt(token);
     if (res.status === 401) {
       // The token died between check and use. One silent refresh, one retry.
-      const s = readStored(chain, address);
-      const next = s && refreshLive(s, Date.now()) ? await mintAccess(s) : null;
-      if (!next?.accessToken) return { ok: false, reason: "locked" };
-      res = await attempt(next.accessToken);
+      const latest = readStored(chain, address) ?? stored;
+      if (!refreshLive(latest, Date.now())) {
+        clearIntentsSession(chain, address);
+        notifySuperLock();
+        return { ok: false, reason: "locked" };
+      }
+      const minted = await mintAccess(latest);
+      if (!minted.ok) {
+        if (minted.reason === "locked") {
+          clearIntentsSession(chain, address);
+          notifySuperLock();
+        }
+        return { ok: false, reason: minted.reason };
+      }
+      res = await attempt(minted.token);
     }
-    if (res.status === 401) return { ok: false, reason: "locked" };
+    if (res.status === 401) {
+      // A freshly minted token was refused too. This session is not usable;
+      // forget it so nothing keeps claiming the account is unlocked.
+      clearIntentsSession(chain, address);
+      notifySuperLock();
+      return { ok: false, reason: "locked" };
+    }
     if (!res.ok) return { ok: false, reason: "error" };
     const data = (await res.json()) as PrivateBalances;
     return { ok: true, balances: data.balances ?? [] };

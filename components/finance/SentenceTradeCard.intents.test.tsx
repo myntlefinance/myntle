@@ -71,6 +71,7 @@ vi.mock("@/components/atoms/Button", async () => {
 
 import SentenceTradeCard, {
   approveThroughAdapter,
+  explorerLabel,
   failureMessage,
   polledState,
   receivedFrom,
@@ -343,12 +344,12 @@ describe("passkey withdrawal on the sentence card", () => {
     fromSymbol: "USDC",
     fromChain: "near",
     toSymbol: "USDC",
-    toChain: "near",
+    toChain: "arb",
     amountIn: "0.5",
     amountOut: "0.4894",
     minAmountOut: "0.484506",
     recipient: DESTINATION,
-    destinationChain: "Arbitrum",
+    destinationChain: "Arbitrum One",
     fee: "0.0106",
     expiresAt: "2099-01-01T00:00:00.000Z",
     runApproval: (async () => ({
@@ -365,19 +366,49 @@ describe("passkey withdrawal on the sentence card", () => {
     expect(sentenceOf(html)).toContain("Near Account");
     expect(sentenceOf(html)).toContain("0xc8aE…3148");
     expect(html).toContain("Destination");
-    expect(html).toContain(DESTINATION);
-    expect(html).toContain("break-all");
-    expect(html).toContain("select-all");
+    // The drawer shortens the destination; the whole address stays one copy
+    // away, in the copy button and the title.
+    expect(html).toContain("0xc8aE…3148");
+    expect(html).toContain(`title="${DESTINATION}"`);
+    expect(html).not.toContain(`>${DESTINATION}<`);
     expect(html).toContain("Copy address");
     expect(html).toContain("Fee");
     expect(html).toContain("0.0106");
     expect(html).toContain("Chain");
-    expect(html).toContain("Arbitrum");
+    expect(html).toContain('title="Arbitrum"');
+    // The chain reads as Arbitrum, not the chain's full registered name.
+    expect(html).toContain(">Arbitrum<");
+    expect(html).not.toContain("Arbitrum One");
     expect(html).toContain("Minimum received");
     expect(html).toContain("0.484506");
     expect(html).toContain("Deadline");
     expect(html).toContain(">Reject<");
     expect(html).toContain(">Approve<");
+  });
+
+  it("marks each amount with its token and names the transaction it settled", () => {
+    const html = render(
+      <SentenceTradeCard
+        {...withdrawCard}
+        initialExplorerUrls={[
+          "https://arbiscan.io/tx/0x9f2c1d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d",
+        ]}
+      />,
+    );
+
+    // The token mark sits between the figure and the ticker, grouped with the
+    // ticker rather than floating midway between the two.
+    expect(html).toMatch(
+      /<span class="inline-flex items-center gap-2">0\.0106<span class="inline-flex items-center gap-1"><span[^>]*title="USDC"/,
+    );
+    expect(html).toMatch(
+      /<span class="inline-flex items-center gap-2">0\.484506<span class="inline-flex items-center gap-1"><span[^>]*title="USDC"/,
+    );
+    expect(html).toContain("Transaction");
+    expect(html).toContain("0x9f2c…1c2d");
+    // A receipt is not a call to action: the link reads in ink, not accent.
+    expect(html).not.toContain("View on explorer");
+    expect(html).not.toContain("Settlement");
   });
 
   it("never renders the quote's confidential deposit account", () => {
@@ -470,6 +501,27 @@ describe("passkey withdrawal on the sentence card", () => {
     expect(receivedFrom(undefined)).toBeNull();
   });
 
+  it("keeps the record's receipt on a reopened card", () => {
+    const html = render(
+      <SentenceTradeCard
+        {...withdrawCard}
+        state="settled"
+        initialReceived="1.9894"
+        initialExplorerUrls={[
+          "https://arbiscan.io/tx/0x9f2c1d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d",
+        ]}
+      />,
+    );
+
+    // A card rebuilt from the record shows what it already settled, with
+    // the same token grouping as the quote's own figures.
+    expect(html).toContain("Received");
+    expect(html).toMatch(
+      /<span class="inline-flex items-center gap-2">1\.9894<span class="inline-flex items-center gap-1"><span[^>]*title="USDC"/,
+    );
+    expect(html).toContain("0x9f2c…1c2d");
+  });
+
   it("names a withdrawal failure as a settlement, not a deposit", () => {
     const html = render(
       <SentenceTradeCard {...withdrawCard} state="failed" />,
@@ -480,17 +532,50 @@ describe("passkey withdrawal on the sentence card", () => {
     expect(html).not.toContain("Deposit failed");
   });
 
+  it("reads the withdrawal's progress in the record's own words", () => {
+    expect(render(<SentenceTradeCard {...withdrawCard} disabled />)).toContain(
+      "Pending Approval",
+    );
+    expect(
+      render(<SentenceTradeCard {...withdrawCard} state="processing" />),
+    ).toContain(">Processing<");
+    expect(
+      render(<SentenceTradeCard {...withdrawCard} state="submitted" />),
+    ).toContain(">Submitted<");
+    expect(
+      render(<SentenceTradeCard {...withdrawCard} state="settled" />),
+    ).toContain(">Executed<");
+    expect(
+      render(<SentenceTradeCard {...withdrawCard} state="settled" />),
+    ).not.toContain(">Approved<");
+  });
+
   it("keeps a waiting deposit waiting and a submitted withdrawal submitted", () => {
     expect(polledState("submitted", "deposit", true)).toBe("waiting");
     expect(polledState("pending", "deposit", true)).toBe("waiting");
     expect(polledState("confirming", "deposit", true)).toBe("processing");
     expect(polledState("processing", "deposit", true)).toBe("processing");
+    expect(polledState("expired", "deposit", true)).toBe("expired");
+    expect(polledState("expired", "swap", true)).toBe("expired");
+    expect(polledState("expired", "swap", false)).toBe("expired");
     expect(polledState("submitted", "withdraw", true)).toBe("submitted");
     // A submitted swap keeps processing until the record settles.
     expect(polledState("submitted", "swap", true)).toBe("processing");
     expect(polledState("pending", "swap", true)).toBe("processing");
     // The wallet path is unchanged: a non-terminal record reads as approved.
     expect(polledState("submitted", "swap", false)).toBe("submitted");
+  });
+});
+
+describe("explorerLabel", () => {
+  it("names the transaction an explorer link points at", () => {
+    expect(
+      explorerLabel(
+        "https://arbiscan.io/tx/0x9f2c1d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d",
+      ),
+    ).toBe("0x9f2c…1c2d");
+    expect(explorerLabel("https://explorer.example/tx/0x1234")).toBe("0x1234");
+    expect(explorerLabel("not a url")).toBe("not a url");
   });
 });
 

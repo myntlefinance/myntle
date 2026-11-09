@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { IconCheck, IconCopy, IconExternalLink, IconUserCircle, IconWallet } from "@tabler/icons-react";
+import { SkeletonBox } from "skullet/react";
 import { Button } from "@/components/atoms/Button";
+import { MessageActionButton } from "@/components/app/MessageActions";
 import { StatusPill } from "@/components/atoms/StatusPill";
 import { SpinnerRing } from "@/components/primitives/TaskRows";
 import { TokenChip } from "@/components/finance/TokenChip";
@@ -11,18 +13,27 @@ import { TokenAvatar } from "@/components/finance/TokenAvatar";
 import { NetworkIcon } from "@/components/finance/NetworkIcon";
 import { PopupRow, TokenPopup } from "@/components/finance/TokenPopup";
 import { DepositQr } from "@/components/finance/DepositQr";
+import { FundWalletDialog } from "@/components/finance/FundWalletDialog";
 import { useWallet } from "@/lib/wallet/registry";
 import { evmChainForSlug } from "@/lib/wallet/evm-chains";
 import { toHex } from "@/lib/wallet/types";
+import type {
+  FundingConnection,
+  FundingDeposit,
+  FundingSendInput,
+  FundingSendResult,
+} from "@/lib/wallet/funding";
 import { addressIdentity, shortAddr } from "@/lib/trade/identity";
 import {
-  canTransferDeposit,
+  canFundDeposit,
   depositNetworkShortLabel,
+  depositWalletKind,
   type DepositMetadata,
 } from "@/lib/intents/deposit-metadata";
 import {
   depositCardStateForRecord,
   depositExpired,
+  depositFundingDeadline,
   depositPhaseForCardState,
   depositStatusMessage,
   needsFreshDepositAddress,
@@ -86,10 +97,10 @@ const TONE: Record<SentenceCardState, "neutral" | "accent" | "green" | "red" | "
 };
 
 const LABEL: Record<SentenceCardState, string> = {
-  awaiting: "Pending",
+  awaiting: "Pending Approval",
   signing: "Signing",
-  submitting: "Approved",
-  submitted: "Approved",
+  submitting: "Submitting",
+  submitted: "Submitted",
   waiting: "Waiting",
   processing: "Processing",
   settled: "Executed",
@@ -133,6 +144,7 @@ export default function SentenceTradeCard({
   transactionId,
   approvalId,
   initialExplorerUrls,
+  initialReceived,
   swapInput,
   conversationId,
   runApproval,
@@ -141,6 +153,8 @@ export default function SentenceTradeCard({
   destinationChain,
   fee,
   disabled = false,
+  decisionPending = false,
+  active = false,
   onApprove,
   onDeny,
   onRecord,
@@ -182,6 +196,8 @@ export default function SentenceTradeCard({
   approvalId?: string;
   /** Explorer links already known from the database; the poll reconfirms. */
   initialExplorerUrls?: string[];
+  /** The record's settled output, so a reopened card keeps its receipt. */
+  initialReceived?: string;
   swapInput?: {
     fromAssetId: string;
     toAssetId: string;
@@ -213,8 +229,24 @@ export default function SentenceTradeCard({
   /** Withdrawal fee in the origin token, shown only when the quote priced one. */
   fee?: string;
   disabled?: boolean;
+  /**
+   * The record has not answered for this card yet. No decision control is
+   * drawn: a button here would offer to answer a proposal that may already
+   * be answered, and a status pill would name a state nobody checked. The
+   * footer holds a skeleton until the record lands.
+   */
+  decisionPending?: boolean;
+  /**
+   * True only for the last turn the user just acted on. Only an active card
+   * may watch its record, and only for a bounded window.
+   */
+  active?: boolean;
   onApprove?: (tx?: { transactionId: string; depositAddress: string }) => void;
-  onDeny?: () => void;
+  /**
+   * The host records the refusal. It may be a server write, so the card waits
+   * for it and keeps the decision available if it did not land.
+   */
+  onDeny?: () => void | Promise<void>;
   /**
    * Records a freshly minted address without answering the approval again.
    * A new address is a reset of a decided deposit, not a second decision.
@@ -233,14 +265,12 @@ export default function SentenceTradeCard({
   const seededTxId = transactionId ?? rememberedTx?.transactionId;
   const seededDeposit = depositAddress ?? rememberedTx?.depositAddress;
   // A reload paints the remembered terminal outcome at once instead of
-  // flashing Approved until the first status poll lands. The poll below
-  // still reconfirms against the server record.
+  // flashing Approved while the settlement snapshot lands. The active watch
+  // reconfirms while it runs; historical cards keep what the record said.
   const [txState, setTxState] = useState<SentenceCardState>(() => {
-    // A deposit's record is the authority, and its mount refresh is the one
-    // way a record can move back from a timeout. A remembered terminal
-    // outcome could hide that restoration, so a deposit seeds from the
-    // snapshot and lets the record decide. Every other card keeps the
-    // remembered outcome for an instant reload paint.
+    // A deposit seeds from the snapshot and lets the record decide, so a
+    // remembered terminal outcome cannot hide a restoration. Every other
+    // card keeps the remembered outcome for an instant reload paint.
     if (approvalId && !(intents && action === "deposit")) {
       const remembered = getApprovalOutcome(approvalId);
       if (remembered) return remembered;
@@ -262,36 +292,17 @@ export default function SentenceTradeCard({
   // The memo may arrive on either channel: the mint result carries it, and a
   // reloaded record carries it inside the metadata.
   const shownMemo = memo ?? meta?.memo ?? null;
-  // A reclaimed deposit asks the server once for the authoritative state
-  // before its own clock is allowed to expire the address. While that check
-  // is running, or after it failed, the last known state stands.
-  const [statusCheck, setStatusCheck] = useState<
-    "idle" | "checking" | "ok" | "unavailable"
-  >(() =>
-    intents &&
-    action === "deposit" &&
-    seededDeposit &&
-    seededTxId &&
-    !isTerminalCardState(state) &&
-    // A deadline that has already passed is not waiting for a check to
-    // decide it. The refresh still runs and may reveal a detected deposit,
-    // but the address is allowed to read Expired in the meantime.
-    !depositExpired(expiresAt ?? depositMeta?.expiresAt, Date.now())
-      ? "checking"
-      : "idle",
-  );
   const [feeLabel, setFeeLabel] = useState<string | undefined>(fee);
   const [boundRecipient, setBoundRecipient] = useState<string | undefined>();
-  const [received, setReceived] = useState<string | null>(null);
+  const [received, setReceived] = useState<string | null>(
+    initialReceived ?? null,
+  );
   const [explorerUrls, setExplorerUrls] = useState<string[]>(
     initialExplorerUrls ?? [],
   );
-  // A deposit address is the whole point of the drawer, so a reclaimed card
-  // opens it instead of hiding the QR behind a Details click. A card with no
-  // address never opens an empty drawer.
-  const [detailsOpen, setDetailsOpen] = useState(
-    () => intents && action === "deposit" && !!seededDeposit,
-  );
+  // The drawer opens once when this card mints an address. A revisit paints
+  // it collapsed: the user has seen it, and the Details button is the way back.
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(() =>
     // A terminal deposit's own sentence lives in the status block above the
     // faded panel. The red drawer is for an action that failed, not for a
@@ -305,11 +316,11 @@ export default function SentenceTradeCard({
   const approveRef = useRef(false);
   const mintRef = useRef(false);
   const transferRef = useRef(false);
+  const denyRef = useRef(false);
   const [minting, setMinting] = useState(false);
   const [transferring, setTransferring] = useState(false);
-  // The mount refresh key. One authoritative check per address per card, not
-  // an interval; a manual retry is the only way past a failed check.
-  const refreshedKey = useRef<string | null>(null);
+  const [fundOpen, setFundOpen] = useState(false);
+  const [denying, setDenying] = useState(false);
   // Quoted figures are local so a moved price can refresh the card in
   // place; props win whenever the turn produces a new quote.
   const [figures, setFigures] = useState({
@@ -332,6 +343,7 @@ export default function SentenceTradeCard({
       current === "refunded" ||
       current === "incomplete" ||
       current === "expired" ||
+      current === "denied" ||
       current === "failed"
         ? current
         : state,
@@ -355,12 +367,6 @@ export default function SentenceTradeCard({
       );
     }
   }, [depositMeta]);
-  // A reloaded deposit opens its panel once the record's address arrives.
-  useEffect(() => {
-    if (intents && action === "deposit" && (depositAddress || deposit)) {
-      setDetailsOpen(true);
-    }
-  }, [intents, action, depositAddress, deposit]);
   useEffect(() => setFeeLabel(fee), [fee]);
   useEffect(() => {
     setFigures({
@@ -381,8 +387,15 @@ export default function SentenceTradeCard({
 
   // An untouched card expires on its own clock so every render — live,
   // revisited, or reloaded — agrees. One precisely-timed flip, no ticker.
+  // A deposit closes fifteen minutes before its quote deadline, so a slow
+  // chain has time to confirm before 1Click stops accepting the address.
   const [clock, setClock] = useState(() => Date.now());
-  const deadline = figures.expiresAt ? Date.parse(figures.expiresAt) : NaN;
+  const deadline =
+    intents && action === "deposit"
+      ? depositFundingDeadline(figures.expiresAt)
+      : figures.expiresAt
+        ? Date.parse(figures.expiresAt)
+        : NaN;
   useEffect(() => {
     if (intents) {
       // The quote's own deadline governs the intents path, and a minted
@@ -401,17 +414,12 @@ export default function SentenceTradeCard({
     const timer = setTimeout(() => setClock(Date.now()), remaining + 250);
     return () => clearTimeout(timer);
   }, [intents, txState, requestedAt, deadline]);
-  // A status check that is still running, or that failed, holds the card at
-  // its last known state. A failed check is not evidence the address expired.
-  const expiryHeld =
-    intents &&
-    action === "deposit" &&
-    (statusCheck === "checking" || statusCheck === "unavailable");
+  // Past the deadline the card reads Expired: an expired address is never
+  // labelled Waiting.
   const expired = intents
     ? (txState === "awaiting" || txState === "waiting") &&
       Number.isFinite(deadline) &&
-      deadline <= clock &&
-      !expiryHeld
+      deadline <= clock
     : txState === "awaiting" &&
       !!requestedAt &&
       !isApprovalWindowValid(requestedAt, clock);
@@ -458,10 +466,27 @@ export default function SentenceTradeCard({
   const depositTerminal = depositPhase
     ? needsFreshDepositAddress(depositPhase)
     : false;
+  const transferReady = canFundDeposit(meta);
+  const fundingKind = depositWalletKind(meta);
+  // The CTA is a dialog opener, not a send action. It stays put while the
+  // record rechecks in the background; only Send requires a verified record.
+  const showTransfer =
+    transferReady &&
+    !depositFaded &&
+    viewState !== "signing" &&
+    viewState !== "submitting";
+  const depositReady =
+    transferReady &&
+    !expired &&
+    viewState === "waiting" &&
+    !isTerminalCardState(txState);
+  // The dialog is only valid while the card still accepts a deposit. A
+  // cutoff, settlement, failure, or status recheck closes it rather than
+  // leaving a live Send control over a terminal record.
+  useEffect(() => {
+    if (!showTransfer) setFundOpen(false);
+  }, [showTransfer]);
 
-  // One authoritative check on mount. The server holds the partner key and
-  // makes exactly one 1Click call; the card makes exactly one request, and
-  // only when an address exists and the record is not terminal.
   const applyExplorerUrls = useCallback((urls: unknown) => {
     if (!Array.isArray(urls)) return;
     setExplorerUrls(
@@ -469,72 +494,115 @@ export default function SentenceTradeCard({
     );
   }, []);
 
-  const checkDepositStatus = useCallback(async () => {
-    if (!txId) return;
-    setStatusCheck("checking");
-    try {
-      const res = await fetch(
-        `/api/tx/${encodeURIComponent(txId)}?refresh=1`,
-        { cache: "no-store" },
-      );
-      if (!res.ok) {
-        setStatusCheck("unavailable");
-        return;
-      }
-      const body = (await res.json()) as {
-        state?: string;
-        statusCheck?: string;
-        deposit?: DepositMetadata | null;
-        outcome?: { explorerUrls?: unknown };
-      };
-      if (body.statusCheck === "unavailable") {
-        setStatusCheck("unavailable");
-        return;
-      }
-      setStatusCheck("ok");
-      if (body.deposit) setMeta(body.deposit);
-      if (body.state) {
-        const next = depositCardStateForRecord(
-          body.state,
-          body.deposit?.expiresAt ?? figures.expiresAt,
-          Date.now(),
+  // The active watch: only the card the user just acted on reads its record,
+  // and only for two minutes. Historical cards never fetch on mount; the
+  // host's batched approvals read is the visit read.
+  const watchStartRef = useRef<number | null>(null);
+  const watchKeyRef = useRef<string | null>(null);
+  const locallyWatchedRef = useRef(false);
+  const mountedRef = useRef(false);
+  const prevLiveRef = useRef(false);
+
+  // The settlements request is separate from the message, so a card can
+  // mount before its record's links arrive. Adopt them when they do instead
+  // of keeping the empty seed it was born with.
+  useEffect(() => {
+    if (!initialExplorerUrls || initialExplorerUrls.length === 0) return;
+    setExplorerUrls(initialExplorerUrls.slice(0, 2));
+  }, [initialExplorerUrls]);
+
+  // The settled output travels with the same late snapshot. It is the
+  // record's own figure, never the quote's expected one.
+  useEffect(() => {
+    if (initialReceived) setReceived(initialReceived);
+  }, [initialReceived]);
+
+  // A settled card whose record was written before links were built gets one
+  // authoritative read. The route repairs the record and returns the link;
+  // the key makes it once per card, never a poll.
+  const linksRefreshedKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!txId || txState !== "settled" || explorerUrls.length > 0) return;
+    const key = `${txId}:links`;
+    if (linksRefreshedKey.current === key) return;
+    linksRefreshedKey.current = key;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/tx/${encodeURIComponent(txId)}?refresh=1`,
+          { cache: "no-store" },
         );
-        setTxState(next);
-        if (next !== "failed" && next !== "incomplete") setSubmitError(null);
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          outcome?: { explorerUrls?: unknown; amountOut?: unknown };
+        };
+        applyExplorerUrls(body.outcome?.explorerUrls);
+        if (typeof body.outcome?.amountOut === "string") {
+          setReceived(body.outcome.amountOut);
+        }
+      } catch {
+        // The card keeps what it has; a reload makes one more attempt.
       }
-      applyExplorerUrls(body.outcome?.explorerUrls);
-    } catch {
-      // Keep the last known state; the retry sentence is the only claim.
-      setStatusCheck("unavailable");
+    })();
+  }, [txId, txState, explorerUrls.length, applyExplorerUrls]);
+
+  // The one bounded watch. Only the active card reads its record, at most
+  // once per beat for two minutes. The workflow owns 1Click polling; this
+  // read only picks up what it writes, and it never writes the record.
+  // A single recursive timer drives the loop: the next beat is scheduled
+  // only from `tick`'s finally, so overlapping fetches cannot pile up.
+  useEffect(() => {
+    const live = isLiveCardState(txState, { intents, action });
+    const terminal = isTerminalCardState(txState);
+    if (!active || !txId || !live || terminal || expired) {
+      prevLiveRef.current = live;
+      mountedRef.current = true;
+      return;
     }
-  }, [txId, figures.expiresAt, applyExplorerUrls]);
-
-  useEffect(() => {
-    if (!intents || action !== "deposit") return;
-    const key = depositRefreshKey({
-      alreadyRefreshed: refreshedKey.current,
-      txId,
-      address: deposit,
-      state: txState,
-    });
-    if (!key) return;
-    refreshedKey.current = key;
-    void checkDepositStatus();
-  }, [intents, action, txId, deposit, txState, checkDepositStatus]);
-
-  // After submission the card polls its own record, so a refresh keeps
-  // showing the settlement rather than a stale approval. A deposit's
-  // non-terminal states are read through the deposit table, which keeps a
-  // timed-out workflow waiting while the address is still inside its quote.
-  useEffect(() => {
-    if (!txId) return;
-    const polling =
-      txState === "submitted" ||
-      txState === "submitting" ||
-      txState === "processing";
-    if (!polling) return;
+    const key = txId;
+    let immediate = false;
+    if (watchStartRef.current == null) {
+      const transitioned =
+        mountedRef.current && !prevLiveRef.current && live;
+      const recent = isRecentCardBirth(requestedAt, Date.now());
+      if (!(locallyWatchedRef.current || recent || transitioned)) {
+        prevLiveRef.current = live;
+        mountedRef.current = true;
+        return;
+      }
+      watchStartRef.current = Date.now();
+      watchKeyRef.current = key;
+      immediate = true;
+    } else if (watchKeyRef.current !== key) {
+      // A fresh record on this card restarts the window; resuming the same
+      // record keeps the original start so the cap never slides.
+      watchStartRef.current = Date.now();
+      watchKeyRef.current = key;
+      immediate = true;
+    }
+    prevLiveRef.current = live;
+    mountedRef.current = true;
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let inFlight = false;
+    const clearTimer = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+    const insideWindow = () => {
+      const startedAt = watchStartRef.current;
+      return startedAt != null && Date.now() - startedAt < CARD_WATCH_MS;
+    };
     const tick = async () => {
+      timer = null;
+      if (cancelled || inFlight) return;
+      // A hidden tab holds the loop without fetching; becoming visible
+      // fires the one restart tick below.
+      if (typeof document !== "undefined" && document.hidden) return;
+      if (!insideWindow()) return;
+      inFlight = true;
       try {
         const res = await fetch(`/api/tx/${encodeURIComponent(txId)}`);
         if (!res.ok) return;
@@ -545,7 +613,17 @@ export default function SentenceTradeCard({
         };
         if (cancelled || !body.state) return;
         if (intents && action === "deposit") {
-          if (body.deposit) setMeta(body.deposit);
+          if (body.deposit) {
+            setMeta(body.deposit);
+            const nextExpiry = body.deposit.expiresAt;
+            if (nextExpiry) {
+              setFigures((current) =>
+                current.expiresAt === nextExpiry
+                  ? current
+                  : { ...current, expiresAt: nextExpiry },
+              );
+            }
+          }
           const next = depositCardStateForRecord(
             body.state,
             body.deposit?.expiresAt ?? figures.expiresAt,
@@ -556,7 +634,8 @@ export default function SentenceTradeCard({
             next === "settled" ||
             next === "refunded" ||
             next === "failed" ||
-            next === "incomplete"
+            next === "incomplete" ||
+            next === "expired"
           ) {
             if (approvalId) rememberApprovalOutcome(approvalId, next);
           }
@@ -577,6 +656,9 @@ export default function SentenceTradeCard({
           if (approvalId) rememberApprovalOutcome(approvalId, "failed");
           setTxState("failed");
           setSubmitError(failureMessage(body.state, action, intents));
+        } else if (body.state === "expired") {
+          if (approvalId) rememberApprovalOutcome(approvalId, "expired");
+          setTxState("expired");
         } else if (body.state === "incomplete_deposit") {
           // Terminal without settlement: the deposit arrived short of the
           // quoted amount. Stop the spinner instead of polling forever.
@@ -594,15 +676,51 @@ export default function SentenceTradeCard({
         applyExplorerUrls(body.outcome?.explorerUrls);
       } catch {
         // Next tick retries.
+      } finally {
+        inFlight = false;
+        if (cancelled || !insideWindow()) return;
+        clearTimer();
+        timer = setTimeout(tick, CARD_WATCH_BEAT_MS);
       }
     };
-    const timer = setInterval(tick, 4000);
-    void tick();
+    const onVisibility = () => {
+      if (typeof document === "undefined") return;
+      if (document.hidden) {
+        clearTimer();
+        return;
+      }
+      if (inFlight || !insideWindow()) return;
+      clearTimer();
+      void tick();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    if (immediate) {
+      void tick();
+    } else {
+      clearTimer();
+      timer = setTimeout(tick, CARD_WATCH_BEAT_MS);
+    }
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      clearTimer();
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
     };
-  }, [txId, txState, approvalId, action, intents, figures.expiresAt, applyExplorerUrls]);
+  }, [
+    active,
+    txId,
+    txState,
+    approvalId,
+    action,
+    intents,
+    figures.expiresAt,
+    expired,
+    requestedAt,
+    applyExplorerUrls,
+  ]);
 
   const handleApprove = async () => {
     // The injected path first. A passkey card has no trade message to sign
@@ -625,8 +743,9 @@ export default function SentenceTradeCard({
           setFigures((current) => ({ ...current, ...patch })),
         setDestination: setBoundRecipient,
         openDetails: () => setDetailsOpen(true),
-        onMinted: ({ transactionId, depositAddress }) => {
-          refreshedKey.current = `${transactionId}:${depositAddress}`;
+        onMinted: () => {
+          locallyWatchedRef.current = true;
+          watchStartRef.current = Date.now();
         },
         onApprove,
       });
@@ -786,6 +905,8 @@ export default function SentenceTradeCard({
       }
 
       setTxState("submitted");
+      locallyWatchedRef.current = true;
+      watchStartRef.current = Date.now();
       onApprove?.({
         transactionId: body.transactionId,
         depositAddress: body.depositAddress,
@@ -826,54 +947,116 @@ export default function SentenceTradeCard({
     };
   }
 
-  const handleDeny = () => {
-    setTxState("denied");
-    onDeny?.();
+  /**
+   * Refuses the proposal.
+   *
+   * The refusal is a server write, so the card does not claim "Rejected" until
+   * the record says so. A failed write leaves the card exactly as it was —
+   * still awaiting, with the server's own sentence — because a refusal that
+   * only exists in this tab is the bug this replaced.
+   */
+  const handleDeny = async () => {
+    if (denyRef.current) return;
+    denyRef.current = true;
+    setDenying(true);
+    setSubmitError(null);
+    try {
+      await onDeny?.();
+      setTxState("denied");
+    } catch {
+      setSubmitError("The rejection could not be saved. Nothing was decided.");
+      setTxState("awaiting");
+    } finally {
+      denyRef.current = false;
+      setDenying(false);
+    }
   };
 
   /**
-   * Funds the minted address from the connected wallet.
+   * Sends the deposit from the wallet already connected to the app.
    *
-   * The transfer is the same one the card has always offered a wallet: the
-   * exact raw amount, the quote's token, and the quote's chain, so
-   * `sendDeposit` can switch networks before it sends. The hash is registered
-   * so 1Click notices sooner; the record still decides the outcome.
+   * This is the old direct path, kept for the connected card in the funding
+   * dialog. The dialog checks the same wallet first; only an explicit Send
+   * reaches this function. Registration and the processing transition belong
+   * to the card below so a dialog that closes cannot orphan them.
    */
-  const handleTransfer = async () => {
-    if (!deposit || !txId || !meta || transferRef.current) return;
-    if (!canTransferDeposit(meta, account?.kind ?? null)) {
-      return;
+  const handleConnectedWalletTransfer = async (
+    input: FundingSendInput,
+  ): Promise<FundingSendResult> => {
+    if (!deposit || !meta || !canFundDeposit(meta)) {
+      throw new Error("The deposit details are missing.");
+    }
+    return sendDeposit({
+      depositAddress: deposit,
+      amount: input.amountRaw,
+      tokenAddress: input.tokenContract ?? undefined,
+      tokenMint: input.tokenContract ?? undefined,
+      tokenContract: input.tokenContract ?? undefined,
+      chainId: input.chainId ?? undefined,
+      chainName: meta.chainName ?? undefined,
+    });
+  };
+
+  /**
+   * Funds the minted address from whichever wallet the dialog selected.
+   *
+   * The card, not the dialog, owns this continuation: it sends through the
+   * selected funding connection, registers the hash with retries, and moves
+   * to processing. Closing the dialog cannot stop an in-flight send.
+   */
+  const handleFundedByWallet = async (connection: FundingConnection) => {
+    if (
+      !deposit ||
+      !txId ||
+      !meta ||
+      !canFundDeposit(meta) ||
+      transferRef.current ||
+      expired ||
+      depositExpired(figures.expiresAt, Date.now()) ||
+      viewState !== "waiting" ||
+      isTerminalCardState(txState)
+    ) {
+      throw new Error("The deposit is not ready to send.");
     }
     transferRef.current = true;
     setTransferring(true);
     setSubmitError(null);
     try {
-      const { txHash, senderAccount } = await sendDeposit({
-        depositAddress: deposit,
-        amount: meta.amountInRaw,
-        tokenAddress: meta.tokenContract,
-        tokenMint: meta.tokenContract,
-        tokenContract: meta.tokenContract,
-        chainId: meta.chainId,
-        chainName: meta.chainName,
-      });
-      await registerDepositTx({
+      const { registered } = await sendAndRegisterDeposit({
+        connection,
+        deposit: {
+          address: deposit,
+          amountRaw: meta.amountInRaw ?? "",
+          tokenContract: meta.tokenContract ?? null,
+          chainId: meta.chainId ?? null,
+          chainSlug: meta.chainSlug ?? null,
+          chainName: meta.chainName ?? null,
+          decimals: meta.decimals ?? 0,
+          symbol: meta.symbol ?? "",
+        },
         transactionId: txId,
-        txHash,
-        senderAccount,
         memo: shownMemo,
       });
-      setTxState("processing");
-    } catch (err) {
-      if (err instanceof Error && err.message === "chain-switch-rejected") {
+      setTxState((current) =>
+        isTerminalCardState(current) ||
+        depositExpired(figures.expiresAt, Date.now())
+          ? current
+          : "processing",
+      );
+      locallyWatchedRef.current = true;
+      watchStartRef.current = Date.now();
+      if (!registered) {
+        // The transfer is already broadcast. The record still finds it by
+        // address, so this is a warning rather than a failed deposit.
         setSubmitError(
-          `Switch to the ${meta.chainName ?? "required"} network in your wallet, then try again.`,
+          "The transfer was sent, but its hash was not recorded yet. The deposit will still be detected.",
         );
-      } else if (err instanceof Error && err.message === "unsupported-network") {
-        setSubmitError("Deposits from this network aren't supported yet.");
-      } else {
-        setSubmitError("The deposit was rejected. Nothing was moved.");
       }
+    } catch (err) {
+      const message = transferFailureMessage(err, meta);
+      setSubmitError(message);
+      // The dialog stays open and shows the same sentence, with Try again.
+      throw new Error(message);
     } finally {
       transferRef.current = false;
       setTransferring(false);
@@ -910,13 +1093,11 @@ export default function SentenceTradeCard({
       else setMeta(null);
       setExplorerUrls([]);
       setReceived(null);
-      setStatusCheck("idle");
       setClock(Date.now());
       setDetailsOpen(true);
       setTxState("waiting");
-      // A freshly minted address has no revisit check due; the next mount
-      // will make the one authoritative request.
-      refreshedKey.current = `${result.transactionId}:${result.depositAddress}`;
+      locallyWatchedRef.current = true;
+      watchStartRef.current = Date.now();
       // The decision is already answered; only the record changes.
       onRecord?.({
         transactionId: result.transactionId,
@@ -937,6 +1118,10 @@ export default function SentenceTradeCard({
     txState === "submitted" ||
     txState === "processing";
   const awaiting = viewState === "awaiting";
+  // An expired or terminal card names its state at once. The skeleton only
+  // covers a card that is still actionable but whose record has not landed.
+  const pendingDecision =
+    decisionPending && !expired && !isTerminalCardState(txState);
 
   const rate = rateOf(amountIn, figures.amountOut);
   const senderAddress = sender === null ? undefined : account?.address;
@@ -1217,7 +1402,6 @@ export default function SentenceTradeCard({
       ? `${explorerBase.replace(/\/$/, "")}/token/${contract}`
       : null;
   const tokenSymbol = fromSymbol || meta?.symbol || "";
-  const transferReady = canTransferDeposit(meta, account?.kind ?? null);
   // A deposit has nothing to draw until the server issues its address, so
   // the Details control stays disabled instead of opening an empty drawer.
   const detailsEnabled = !(intents && action === "deposit") || !!deposit;
@@ -1242,11 +1426,10 @@ export default function SentenceTradeCard({
         action === "deposit" &&
         ((!deposit && viewState === "awaiting") ||
           depositMessage ||
-          (deposit && statusCheck === "unavailable") ||
           depositTerminal ||
           explorerUrls.length > 0) ? (
           <div className="pt-1.5">
-            {!deposit && viewState === "awaiting" ? (
+            {!deposit && viewState === "awaiting" && !decisionPending ? (
               <p className="text-xs text-ink-3">
                 Click Start to begin the deposit process.
               </p>
@@ -1254,31 +1437,7 @@ export default function SentenceTradeCard({
             {depositMessage ? (
               <p className="text-xs text-ink-2">{depositMessage}</p>
             ) : null}
-            {deposit &&
-            viewState === "waiting" &&
-            statusCheck === "ok" ? (
-              <p className="pt-1 text-xs text-ink-3">
-                <button
-                  type="button"
-                  onClick={() => void checkDepositStatus()}
-                  className="text-accent-ink hover:underline"
-                >
-                  Check status
-                </button>
-              </p>
-            ) : null}
-            {deposit && statusCheck === "unavailable" ? (
-              <p className="pt-1 text-xs text-ink-3">
-                The deposit status could not be checked.{" "}
-                <button
-                  type="button"
-                  onClick={() => void checkDepositStatus()}
-                  className="text-accent-ink hover:underline"
-                >
-                  Check again
-                </button>
-              </p>
-            ) : null}
+
             {depositTerminal ? (
               <div className="pt-2">
                 <Button
@@ -1323,34 +1482,6 @@ export default function SentenceTradeCard({
         </Popup>
       ) : null}
 
-      {/* error drawer — same expanding section as the primitive */}
-      <div
-        className="grid transition-[grid-template-rows,opacity] duration-300"
-        style={{
-          gridTemplateRows: submitError ? "1fr" : "0fr",
-          opacity: submitError ? 1 : 0,
-          transitionTimingFunction: "cubic-bezier(0.16, 1, 0.3, 1)",
-        }}
-      >
-        <div className="overflow-hidden">
-          <div
-            className="primitive-card-pad"
-            style={{ paddingTop: 0, paddingBottom: 6 }}
-          >
-            {submitError ? (
-              <p
-                key={submitError}
-                role="alert"
-                className="text-xs text-red"
-                style={{ animation: "fade-in 180ms ease-out both" }}
-              >
-                {submitError}
-              </p>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
       {/* details drawer — the primitive's expanding section */}
       <div
         className="grid transition-[grid-template-rows,opacity] duration-400"
@@ -1380,104 +1511,126 @@ export default function SentenceTradeCard({
                     <div className="pb-2 pt-1">
                       <DepositQr value={qrValue} />
                     </div>
-                    <div className="flex flex-col items-center gap-2 pb-2">
-                      <p className="max-w-full break-all select-all text-center text-xs leading-relaxed text-ink">
+                    <div className="flex items-center justify-center gap-0.5 pb-2">
+                      <p className="min-w-0 max-w-full break-all select-all text-center text-xs leading-relaxed text-ink">
                         {deposit}
                       </p>
                       <CopyAddressButton value={deposit} />
                     </div>
-                    <DetailRow label="Token">
-                      <span className="inline-flex items-center gap-1.5">
-                        <TokenAvatar symbol={tokenSymbol} size={14} />
+                    <div
+                      className="grid transition-[grid-template-rows,opacity] duration-300"
+                      data-wallet-cta={showTransfer ? "open" : "closed"}
+                      aria-hidden={showTransfer ? undefined : true}
+                      inert={showTransfer ? undefined : true}
+                      style={{
+                        gridTemplateRows: showTransfer ? "1fr" : "0fr",
+                        opacity: showTransfer ? 1 : 0,
+                        transitionTimingFunction:
+                          "cubic-bezier(0.16, 1, 0.3, 1)",
+                      }}
+                    >
+                      <div className="overflow-hidden">
+                        {/* pt-0.5 keeps the button's 1px ring shadow out of the
+                            overflow clip at the top of the collapsed row */}
+                        <div className="flex justify-center pb-2 pt-0.5">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => setFundOpen(true)}
+                            disabled={transferring}
+                          >
+                            {transferring ? (
+                              <>
+                                <SpinnerRing active size={14} /> Fund from wallet
+                              </>
+                            ) : (
+                              <>
+                                <IconWallet
+                                  size={14}
+                                  stroke={1.8}
+                                  className="shrink-0"
+                                />
+                                Fund from wallet
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-baseline gap-x-3">
+                      <DetailRow
+                        label="Token"
+                        icon={<TokenAvatar symbol={tokenSymbol} size={14} />}
+                      >
                         {tokenSymbol}
-                      </span>
-                    </DetailRow>
-                    {contract ? (
-                      <DetailRow label="Contract address">
-                        {contractUrl ? (
-                          <a
-                            href={contractUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            title={contract}
-                            className="inline-flex min-w-0 items-center justify-end gap-1 text-ink hover:underline"
-                          >
-                            <span className="truncate">{shortAddr(contract)}</span>
-                            <IconExternalLink
-                              size={12}
-                              stroke={1.8}
-                              className="shrink-0"
-                            />
-                          </a>
-                        ) : (
-                          <span
-                            className="min-w-0 truncate"
-                            title={contract}
-                          >
-                            {shortAddr(contract)}
-                          </span>
-                        )}
                       </DetailRow>
-                    ) : null}
-                    {networkLabel ? (
-                      <DetailRow label="Network">
-                        <span className="inline-flex items-center gap-1.5">
-                          <NetworkIcon
-                            network={meta?.chainSlug ?? fromChain ?? "near"}
-                            size={14}
-                          />
-                          {networkLabel}
-                        </span>
-                      </DetailRow>
-                    ) : null}
-                    {shownMemo ? (
-                      <DetailRow label="Memo">
-                        <span className="break-all">{shownMemo}</span>
-                      </DetailRow>
-                    ) : null}
-                    {figures.expiresAt ? (
-                      <DetailRow label="Valid until">
-                        {new Date(figures.expiresAt).toLocaleString()}
-                      </DetailRow>
-                    ) : null}
-                    {transferReady &&
-                    !depositFaded &&
-                    viewState !== "signing" &&
-                    viewState !== "submitting" ? (
-                      <div className="flex justify-end pt-2">
-                        <Button
-                          variant="accent"
-                          size="sm"
-                          onClick={handleTransfer}
-                          disabled={transferring}
-                        >
-                          {transferring ? (
-                            <>
-                              <SpinnerRing active size={14} /> Use Wallet
-                            </>
-                          ) : (
-                            <>
-                              <IconWallet
-                                size={14}
+                      {contract ? (
+                        <DetailRow label="Contract address">
+                          {contractUrl ? (
+                            <a
+                              href={contractUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={contract}
+                              className="inline-flex min-w-0 items-center gap-1 text-ink hover:underline"
+                            >
+                              <span className="truncate">
+                                {shortAddr(contract)}
+                              </span>
+                              <IconExternalLink
+                                size={12}
                                 stroke={1.8}
                                 className="shrink-0"
                               />
-                              Use Wallet
-                            </>
+                            </a>
+                          ) : (
+                            <span
+                              className="min-w-0 truncate"
+                              title={contract}
+                            >
+                              {shortAddr(contract)}
+                            </span>
                           )}
-                        </Button>
-                      </div>
-                    ) : null}
+                        </DetailRow>
+                      ) : null}
+                      {networkLabel ? (
+                        <DetailRow
+                          label="Network"
+                          icon={
+                            <NetworkIcon
+                              network={meta?.chainSlug ?? fromChain ?? "near"}
+                              size={14}
+                            />
+                          }
+                        >
+                          {networkLabel}
+                        </DetailRow>
+                      ) : null}
+                      {shownMemo ? (
+                        <DetailRow label="Memo">
+                          <span className="break-all">{shownMemo}</span>
+                        </DetailRow>
+                      ) : null}
+                      {figures.expiresAt ? (
+                        <DetailRow label="Valid until">
+                          {new Date(
+                            intents && action === "deposit"
+                              ? deadline
+                              : figures.expiresAt,
+                          ).toLocaleString()}
+                        </DetailRow>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
               </>
             ) : intents && action === "withdraw" ? (
-              <>
+              <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-baseline gap-x-3">
                 {shownRecipient ? (
                   <DetailRow label="Destination">
-                    <span className="inline-flex min-w-0 items-start justify-end">
-                      <span className="break-all select-all text-left">
-                        {shownRecipient}
+                    <span className="inline-flex min-w-0 items-center gap-1">
+                      <span className="truncate" title={shownRecipient}>
+                        {shortAddr(shownRecipient)}
                       </span>
                       <CopyButton value={shownRecipient} />
                     </span>
@@ -1485,15 +1638,28 @@ export default function SentenceTradeCard({
                 ) : null}
                 {feeLabel ? (
                   <DetailRow label="Fee">
-                    {feeLabel} {fromSymbol}
+                    <TokenAmount amount={feeLabel} symbol={fromSymbol} />
                   </DetailRow>
                 ) : null}
                 {destinationChain ? (
-                  <DetailRow label="Chain">{destinationChain}</DetailRow>
+                  <DetailRow
+                    label="Chain"
+                    icon={
+                      <NetworkIcon
+                        network={toChain ?? destinationChain}
+                        size={14}
+                      />
+                    }
+                  >
+                    {shortChainLabel(destinationChain)}
+                  </DetailRow>
                 ) : null}
                 {figures.minAmountOut ? (
                   <DetailRow label="Minimum received">
-                    {figures.minAmountOut} {toSymbol}
+                    <TokenAmount
+                      amount={figures.minAmountOut}
+                      symbol={toSymbol}
+                    />
                   </DetailRow>
                 ) : null}
                 {figures.expiresAt ? (
@@ -1502,7 +1668,7 @@ export default function SentenceTradeCard({
                   </DetailRow>
                 ) : null}
                 {explorerUrls.length > 0 ? (
-                  <DetailRow label="Settlement">
+                  <DetailRow label="Transaction">
                     <span className="flex flex-col items-end gap-0.5">
                       {explorerUrls.map((url) => (
                         <a
@@ -1510,9 +1676,15 @@ export default function SentenceTradeCard({
                           href={url}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-accent-ink hover:underline"
+                          title={url}
+                          className="inline-flex min-w-0 items-center gap-1 text-ink hover:underline"
                         >
-                          View on explorer
+                          <span className="truncate">{explorerLabel(url)}</span>
+                          <IconExternalLink
+                            size={12}
+                            stroke={1.8}
+                            className="shrink-0"
+                          />
                         </a>
                       ))}
                     </span>
@@ -1520,12 +1692,12 @@ export default function SentenceTradeCard({
                 ) : null}
                 {viewState === "settled" && received ? (
                   <DetailRow label="Received">
-                    {received} {toSymbol}
+                    <TokenAmount amount={received} symbol={toSymbol} />
                   </DetailRow>
                 ) : null}
-              </>
+              </div>
             ) : (
-              <>
+              <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-baseline gap-x-3">
                 {figures.minAmountOut ? (
                   <DetailRow label="Minimum received">
                     {figures.minAmountOut} {toSymbol}
@@ -1593,8 +1765,37 @@ export default function SentenceTradeCard({
                     </span>
                   </DetailRow>
                 ) : null}
-              </>
+              </div>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* error line — the card's last row, below every drawer, the way the
+          dialogs put their notice under the content it belongs to */}
+      <div
+        className="grid transition-[grid-template-rows,opacity] duration-300"
+        style={{
+          gridTemplateRows: submitError ? "1fr" : "0fr",
+          opacity: submitError ? 1 : 0,
+          transitionTimingFunction: "cubic-bezier(0.16, 1, 0.3, 1)",
+        }}
+      >
+        <div className="overflow-hidden">
+          <div
+            className="primitive-card-pad"
+            style={{ paddingTop: 6, paddingBottom: 10 }}
+          >
+            {submitError ? (
+              <p
+                key={submitError}
+                role="alert"
+                className="text-xs text-red"
+                style={{ animation: "fade-in 180ms ease-out both" }}
+              >
+                {submitError}
+              </p>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1619,29 +1820,78 @@ export default function SentenceTradeCard({
         <span
           key={viewState}
           className="-mr-0.5 flex min-w-0 items-center gap-2"
+          aria-busy={pendingDecision || undefined}
           style={{
             animation: "fade-up 300ms cubic-bezier(0.23,1,0.32,1) both",
           }}
         >
-          {awaiting && (!disabled || missingDeposit) ? (
+          {pendingDecision ? (
             <>
-              <Button variant="secondary" size="sm" onClick={handleDeny}>
+              <span className="sr-only" role="status">
+                Checking the record.
+              </span>
+              <SkeletonBox width={76} height={20} radius={999} />
+            </>
+          ) : awaiting && (!disabled || missingDeposit) ? (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleDeny}
+                disabled={denying}
+              >
                 Reject
               </Button>
-              <Button variant="accent" size="sm" onClick={handleApprove}>
+              <Button
+                variant="accent"
+                size="sm"
+                onClick={handleApprove}
+                disabled={denying}
+              >
                 {approveLabel}
               </Button>
             </>
           ) : (
-            <>
-              {busy ? <SpinnerRing active size={18} /> : null}
-              <StatusPill tone={TONE[viewState]}>
-                {LABEL[viewState]}
-              </StatusPill>
-            </>
+            <StatusPill
+              tone={TONE[viewState]}
+              className={busy ? "gap-1" : undefined}
+            >
+              {busy ? (
+                <SpinnerRing
+                  active
+                  size={12}
+                  stroke={1.8}
+                  track="color-mix(in oklch, currentColor 22%, transparent)"
+                  color="currentColor"
+                />
+              ) : null}
+              <span>{LABEL[viewState]}</span>
+            </StatusPill>
           )}
         </span>
       </div>
+
+      {fundOpen &&
+      showTransfer &&
+      deposit &&
+      txId &&
+      fundingKind &&
+      canFundDeposit(meta) ? (
+        <FundWalletDialog
+          key={`${txId}:${deposit}`}
+          deposit={meta}
+          chainKind={fundingKind}
+          connected={account}
+          onClose={() => setFundOpen(false)}
+          onUseQr={() => {
+            setFundOpen(false);
+            setDetailsOpen(true);
+          }}
+          onFund={handleFundedByWallet}
+          onSendConnected={handleConnectedWalletTransfer}
+          depositReady={depositReady}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1671,23 +1921,34 @@ export function isTerminalCardState(state: SentenceCardState): boolean {
 }
 
 /**
- * The one mount refresh a deposit card is allowed.
- *
- * Returns the key to remember when the card should ask the server once for an
- * authoritative status, and null when it must not: no address yet, a terminal
- * record, or a check already made for this exact address. An interval would
- * turn a waiting card into a second poll; this cannot.
+ * The active card's bounded watch window: two minutes from the first live
+ * read, at most one record read per beat. Historical cards never start it.
  */
-export function depositRefreshKey(input: {
-  alreadyRefreshed: string | null;
-  txId?: string;
-  address?: string;
-  state: SentenceCardState;
-}): string | null {
-  if (!input.txId || !input.address) return null;
-  if (isTerminalCardState(input.state)) return null;
-  const key = `${input.txId}:${input.address}`;
-  return input.alreadyRefreshed === key ? null : key;
+export const CARD_WATCH_MS = 2 * 60_000;
+export const CARD_WATCH_BEAT_MS = 6_000;
+export const CARD_WATCH_RECENT_MS = 10 * 60_000;
+
+/** True while the card should keep reading the record it settles on. */
+export function isLiveCardState(
+  state: SentenceCardState,
+  opts: { intents: boolean; action: TradeAction },
+): boolean {
+  if (state === "submitting" || state === "submitted" || state === "processing") {
+    return true;
+  }
+  return opts.intents && opts.action === "deposit" && state === "waiting";
+}
+
+/** True when a freshly mounted active card may open its watch window. */
+export function isRecentCardBirth(
+  requestedAt: string | undefined,
+  now: number,
+): boolean {
+  if (!requestedAt) return false;
+  const birth = Date.parse(requestedAt);
+  if (!Number.isFinite(birth)) return false;
+  const age = now - birth;
+  return age >= 0 && age < CARD_WATCH_RECENT_MS;
 }
 
 /**
@@ -1702,7 +1963,7 @@ export async function registerDepositTx(input: {
   txHash: string;
   senderAccount?: string;
   memo?: string | null;
-}): Promise<void> {
+}): Promise<boolean> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const res = await fetch(
@@ -1719,7 +1980,7 @@ export async function registerDepositTx(input: {
           }),
         },
       );
-      if (res.ok) return;
+      if (res.ok) return true;
     } catch {
       // Next attempt retries.
     }
@@ -1727,6 +1988,53 @@ export async function registerDepositTx(input: {
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
+  return false;
+}
+
+/**
+ * Send one deposit through a funding connection, then register its hash.
+ *
+ * Kept separate from the component so the continuation can be tested without
+ * a DOM: the order is exactly send → register → caller moves the card to
+ * processing. Registration is best effort and never turns a broadcast
+ * transfer into a failure; the record's poll remains authoritative.
+ */
+export async function sendAndRegisterDeposit(input: {
+  connection: FundingConnection;
+  deposit: FundingDeposit;
+  transactionId: string;
+  memo?: string | null;
+  register?: typeof registerDepositTx;
+}): Promise<{ registered: boolean; txHash: string }> {
+  const result = await input.connection.send(input.deposit);
+  const registered = await (input.register ?? registerDepositTx)({
+    transactionId: input.transactionId,
+    txHash: result.txHash,
+    senderAccount: result.senderAccount,
+    memo: input.memo ?? null,
+  });
+  return { registered, txHash: result.txHash };
+}
+
+/** The card's sentence for a refused or failed funding wallet. */
+function transferFailureMessage(
+  cause: unknown,
+  meta: DepositMetadata,
+): string {
+  const raw = cause instanceof Error ? cause.message : "";
+  if (raw === "chain-switch-rejected") {
+    return `Switch to the ${meta.chainName ?? "required"} network in your wallet, then try again.`;
+  }
+  if (raw === "unsupported-network") {
+    return "Deposits from this network aren't supported yet.";
+  }
+  if (/reject|cancel|denied|dismiss/i.test(raw)) {
+    return "The deposit was rejected. Nothing was moved.";
+  }
+  if (/balance|rpc|network|fetch|timed out|timeout/i.test(raw)) {
+    return "The wallet could not send the deposit. Nothing was moved.";
+  }
+  return "The deposit could not be sent. Nothing was moved.";
 }
 
 /** The state a poll's non-terminal record leaves the card in. */
@@ -1735,6 +2043,7 @@ export function polledState(
   action: TradeAction,
   intents: boolean,
 ): SentenceCardState {
+  if (recordState === "expired") return "expired";
   if (recordState === "processing" || (intents && recordState === "confirming")) {
     return "processing";
   }
@@ -2322,18 +2631,51 @@ export function VenuePopup({ address }: { address?: string }) {
 
 function DetailRow({
   label,
+  icon,
   children,
 }: {
   label: string;
+  /** A leading mark that belongs to the value, such as a token or network logo. */
+  icon?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  // Two cells in a shared grid: label on the left, value on the right edge.
+  // The value is one right-aligned group, so a logo stays beside the figure
+  // it describes instead of sitting in a separate fixed column, and a row
+  // without a logo still ends on the same edge.
   return (
-    <div className="flex items-baseline justify-between gap-3 py-1">
-      <span className="shrink-0 text-xs text-ink-3">{label}</span>
-      <span className="min-w-0 text-right text-xs tabular-nums text-ink">
+    <>
+      <span className="py-1 text-xs text-ink-3">{label}</span>
+      <span className="flex min-w-0 items-center justify-end gap-1.5 py-1 text-right text-xs tabular-nums text-ink">
+        {icon ? <span className="shrink-0">{icon}</span> : null}
         {children}
       </span>
-    </div>
+    </>
+  );
+}
+
+/**
+ * A drawer figure and its ticker.
+ *
+ * The token mark belongs to the ticker, so it sits close to the symbol and
+ * further from the number; spaced evenly it reads as an object of its own
+ * floating between the two.
+ */
+function TokenAmount({
+  amount,
+  symbol,
+}: {
+  amount: React.ReactNode;
+  symbol: string;
+}) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      {amount}
+      <span className="inline-flex items-center gap-1">
+        <TokenAvatar symbol={symbol} size={14} />
+        {symbol}
+      </span>
+    </span>
   );
 }
 
@@ -2342,6 +2684,27 @@ function rateOf(amountIn: string, amountOut: string): string | null {
   const rate = Number(amountOut) / Number(amountIn);
   if (!Number.isFinite(rate) || rate <= 0) return null;
   return String(Number(rate.toPrecision(4)));
+}
+
+/** "Arbitrum One" is "Arbitrum" once the chain mark has said which chain. */
+function shortChainLabel(name: string): string {
+  return name.replace(/\s+One$/, "");
+}
+
+/**
+ * The identifier an explorer URL points at, shortened for a detail row.
+ *
+ * 1Click reports a link, but a receipt reads as the transaction it names, so
+ * the row shows the hash rather than the words "view on explorer".
+ */
+export function explorerLabel(url: string): string {
+  try {
+    const parts = new URL(url).pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1] ?? "";
+    return shortAddr(last || url);
+  } catch {
+    return shortAddr(url);
+  }
 }
 
 function CopyAddressButton({ value }: { value: string }) {
@@ -2354,33 +2717,25 @@ function CopyAddressButton({ value }: { value: string }) {
     [],
   );
   return (
-    <button
-      type="button"
-      aria-label={copied ? "Copied" : "Copy deposit address"}
-      title={copied ? "Copied" : "Copy deposit address"}
+    <MessageActionButton
+      icon={IconCopy}
+      activeIcon={IconCheck}
+      label="Copy"
+      activeLabel="Copied"
+      active={copied}
       onClick={() => {
         void (async () => {
           try {
             await navigator.clipboard.writeText(value);
             setCopied(true);
             if (timer.current) clearTimeout(timer.current);
-            timer.current = setTimeout(() => setCopied(false), 1500);
+            timer.current = setTimeout(() => setCopied(false), 1800);
           } catch {
             // Clipboard unavailable; the address stays visible to copy by hand.
           }
         })();
       }}
-      className="inline-flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-xs text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
-    >
-      {copied ? (
-        <IconCheck size={13} stroke={2.2} className="shrink-0 text-green" />
-      ) : (
-        <IconCopy size={13} stroke={1.8} className="shrink-0" />
-      )}
-      <span className={copied ? "text-green" : undefined}>
-        {copied ? "Copied" : "Copy"}
-      </span>
-    </button>
+    />
   );
 }
 

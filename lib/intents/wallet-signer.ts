@@ -13,12 +13,17 @@
  *   `message` under the verifier contract as the NEP-413 recipient, using the
  *   exact nonce the server stored.
  *
+ * The signature fields are wire-format MultiPayload values, not raw RPC
+ * bytes: `secp256k1:<base58(65 bytes, v ∈ {0,1})>` and
+ * `ed25519:<base58(64 bytes)>`. 1Click's encoder rejects the `0x…` form even
+ * though this server's verifier can decode it.
+ *
  * Nothing here logs, and no payload or signature is ever printed.
  */
 
+import bs58 from "bs58";
 import { hexToBytes } from "viem";
 import { base64UrlDecode } from "@/lib/auth/passkeys";
-import { toHex } from "@/lib/wallet/types";
 import type { IntentStandard } from "./service";
 
 /** The two signer calls the wallet adapter already exposes. */
@@ -33,7 +38,12 @@ export type WalletIntentSigner = {
 
 export type WalletSignedIntent =
   | { standard: "erc191"; payload: string; signature: string }
-  | { standard: "raw_ed25519"; payload: string; signature: string }
+  | {
+      standard: "raw_ed25519";
+      payload: string;
+      signature: string;
+      public_key?: string;
+    }
   | {
       standard: "nep413";
       payload: Record<string, unknown>;
@@ -68,13 +78,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
  * Signs one exact payload with the connected wallet.
  *
  * The standard was chosen by the server from the session, never by the
- * browser, and the returned object is the `signedData` shape
- * `lib/intents/verify-intent.ts` checks.
+ * browser, and the returned object is the `signedData` MultiPayload that both
+ * this server and 1Click verify.
  */
 export async function signIntentWithWallet(input: {
   standard: Exclude<IntentStandard, "webauthn">;
   payload: string | Record<string, unknown>;
   signer: WalletIntentSigner;
+  /** `ed25519:<base58>` for a Solana signer; ignored by the other standards. */
+  publicKey?: string;
 }): Promise<WalletSignedIntent> {
   const { standard, payload, signer } = input;
 
@@ -119,12 +131,29 @@ export async function signIntentWithWallet(input: {
   if (!signatureBytes || signatureBytes.length === 0) throw new Error(FAILED);
 
   if (standard === "erc191") {
+    // 1Click's `signedData` is a MultiPayload, not an Ethereum RPC response:
+    // the signature travels as `secp256k1:<base58(65 bytes)>` with the
+    // recovery byte normalized to 0/1. A raw `0x…` blob verifies in our own
+    // server but is rejected by the verifier's encoder.
+    const bytes = Uint8Array.from(signatureBytes);
+    if (bytes.length !== 65) throw new Error(FAILED);
+    const v = bytes[64];
+    if (v === 27 || v === 28) bytes[64] = v - 27;
+    else if (v !== 0 && v !== 1) throw new Error(FAILED);
     return {
       standard,
       payload,
-      signature: `0x${toHex(signatureBytes)}`,
+      signature: `secp256k1:${bs58.encode(bytes)}`,
     };
   }
 
-  return { standard, payload, signature: toHex(signatureBytes) };
+  // raw_ed25519 is likewise a MultiPayload signature, and the verifier also
+  // wants the signer's public key in the same prefixed form.
+  if (signatureBytes.length !== 64) throw new Error(FAILED);
+  return {
+    standard,
+    payload,
+    signature: `ed25519:${bs58.encode(signatureBytes)}`,
+    ...(input.publicKey ? { public_key: input.publicKey } : {}),
+  };
 }

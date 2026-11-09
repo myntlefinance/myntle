@@ -84,7 +84,8 @@ export function isConfidentialStoredMode(mode: unknown): boolean {
 
 export const approveBodySchema = z.strictObject({
   quoteId: z.string().uuid(),
-  conversationId: z.string().uuid().nullish(),
+  /** A chat slug or uuid; the route resolves and authorizes it. */
+  conversationId: z.string().max(200).nullish(),
   /** Tool approval id (aitxt-…), so a reload can rejoin the transaction. */
   approvalId: z.string().max(200).nullish(),
   action: z.enum(["swap", "deposit", "withdraw"]),

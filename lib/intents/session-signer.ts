@@ -58,6 +58,7 @@ export function signIntentForSession(input: SessionSignerInput): IntentSigner {
       standard,
       payload,
       signer: { signMessage, signNEP413 },
+      publicKey: account.publicKey || undefined,
     });
   };
 }

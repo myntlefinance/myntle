@@ -37,6 +37,9 @@ describe("signIntentWithWallet", () => {
       message: { raw: stringToBytes(PAYLOAD) },
     });
     const signMessage = vi.fn(async () => hexToBytes(signature));
+    const canonical = Uint8Array.from(hexToBytes(signature));
+    const v = canonical[64];
+    if (v === 27 || v === 28) canonical[64] = v - 27;
 
     const signed = await signIntentWithWallet({
       standard: "erc191",
@@ -47,8 +50,11 @@ describe("signIntentWithWallet", () => {
     expect(signed).toEqual({
       standard: "erc191",
       payload: PAYLOAD,
-      signature,
+      signature: `secp256k1:${bs58.encode(canonical)}`,
     });
+    expect(signed.signature).toMatch(/^secp256k1:[1-9A-HJ-NP-Za-km-z]+$/);
+    expect(bs58.decode(signed.signature.slice("secp256k1:".length))).toHaveLength(65);
+    expect(canonical[64]).toBeLessThanOrEqual(1);
     expect(new TextDecoder().decode(await payloadBytes(signMessage))).toBe(
       PAYLOAD,
     );
@@ -86,12 +92,14 @@ describe("signIntentWithWallet", () => {
         signMessage: async () => signature,
         signNEP413: unavailableNep413(),
       },
+      publicKey: `ed25519:${address}`,
     });
 
     expect(signed).toEqual({
       standard: "raw_ed25519",
       payload: PAYLOAD,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: `ed25519:${bs58.encode(signature)}`,
+      public_key: `ed25519:${address}`,
     });
 
     const verified = await verifyIntent({
