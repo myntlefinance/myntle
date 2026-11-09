@@ -1,5 +1,8 @@
 import { FatalError, sleep } from "workflow";
+import type { TxState } from "@/lib/db/transactions";
+import { outcomeNeedsWrite } from "@/lib/db/outcome";
 import { settledAmountOut } from "@/lib/intents/settlement-amount";
+import { depositExpired } from "@/lib/intents/deposit-status";
 
 export type SwapInput = {
   transactionId: string;
@@ -14,7 +17,7 @@ export type SwapInput = {
 };
 
 export type SwapOutcome = {
-  status: "settled" | "refunded" | "failed";
+  status: "settled" | "refunded" | "failed" | "expired";
   amountOut: string;
   depositAddress: string;
   explorerUrls: string[];
@@ -75,6 +78,8 @@ export async function swapLifecycle(input: SwapInput): Promise<SwapOutcome> {
   // Sleeps cost no compute, so the Hobby 300s request cap does not apply —
   // nothing loops inside a request. An external exchange withdrawal can take
   // longer than the old five-minute window.
+  let expiredMarked = false;
+  let sawDetected = false;
   for (let attempt = 0; attempt < 600; attempt += 1) {
     await sleep(attempt < 30 ? "6s" : "15s");
 
@@ -82,6 +87,23 @@ export async function swapLifecycle(input: SwapInput): Promise<SwapOutcome> {
       transactionId: input.transactionId,
       depositAddress,
     });
+
+    if (snapshot.state === "expired") {
+      // The funding window closed. Record that once, then keep watching for
+      // a deposit that was broadcast inside the window and confirmed late.
+      if (!expiredMarked) {
+        await markStateStep({
+          transactionId: input.transactionId,
+          state: "expired",
+        });
+        expiredMarked = true;
+      }
+      continue;
+    }
+
+    if (snapshot.state === "confirming" || snapshot.state === "processing") {
+      sawDetected = true;
+    }
 
     if (snapshot.state === "settled") {
       const amountOut = settledAmountOut({
@@ -127,6 +149,15 @@ export async function swapLifecycle(input: SwapInput): Promise<SwapOutcome> {
       });
       throw new FatalError(`Settlement ended with state: ${snapshot.state}`);
     }
+  }
+
+  if (expiredMarked && !sawDetected) {
+    return {
+      status: "expired",
+      amountOut: "0",
+      depositAddress,
+      explorerUrls: [],
+    };
   }
 
   await markStateStep({
@@ -291,11 +322,13 @@ async function checkStatusStep(input: {
     status: string;
     swapDetails?: {
       amountOutFormatted?: string;
-      originChainTxHashes?: Array<{ explorerUrl?: string }>;
-      destinationChainTxHashes?: Array<{ explorerUrl?: string }>;
+      originChainTxHashes?: Array<{ hash?: string; explorerUrl?: string }>;
+      destinationChainTxHashes?: Array<{ hash?: string; explorerUrl?: string }>;
     };
   };
   const details = body.swapDetails ?? {};
+  const originHashes = details.originChainTxHashes ?? [];
+  const destinationHashes = details.destinationChainTxHashes ?? [];
 
   const TERMINAL: Record<string, string> = {
     SUCCESS: "settled",
@@ -307,27 +340,70 @@ async function checkStatusStep(input: {
     PROCESSING: "processing",
   };
 
-  const snapshot: StatusSnapshot = {
-    state: TERMINAL[body.status] ?? "pending",
-    amountOut: details.amountOutFormatted,
-    explorerUrls: [
-      ...(details.originChainTxHashes ?? []),
-      ...(details.destinationChainTxHashes ?? []),
-    ]
-      .map((h) => h.explorerUrl)
-      .filter((u): u is string => !!u),
-  };
-
   const { getSupabaseAdmin } = await import("@/lib/db/client");
+  const { setTransactionStatus } = await import("@/lib/db/transactions");
   const sb = getSupabaseAdmin();
 
-  // Read-before-write guard: skip both writes when nothing material changed.
   const { data: current } = await sb
     .from("transactions")
-    .select("state")
+    .select("state, origin_asset, destination_asset, refs")
     .eq("id", input.transactionId)
     .single();
-  const currentState = (current as { state?: string } | null)?.state;
+  const row = current as {
+    state?: string;
+    origin_asset?: string | null;
+    destination_asset?: string | null;
+    refs?: Record<string, unknown> | null;
+  } | null;
+  const currentState = row?.state;
+  const mode = typeof row?.refs?.mode === "string" ? row.refs.mode : null;
+  const expiresAt =
+    typeof row?.refs?.expiresAt === "string"
+      ? row.refs.expiresAt
+      : typeof row?.refs?.deadline === "string"
+        ? row.refs.deadline
+        : null;
+
+  // 1Click names the hash and leaves `explorerUrl` empty, so the link is
+  // built from the chain the record already knows rather than dropped.
+  const suppliedUrls = [...originHashes, ...destinationHashes]
+    .map((h) => h.explorerUrl)
+    .filter((u): u is string => !!u);
+  const missingUrl = [...originHashes, ...destinationHashes].some(
+    (h) => h.hash && !h.explorerUrl,
+  );
+  let explorerUrls = suppliedUrls;
+  if (missingUrl) {
+    const [{ chainOfAsset }, { settlementLinks }] = await Promise.all([
+      import("@/lib/intents/service"),
+      import("@/lib/intents/explorer"),
+    ]);
+    const [originChain, destinationChain] = await Promise.all([
+      chainOfAsset(row?.origin_asset),
+      chainOfAsset(row?.destination_asset),
+    ]);
+    explorerUrls = settlementLinks([
+      { chain: originChain, hashes: originHashes },
+      { chain: destinationChain, hashes: destinationHashes },
+    ]);
+  }
+
+  const mapped = TERMINAL[body.status] ?? "pending";
+  // A still-pending deposit closes its funding window before the quote
+  // deadline. Record that earlier so every surface agrees; the loop keeps
+  // watching for a late confirmation. A swap or withdrawal keeps its raw
+  // status, since this safety margin is about a manually funded address.
+  const expiredNow =
+    mode === "confidential-external" &&
+    mapped === "pending" &&
+    depositExpired(expiresAt, Date.now());
+  const snapshot: StatusSnapshot = {
+    state: expiredNow ? "expired" : mapped,
+    amountOut: details.amountOutFormatted,
+    explorerUrls,
+  };
+
+  // Read-before-write guard: skip both writes when nothing material changed.
   let explorerChanged = false;
   if (currentState === snapshot.state && snapshot.explorerUrls.length > 0) {
     const { data: lastEvent } = await sb
@@ -345,10 +421,12 @@ async function checkStatusStep(input: {
     );
   }
   if (currentState !== snapshot.state || explorerChanged) {
-    await sb
-      .from("transactions")
-      .update({ state: snapshot.state })
-      .eq("id", input.transactionId);
+    const checkedAt = new Date().toISOString();
+    await setTransactionStatus(
+      input.transactionId,
+      snapshot.state as TxState,
+      checkedAt,
+    );
     await sb.from("transaction_events").insert({
       transaction_id: input.transactionId,
       state: snapshot.state,
@@ -373,6 +451,12 @@ function sameUrlSet(a: unknown[], b: string[]): boolean {
 /**
  * Terminal writes: state plus outcome for the card, the history page, and
  * the read tools. Intermediate beats go through checkStatusStep instead.
+ *
+ * A replayed step that finds the row already in the target state with the
+ * same outcome writes nothing, so a retried terminal beat never
+ * double-inserts its event. When the state matches but the outcome is
+ * missing or different, the outcome is repaired with one UPDATE and no
+ * event, so a settlement never loses its receipt.
  */
 async function markStateStep(input: {
   transactionId: string;
@@ -383,6 +467,27 @@ async function markStateStep(input: {
 
   const { getSupabaseAdmin } = await import("@/lib/db/client");
   const sb = getSupabaseAdmin();
+  const { data: current } = await sb
+    .from("transactions")
+    .select("state, outcome")
+    .eq("id", input.transactionId)
+    .single();
+  const row = current as {
+    state?: string;
+    outcome?: Record<string, unknown> | null;
+  } | null;
+  if (row?.state === input.state) {
+    // Same state: only a missing or changed outcome is worth one write.
+    // A replayed terminal step with an identical outcome writes nothing
+    // and inserts no duplicate event.
+    if (!input.outcome) return;
+    if (!outcomeNeedsWrite(row.outcome, input.outcome)) return;
+    await sb
+      .from("transactions")
+      .update({ outcome: input.outcome })
+      .eq("id", input.transactionId);
+    return;
+  }
   const patch: Record<string, unknown> = { state: input.state };
   if (input.outcome) patch.outcome = input.outcome;
   await sb.from("transactions").update(patch).eq("id", input.transactionId);

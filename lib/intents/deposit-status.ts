@@ -50,18 +50,75 @@ const TERMINAL = new Set([
   "expired",
 ]);
 
+/**
+ * How long a verified pending record is trusted before the card rechecks it.
+ *
+ * A pending row is only evidence that the address was still waiting when
+ * 1Click was last read. Past this window the card must ask again before it
+ * uses the waiting vocabulary.
+ */
+export const DEPOSIT_STATUS_TRUST_MS = 5_000;
+
+/** True when the status was checked inside the trust window. */
+export function depositRecordFresh(
+  checkedAt: string | null | undefined,
+  now: number,
+): boolean {
+  if (!checkedAt) return false;
+  const checked = Date.parse(checkedAt);
+  if (!Number.isFinite(checked)) return false;
+  const age = now - checked;
+  return age >= 0 && age < DEPOSIT_STATUS_TRUST_MS;
+}
+
+/**
+ * How long before the quote deadline the address stops inviting funding.
+ *
+ * A deposit sent in the last minutes of the quote can be broadcast before the
+ * deadline and confirmed after it. Reserving fifteen minutes protects the
+ * sender on chains with slow confirmation. The address may still be accepted
+ * by 1Click until its real deadline; the interface stops telling anyone to
+ * fund it earlier than that.
+ */
+export const DEPOSIT_FUNDING_MARGIN_MS = 15 * 60_000;
+
+/**
+ * How long after the real quote deadline a late deposit may still be detected.
+ *
+ * The workflow keeps polling, and the card keeps reading the record, so a
+ * transfer broadcast inside the funding window can still settle after the
+ * interface has stopped inviting new deposits. This is a grace read, not a
+ * second funding window.
+ */
+export const DEPOSIT_DETECTION_GRACE_MS = 2 * 60 * 60_000;
+
 /** The stored expiry, or null when the record never carried one. */
 export function depositExpiry(expiresAt: string | null | undefined): number {
   if (!expiresAt) return Number.NaN;
   return Date.parse(expiresAt);
 }
 
-/** True when the address's own quote deadline has passed. */
+/** The last moment the card invites a new deposit, fifteen minutes early. */
+export function depositFundingDeadline(
+  expiresAt: string | null | undefined,
+): number {
+  const deadline = depositExpiry(expiresAt);
+  return Number.isFinite(deadline)
+    ? deadline - DEPOSIT_FUNDING_MARGIN_MS
+    : Number.NaN;
+}
+
+/**
+ * True when the funding window has closed.
+ *
+ * This is deliberately earlier than the quote deadline: the product stops
+ * inviting deposits while there is still time for a slow chain to confirm.
+ */
 export function depositExpired(
   expiresAt: string | null | undefined,
   now: number,
 ): boolean {
-  const deadline = depositExpiry(expiresAt);
+  const deadline = depositFundingDeadline(expiresAt);
   return Number.isFinite(deadline) && deadline <= now;
 }
 
@@ -74,8 +131,8 @@ export function isRefreshableDepositRecord(state: string): boolean {
  * The state a reloaded or polled record paints.
  *
  * `needs_reconciliation` is deliberately not a failure: the workflow's
- * 60-minute window is a bound on polling, not a settlement. While the address
- * is still inside its own quote deadline the deposit can still arrive, so the
+ * polling window is a bound on checks, not a settlement. While the address
+ * is still inside its funding window the deposit can still arrive, so the
  * card keeps waiting until the stored expiry says otherwise.
  */
 export function depositCardStateForRecord(
@@ -114,8 +171,8 @@ export function depositCardStateForRecord(
  *
  * This is the single place the raw PENDING_DEPOSIT / KNOWN_DEPOSIT_TX /
  * PROCESSING / SUCCESS vocabulary is translated. A pending address past its
- * stored expiry is `expired`; the same address before the deadline restores
- * `pending`, which is what repairs a workflow that timed out early.
+ * funding window is `expired`; the same address before the window closes
+ * restores `pending`, which is what repairs a workflow that timed out early.
  */
 export function depositTransitionForStatus(
   status: string,

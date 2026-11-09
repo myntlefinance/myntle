@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth/session";
-import {
-  getTransaction,
-  setTransactionState,
-} from "@/lib/db/transactions";
+import { getTransaction, setTransactionState } from "@/lib/db/transactions";
 import { getStatus } from "@/lib/intents/service";
 import { readDepositMetadata } from "@/lib/intents/deposit-metadata";
 import {
@@ -41,15 +38,32 @@ export async function GET(
   let statusCheck: "ok" | "unavailable" | "skipped" = "skipped";
 
   const refresh = new URL(req.url).searchParams.get("refresh") === "1";
-  if (refresh && deposit?.address && isRefreshableDepositRecord(tx.state)) {
+  const knownUrls = Array.isArray(tx.outcome?.explorerUrls)
+    ? (tx.outcome.explorerUrls as unknown[])
+    : [];
+  const refreshAddress = deposit?.address ?? tx.deposit_address;
+  const depositRefresh =
+    !!deposit?.address && isRefreshableDepositRecord(tx.state);
+  // A settled record whose outcome was stored without a link gets one more
+  // authoritative read. 1Click reports the hash but no URL, and a record
+  // written before the app built links would otherwise never show its
+  // transaction. The check is bounded: once the URL is stored it stops.
+  const linkRepair =
+    tx.state === "settled" && knownUrls.length === 0 && !!refreshAddress;
+  if (refresh && refreshAddress && (depositRefresh || linkRepair)) {
     try {
-      const status = await getStatus(deposit.address, deposit.memo);
+      const status = await getStatus(refreshAddress, deposit?.memo, {
+        originAssetId: tx.origin_asset,
+        destinationAssetId: tx.destination_asset,
+      });
       statusCheck = "ok";
-      const next = depositTransitionForStatus(
-        status.status,
-        deposit.expiresAt,
-        Date.now(),
-      );
+      const next = depositRefresh
+        ? depositTransitionForStatus(
+            status.status,
+            deposit?.expiresAt,
+            Date.now(),
+          )
+        : { state: tx.state };
       const outcome = { ...(tx.outcome ?? {}) };
       if (status.explorerUrls.length > 0) {
         outcome.explorerUrls = status.explorerUrls;
@@ -59,8 +73,12 @@ export async function GET(
         JSON.stringify(tx.outcome?.explorerUrls);
       if (next.state !== tx.state || urlsChanged) {
         await setTransactionState(tx.id, next.state, outcome);
+        current = {
+          ...tx,
+          state: next.state,
+          outcome,
+        };
       }
-      current = { ...tx, state: next.state, outcome };
     } catch {
       // Keep the last known state. A failed check is not a failed deposit.
       statusCheck = "unavailable";
@@ -78,6 +96,7 @@ export async function GET(
     expectedOut: current.expected_out,
     outcome: current.outcome,
     updatedAt: current.updated_at,
+    statusCheckedAt: current.status_checked_at,
     deposit,
     statusCheck,
     events: events.map((e) => ({

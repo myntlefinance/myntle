@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  getApprovalOutcome,
   getApprovalTx,
-  isApprovalDenied,
-  rememberApprovalDenied,
+  rememberApprovalOutcome,
   rememberApprovalTx,
   resetApprovalStore,
 } from "./approvalStore";
@@ -35,16 +35,10 @@ describe("approvalStore", () => {
     expect(getApprovalTx("missing")).toBeUndefined();
   });
 
-  it("records denials", () => {
-    expect(isApprovalDenied("ap-2")).toBe(false);
-    rememberApprovalDenied("ap-2");
-    expect(isApprovalDenied("ap-2")).toBe(true);
-  });
-
-  it("survives a reload through localStorage", () => {
+  it("paints a remembered terminal outcome across a reload", () => {
     vi.stubGlobal("localStorage", fakeStorage());
     rememberApprovalTx("ap-3", { transactionId: "tx-3", depositAddress: "dep-3" });
-    rememberApprovalDenied("ap-4");
+    rememberApprovalOutcome("ap-3", "settled");
 
     // A reload wipes module memory but keeps storage.
     resetApprovalStore();
@@ -53,7 +47,17 @@ describe("approvalStore", () => {
       transactionId: "tx-3",
       depositAddress: "dep-3",
     });
-    expect(isApprovalDenied("ap-4")).toBe(true);
+    expect(getApprovalOutcome("ap-3")).toBe("settled");
+  });
+
+  it("round-trips a remembered expired outcome across a reload", () => {
+    vi.stubGlobal("localStorage", fakeStorage());
+    rememberApprovalOutcome("ap-exp", "expired");
+
+    // A reload wipes module memory but keeps storage.
+    resetApprovalStore();
+
+    expect(getApprovalOutcome("ap-exp")).toBe("expired");
   });
 
   it("ignores corrupt storage instead of throwing", () => {
@@ -64,5 +68,6 @@ describe("approvalStore", () => {
     });
     expect(() => getApprovalTx("ap-5")).not.toThrow();
     expect(getApprovalTx("ap-5")).toBeUndefined();
+    expect(() => getApprovalOutcome("ap-5")).not.toThrow();
   });
 });

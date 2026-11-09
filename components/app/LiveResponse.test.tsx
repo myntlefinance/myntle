@@ -469,14 +469,37 @@ describe("LiveResponse money card", () => {
     expect(card.swapInput).toBeUndefined();
   });
 
-  it("hands a reloaded deposit its record metadata and expiry", () => {
+  it("marks only a card whose record has not been read as pending", () => {
     state.identity = passkeyIdentity;
+    ReactDOMServer.renderToStaticMarkup(
+      <LiveResponse
+        message={depositMessage("output-available")}
+        status="ready"
+        decisions={{}}
+        pendingApprovalIds={new Set(["aitxt-deposit-1"])}
+      />,
+    );
+    expect(lastCard().decisionPending).toBe(true);
+
+    ReactDOMServer.renderToStaticMarkup(
+      <LiveResponse
+        message={depositMessage("output-available")}
+        status="ready"
+        decisions={{}}
+        pendingApprovalIds={new Set()}
+      />,
+    );
+    expect(lastCard().decisionPending).toBe(false);
+  });
+
+  it("hands a reloaded deposit its record metadata and expiry", () => {    state.identity = passkeyIdentity;
     renderWithSettlements(depositMessage("output-available"), {
       "aitxt-deposit-1": {
         state: "pending",
         transactionId: "tx-deposit-1",
         depositAddress: DEPOSIT,
         explorerUrls: ["https://explorer.example/tx/1"],
+        statusCheckedAt: "2026-11-02T12:00:00.000Z",
         deposit: {
           address: DEPOSIT,
           expiresAt: "2099-01-01T00:00:00.000Z",
@@ -495,6 +518,7 @@ describe("LiveResponse money card", () => {
     expect(card.approveLabel).toBe("Start");
     expect(card.depositAddress).toBe(DEPOSIT);
     expect(card.expiresAt).toBe("2099-01-01T00:00:00.000Z");
+    expect(card.recordCheckedAt).toBeUndefined();
     expect(card.depositMeta).toMatchObject({
       amountInRaw: "1000000",
       chainId: 42161,
@@ -565,5 +589,73 @@ describe("LiveResponse money card", () => {
     expect(card.runApproval).toBeTypeOf("function");
     expect(card.recipient).toBe(DESTINATION);
     expect(card.destinationChain).toBe("Arbitrum One");
+  });
+
+  it("rejoins the transaction a settled withdrawal already has", () => {
+    state.identity = passkeyIdentity;
+    renderWithSettlements(withdrawalMessage(), {
+      "aitxt-withdraw-1": {
+        state: "settled",
+        transactionId: "tx-withdraw-1",
+        explorerUrls: ["https://arbiscan.io/tx/0xabc"],
+        amountOut: "1.9894",
+      },
+    });
+
+    // A reopened card has no poll of its own: the record's links and amount
+    // are the only thing that can show what it already settled.
+    const card = lastCard();
+    expect(card.state).toBe("settled");
+    expect(card.initialExplorerUrls).toEqual([
+      "https://arbiscan.io/tx/0xabc",
+    ]);
+    expect(card.initialReceived).toBe("1.9894");
+  });
+
+  it("marks only the live turn's cards as active", () => {
+    state.identity = passkeyIdentity;
+    ReactDOMServer.renderToStaticMarkup(
+      <LiveResponse message={swapMessage()} status="ready" interactive superseded={false} />,
+    );
+    expect(lastCard().active).toBe(true);
+
+    ReactDOMServer.renderToStaticMarkup(
+      <LiveResponse message={swapMessage()} status="ready" interactive superseded />,
+    );
+    expect(lastCard().active).toBe(false);
+
+    ReactDOMServer.renderToStaticMarkup(
+      <LiveResponse message={swapMessage()} status="ready" />,
+    );
+    expect(lastCard().active).toBe(false);
+  });
+
+  it("marks deposit and withdrawal cards active on the live turn only", () => {
+    state.identity = passkeyIdentity;
+    for (const message of [depositMessage(), withdrawalMessage()]) {
+      ReactDOMServer.renderToStaticMarkup(
+        <LiveResponse message={message} status="ready" interactive superseded={false} />,
+      );
+      expect(lastCard().active).toBe(true);
+
+      ReactDOMServer.renderToStaticMarkup(
+        <LiveResponse message={message} status="ready" interactive superseded />,
+      );
+      expect(lastCard().active).toBe(false);
+    }
+  });
+
+  it("paints an expired deposit snapshot as expired", () => {
+    state.identity = passkeyIdentity;
+    renderWithSettlements(depositMessage("output-available"), {
+      "aitxt-deposit-1": {
+        state: "expired",
+        transactionId: "tx-deposit-1",
+        depositAddress: DEPOSIT,
+        deposit: { address: DEPOSIT, expiresAt: "2020-01-01T00:00:00.000Z" },
+      },
+    });
+
+    expect(lastCard().state).toBe("expired");
   });
 });

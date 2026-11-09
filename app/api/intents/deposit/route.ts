@@ -10,6 +10,8 @@ import {
   type Asset,
 } from "@/lib/intents/service";
 import { evmChainForSlug } from "@/lib/wallet/evm-chains";
+import { conversationIdForUser } from "@/lib/db/conversations";
+import { getToolApproval, recordToolApproval } from "@/lib/db/tool-approvals";
 import {
   createApproval,
   createQuote,
@@ -39,7 +41,8 @@ const depositBodySchema = z.strictObject({
   assetId: z.string().min(1).max(300),
   /** Smallest unit, positive integer, no decimals or sign. */
   amount: z.string().regex(/^[1-9]\d{0,77}$/),
-  conversationId: z.string().uuid().nullish(),
+  /** A chat slug or uuid; the route resolves and authorizes it. */
+  conversationId: z.string().max(200).nullish(),
   /** Tool approval id (aitxt-…), so the card can rejoin the record. */
   approvalId: z.string().max(200).nullish(),
 });
@@ -65,6 +68,33 @@ export async function POST(req: Request) {
   } catch {
     console.error("[intents/deposit] invalid body");
     return NextResponse.json({ error: DEPOSIT_ERROR }, { status: 400 });
+  }
+
+  // The card names the chat it belongs to. Resolve it here so the record is
+  // never linked to someone else's conversation. An unknown chat costs the
+  // link, never the deposit.
+  const conversationId = body.conversationId
+    ? await conversationIdForUser(session.userId, body.conversationId).catch(
+        () => null,
+      )
+    : null;
+
+  // A proposal refused in another tab, or on another device, stays refused.
+  // Answered before an address is minted.
+  if (body.approvalId) {
+    const decided = await getToolApproval(
+      session.userId,
+      body.approvalId,
+    ).catch(() => null);
+    if (decided?.decision === "denied") {
+      return NextResponse.json(
+        {
+          error: "denied",
+          message: "This proposal was rejected. Please ask for a new one.",
+        },
+        { status: 409 },
+      );
+    }
   }
 
   // The catalogue is the authority on which assets can be priced. An id that
@@ -125,7 +155,7 @@ export async function POST(req: Request) {
   try {
     wetQuoteId = await createQuote({
       userId: session.userId,
-      conversationId: body.conversationId ?? null,
+      conversationId,
       request: {
         assetId: body.assetId,
         amount: body.amount,
@@ -164,7 +194,7 @@ export async function POST(req: Request) {
     const tx = await createTransaction({
       userId: session.userId,
       approvalId,
-      conversationId: body.conversationId ?? null,
+      conversationId,
       recipient: session.intentsAccountId,
       refundTo: session.intentsAccountId,
       originAsset: body.assetId,
@@ -172,12 +202,13 @@ export async function POST(req: Request) {
       amountIn: execution.amountInFormatted,
       expectedOut: execution.amountOutFormatted,
       depositAddress: execution.depositAddress,
+      toolApprovalId: body.approvalId ?? null,
       refs: {
         mode: "confidential-external",
         assetId: body.assetId,
         amount: body.amount,
         approvalId: body.approvalId ?? null,
-        conversationId: body.conversationId ?? null,
+        conversationId,
         // The settlement reader joins on this key, exactly as the signed
         // path does, so a reloaded conversation can still find the deposit.
         toolApprovalId: body.approvalId ?? null,
@@ -185,6 +216,24 @@ export async function POST(req: Request) {
       },
       state: "submitted",
     });
+
+    // The address was minted and recorded, so the approval is real now.
+    if (body.approvalId) {
+      try {
+        await recordToolApproval({
+          userId: session.userId,
+          toolApprovalId: body.approvalId,
+          toolName: "prepare_deposit",
+          decision: "approved",
+          conversationId,
+          quoteId: wetQuoteId,
+        });
+      } catch {
+        console.error("[intents/deposit] decision record failed", {
+          transactionId: tx.id,
+        });
+      }
+    }
 
     transactionId = tx.id;
     expectedOut = tx.expected_out ?? execution.amountOutFormatted;

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEPOSIT_FUNDING_MARGIN_MS,
   depositCardStateForRecord,
   depositExpired,
+  depositFundingDeadline,
   depositPhaseForCardState,
+  depositRecordFresh,
   depositStatusMessage,
   depositTransitionForStatus,
   isRefreshableDepositRecord,
@@ -171,6 +174,30 @@ describe("depositExpiry", () => {
     expect(depositExpired("not-a-date", NOW)).toBe(false);
   });
 
+  it("closes the funding window fifteen minutes before the quote deadline", () => {
+    const thirtyMinutesOut = "2026-11-03T12:30:00.000Z";
+    expect(DEPOSIT_FUNDING_MARGIN_MS).toBe(15 * 60_000);
+    expect(depositFundingDeadline(thirtyMinutesOut)).toBe(
+      Date.parse("2026-11-03T12:15:00.000Z"),
+    );
+    // 20 minutes before the quote: still inside the funding window.
+    const twentyBefore = Date.parse("2026-11-03T12:10:00.000Z");
+    expect(depositExpired(thirtyMinutesOut, twentyBefore)).toBe(false);
+    // 10 minutes before the quote: the fifteen-minute margin has closed it.
+    const tenBefore = Date.parse("2026-11-03T12:20:00.000Z");
+    expect(depositExpired(thirtyMinutesOut, tenBefore)).toBe(true);
+    expect(
+      depositTransitionForStatus(
+        "PENDING_DEPOSIT",
+        thirtyMinutesOut,
+        tenBefore,
+      ),
+    ).toEqual({
+      state: "expired",
+      phase: "expired",
+    });
+  });
+
   it("treats every terminal record as no longer refreshable", () => {
     for (const state of [
       "settled",
@@ -190,5 +217,15 @@ describe("depositExpiry", () => {
     ]) {
       expect(isRefreshableDepositRecord(state)).toBe(true);
     }
+  });
+});
+
+describe("depositRecordFresh", () => {
+  it("trusts only a record written inside the short window", () => {
+    expect(depositRecordFresh("2026-11-03T11:59:58.000Z", NOW)).toBe(true);
+    expect(depositRecordFresh("2026-11-03T11:59:50.000Z", NOW)).toBe(false);
+    expect(depositRecordFresh("2026-11-03T12:00:10.000Z", NOW)).toBe(false);
+    expect(depositRecordFresh(null, NOW)).toBe(false);
+    expect(depositRecordFresh("not-a-date", NOW)).toBe(false);
   });
 });

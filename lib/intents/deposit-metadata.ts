@@ -57,7 +57,8 @@ export function readDepositMetadata(
   return {
     address,
     memo: text(refs.depositMemo),
-    expiresAt: text(refs.expiresAt),
+    // Older signed-intent records stored the quote deadline as `deadline`.
+    expiresAt: text(refs.expiresAt) ?? text(refs.deadline),
     amountInRaw: text(refs.amountInRaw),
     tokenContract: text(refs.tokenContract),
     chainId: integer(refs.chainId),
@@ -125,4 +126,45 @@ export function canTransferDeposit(
   // before it sends. A native EVM asset has no contract; an ERC-20 does.
   if (required === "evm") return Number.isInteger(meta.chainId);
   return !!meta.tokenContract;
+}
+
+/**
+ * True when the deposit carries everything a funding wallet needs.
+ *
+ * This is deliberately independent of who is connected: the funding dialogue
+ * can offer another wallet too. An EVM deposit needs its chain id so the
+ * adapter can switch before sending; Solana and NEAR may be native, so they
+ * do not require a token contract.
+ */
+export function canFundDeposit(
+  meta: DepositMetadata | null | undefined,
+): meta is DepositMetadata & {
+  address: string;
+  amountInRaw: string;
+  chainSlug: string;
+  decimals: number;
+  symbol: string;
+} {
+  const kind = depositWalletKind(meta);
+  if (!kind || !meta) return false;
+  if (!meta.address || !meta.amountInRaw || !/^[1-9]\d*$/.test(meta.amountInRaw)) {
+    return false;
+  }
+  if (
+    typeof meta.decimals !== "number" ||
+    !Number.isInteger(meta.decimals) ||
+    meta.decimals < 0 ||
+    meta.decimals > 36 ||
+    !meta.symbol
+  ) {
+    return false;
+  }
+  if (kind === "evm") {
+    if (!Number.isInteger(meta.chainId)) return false;
+    const chain = evmChainForSlug(meta.chainSlug);
+    // A slug and an id that disagree are malformed metadata, not a chain to
+    // guess at. Refuse funding and leave the QR path.
+    if (chain && chain.id !== meta.chainId) return false;
+  }
+  return true;
 }

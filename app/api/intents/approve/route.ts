@@ -15,6 +15,8 @@ import {
   standardForSession,
   type ApproveBody,
 } from "@/lib/intents/route-policy";
+import { conversationIdForUser } from "@/lib/db/conversations";
+import { getToolApproval, recordToolApproval } from "@/lib/db/tool-approvals";
 import {
   addEvent,
   createApproval,
@@ -71,6 +73,33 @@ export async function POST(req: Request) {
   } catch {
     console.error("[intents/approve] invalid body");
     return NextResponse.json({ error: "An error occurred." }, { status: 400 });
+  }
+
+  // The card names the chat it belongs to. Resolve it here so the record is
+  // never linked to someone else's conversation. An unknown chat costs the
+  // link, never the trade.
+  const conversationId = body.conversationId
+    ? await conversationIdForUser(session.userId, body.conversationId).catch(
+        () => null,
+      )
+    : null;
+
+  // A proposal refused in another tab, or on another device, stays refused.
+  // Answered before the quote is read or a payload is minted.
+  if (body.approvalId) {
+    const decided = await getToolApproval(
+      session.userId,
+      body.approvalId,
+    ).catch(() => null);
+    if (decided?.decision === "denied") {
+      return NextResponse.json(
+        {
+          error: "denied",
+          message: "This proposal was rejected. Please ask for a new one.",
+        },
+        { status: 409 },
+      );
+    }
   }
 
   const stored = await getQuote(session.userId, body.quoteId);
@@ -161,7 +190,7 @@ export async function POST(req: Request) {
   try {
     wetQuoteId = await createQuote({
       userId: session.userId,
-      conversationId: body.conversationId ?? null,
+      conversationId,
       request: {
         fromAssetId: params.fromAssetId,
         toAssetId: params.toAssetId,
@@ -210,7 +239,7 @@ export async function POST(req: Request) {
     const tx = await createTransaction({
       userId: session.userId,
       approvalId,
-      conversationId: body.conversationId ?? null,
+      conversationId,
       recipient: params.recipient,
       refundTo: params.refundTo,
       originAsset: params.fromAssetId,
@@ -218,6 +247,7 @@ export async function POST(req: Request) {
       amountIn: execution.amountInFormatted,
       expectedOut: execution.amountOutFormatted,
       depositAddress: execution.depositAddress,
+      toolApprovalId: body.approvalId || null,
       // The exact values the submit route will verify against. The payload is
       // added below once 1Click has minted it. The withdrawal destination is
       // stored from the quote params; no request field can supply it.
@@ -233,10 +263,36 @@ export async function POST(req: Request) {
         assetId: params.fromAssetId,
         destination: mode === "confidential-withdrawal" ? params.recipient : null,
         toolApprovalId: body.approvalId || null,
-        conversationId: body.conversationId ?? null,
+        conversationId,
       },
       state: isSignedQuoteMode(mode) ? "awaiting_approval" : "submitted",
     });
+
+    // The approval is written once the record exists, and the tool it names
+    // follows the stored mode: a withdrawal pays an address, an external
+    // deposit funds the account, everything else is a swap. A failure costs
+    // the decision row, never the trade.
+    if (body.approvalId) {
+      try {
+        await recordToolApproval({
+          userId: session.userId,
+          toolApprovalId: body.approvalId,
+          toolName:
+            mode === "confidential-withdrawal"
+              ? "prepare_withdrawal"
+              : mode === "confidential-external"
+                ? "prepare_deposit"
+                : "prepare_swap",
+          decision: "approved",
+          conversationId,
+          quoteId: stored.id,
+        });
+      } catch {
+        console.error("[intents/approve] decision record failed", {
+          transactionId: tx.id,
+        });
+      }
+    }
 
     transactionId = tx.id;
     expectedOut = tx.expected_out ?? execution.amountOutFormatted;

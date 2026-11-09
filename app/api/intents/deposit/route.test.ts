@@ -10,6 +10,9 @@ const {
   setTransactionRunIdMock,
   startMock,
   swapLifecycleStub,
+  conversationIdForUserMock,
+  getToolApprovalMock,
+  recordToolApprovalMock,
 } = vi.hoisted(() => ({
   requireSessionMock: vi.fn(),
   getAssetsMock: vi.fn(),
@@ -20,6 +23,9 @@ const {
   setTransactionRunIdMock: vi.fn(),
   startMock: vi.fn(),
   swapLifecycleStub: vi.fn(),
+  conversationIdForUserMock: vi.fn(),
+  getToolApprovalMock: vi.fn(),
+  recordToolApprovalMock: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -41,6 +47,20 @@ vi.mock("@/lib/db/transactions", () => ({
   createApproval: createApprovalMock,
   createTransaction: createTransactionMock,
   setTransactionRunId: setTransactionRunIdMock,
+}));
+
+vi.mock("@/lib/db/conversations", () => ({
+  conversationIdForUser: conversationIdForUserMock,
+}));
+
+vi.mock("@/lib/db/tool-approvals", () => ({
+  TOOL_APPROVAL_NAMES: [
+    "prepare_swap",
+    "prepare_deposit",
+    "prepare_withdrawal",
+  ],
+  getToolApproval: getToolApprovalMock,
+  recordToolApproval: recordToolApprovalMock,
 }));
 
 vi.mock("workflow/api", () => ({ start: startMock }));
@@ -120,6 +140,13 @@ describe("/api/intents/deposit", () => {
     });
     createExecutionQuoteMock.mockResolvedValue(execution);
     startMock.mockResolvedValue({ runId: "run-1" });
+    conversationIdForUserMock.mockResolvedValue(CONVERSATION_ID);
+    getToolApprovalMock.mockResolvedValue(null);
+    recordToolApprovalMock.mockResolvedValue({
+      decision: "approved",
+      toolName: "prepare_deposit",
+      decidedAt: new Date().toISOString(),
+    });
   });
 
   it("mints a same-asset external deposit for the session account", async () => {

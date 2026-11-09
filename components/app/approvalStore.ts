@@ -1,11 +1,15 @@
 /**
- * Settlement outcomes for decided approvals.
+ * Paint caches for decided cards.
  *
- * The paused-turn snapshot saved mid-stream keeps saying
- * "approval-requested" forever (the decided update shares its id), so the
- * card cannot rely on message parts alone. Every decision is recorded here —
- * in memory for the session and in localStorage across reloads and chat
- * switches — and the collector prefers it over a stale snapshot.
+ * A decision is a database row (`tool_approvals`) and a settlement is a
+ * transaction row; those are the record. This module only holds the small
+ * pieces a card already knew so a reload paints the right thing on the first
+ * frame instead of flashing a spinner until the server read lands — the
+ * transaction it polled, and the terminal state it last saw.
+ *
+ * Nothing here decides whether a card may be acted on. A refusal is never
+ * cached: it is written to the server by `/api/approvals/deny`, which is the
+ * only reason it survives a different browser.
  */
 
 export type ApprovalTx = {
@@ -14,7 +18,6 @@ export type ApprovalTx = {
 };
 
 const TX_KEY = "myntle.approval-tx.v1";
-const DENIED_KEY = "myntle.approval-denied.v1";
 const OUTCOME_KEY = "myntle.approval-outcome.v1";
 const MAX_ENTRIES = 200;
 
@@ -22,10 +25,10 @@ export type ApprovalOutcome =
   | "settled"
   | "refunded"
   | "incomplete"
+  | "expired"
   | "failed";
 
 const tx = new Map<string, ApprovalTx>();
-const denied = new Set<string>();
 const outcome = new Map<string, ApprovalOutcome>();
 let hydrated = false;
 
@@ -60,20 +63,11 @@ function hydrate(): void {
         }
       }
     }
-    const rawDenied = store.getItem(DENIED_KEY);
-    if (rawDenied) {
-      const parsed = JSON.parse(rawDenied) as string[];
-      if (Array.isArray(parsed)) {
-        for (const id of parsed.slice(-MAX_ENTRIES)) {
-          if (typeof id === "string") denied.add(id);
-        }
-      }
-    }
     const rawOutcome = store.getItem(OUTCOME_KEY);
     if (rawOutcome) {
       const parsed = JSON.parse(rawOutcome) as Record<string, ApprovalOutcome>;
       for (const [id, value] of Object.entries(parsed).slice(-MAX_ENTRIES)) {
-        if (value === "settled" || value === "refunded" || value === "failed" || value === "incomplete") {
+        if (value === "settled" || value === "refunded" || value === "failed" || value === "incomplete" || value === "expired") {
           outcome.set(id, value);
         }
       }
@@ -89,7 +83,6 @@ function persist(): void {
   try {
     const txEntries = [...tx.entries()].slice(-MAX_ENTRIES);
     store.setItem(TX_KEY, JSON.stringify(Object.fromEntries(txEntries)));
-    store.setItem(DENIED_KEY, JSON.stringify([...denied].slice(-MAX_ENTRIES)));
     const outcomeEntries = [...outcome.entries()].slice(-MAX_ENTRIES);
     store.setItem(OUTCOME_KEY, JSON.stringify(Object.fromEntries(outcomeEntries)));
   } catch {
@@ -100,7 +93,6 @@ function persist(): void {
 /** Resets all records. Only used by tests. */
 export function resetApprovalStore(): void {
   tx.clear();
-  denied.clear();
   outcome.clear();
   hydrated = false;
 }
@@ -115,12 +107,6 @@ export function rememberApprovalTx(approvalId: string, record: ApprovalTx): void
   persist();
 }
 
-export function rememberApprovalDenied(approvalId: string): void {
-  hydrate();
-  denied.add(approvalId);
-  persist();
-}
-
 export function getApprovalTx(approvalId: string): ApprovalTx | undefined {
   hydrate();
   return tx.get(approvalId);
@@ -129,6 +115,7 @@ export function getApprovalTx(approvalId: string): ApprovalTx | undefined {
 /**
  * Records a terminal settlement outcome so a reload paints it immediately
  * instead of flashing the Approved spinner until the first status poll lands.
+ * The poll still reconfirms against the server record.
  */
 export function rememberApprovalOutcome(
   approvalId: string,
@@ -148,9 +135,4 @@ export function getApprovalOutcome(
 ): ApprovalOutcome | undefined {
   hydrate();
   return outcome.get(approvalId);
-}
-
-export function isApprovalDenied(approvalId: string): boolean {
-  hydrate();
-  return denied.has(approvalId);
 }

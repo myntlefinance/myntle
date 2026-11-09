@@ -4,10 +4,16 @@ const {
   requireSessionMock,
   getQuoteMock,
   verifyWalletSignatureMock,
+  getToolApprovalMock,
+  recordToolApprovalMock,
+  conversationIdForUserMock,
 } = vi.hoisted(() => ({
   requireSessionMock: vi.fn(),
   getQuoteMock: vi.fn(),
   verifyWalletSignatureMock: vi.fn(),
+  getToolApprovalMock: vi.fn(),
+  recordToolApprovalMock: vi.fn(),
+  conversationIdForUserMock: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -29,6 +35,20 @@ vi.mock("@/lib/db/transactions", () => ({
   createQuote: vi.fn(),
   createTransaction: vi.fn(),
   setTransactionRunId: vi.fn(),
+}));
+
+vi.mock("@/lib/db/conversations", () => ({
+  conversationIdForUser: conversationIdForUserMock,
+}));
+
+vi.mock("@/lib/db/tool-approvals", () => ({
+  TOOL_APPROVAL_NAMES: [
+    "prepare_swap",
+    "prepare_deposit",
+    "prepare_withdrawal",
+  ],
+  getToolApproval: getToolApprovalMock,
+  recordToolApproval: recordToolApprovalMock,
 }));
 
 vi.mock("workflow/api", () => ({ start: vi.fn() }));
@@ -105,6 +125,8 @@ describe("/api/approve stored confidential mode guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     requireSessionMock.mockResolvedValue(walletSession);
+    getToolApprovalMock.mockResolvedValue(null);
+    conversationIdForUserMock.mockResolvedValue(null);
   });
 
   it("refuses a stored confidential quote before any signature work", async () => {
@@ -216,5 +238,38 @@ describe("/api/approve passkey guard", () => {
     // guard. The wallet route keeps its own validation.
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "An error occurred." });
+  });
+});
+
+describe("/api/approve decided proposal guard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireSessionMock.mockResolvedValue(walletSession);
+    conversationIdForUserMock.mockResolvedValue(null);
+    getQuoteMock.mockResolvedValue(storedQuote("chain"));
+  });
+
+  it("refuses a proposal that was rejected on another device", async () => {
+    getToolApprovalMock.mockResolvedValue({
+      decision: "denied",
+      toolName: "prepare_swap",
+      decidedAt: new Date().toISOString(),
+    });
+
+    const res = await POST(
+      new Request("http://localhost/api/approve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(approvalBody({ approvalId: "aitxt-denied" })),
+      }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: "denied",
+      message: "This proposal was rejected. Please ask for a new one.",
+    });
+    expect(getQuoteMock).not.toHaveBeenCalled();
+    expect(verifyWalletSignatureMock).not.toHaveBeenCalled();
   });
 });

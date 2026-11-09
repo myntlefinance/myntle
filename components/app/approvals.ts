@@ -13,13 +13,23 @@ import {
   type AssetMeta,
   type ToolPart,
 } from "./toolParts";
-import {
-  getApprovalTx,
-  isApprovalDenied,
-  rememberApprovalDenied,
-} from "./approvalStore";
+import { getApprovalTx } from "./approvalStore";
 
 export type ApprovalStatus = "awaiting" | "approved" | "denied";
+
+/** The server's record of a decision, keyed by tool approval id. */
+export type ApprovalDecisions = Record<string, "approved" | "denied">;
+
+/**
+ * What a decision route needs beyond the id: which proposal it was, and the
+ * stored preview the user was looking at. Every field is a reference, never a
+ * figure — the server reconstructs the terms from `quoteId`.
+ */
+export type ApprovalDecisionContext = {
+  toolName: "prepare_swap" | "prepare_deposit" | "prepare_withdrawal";
+  quoteId?: string;
+  requestedAt?: string;
+};
 
 /** One settlement row from the database, keyed by tool approval id. */
 export type SettlementSnapshot = {
@@ -27,6 +37,10 @@ export type SettlementSnapshot = {
   transactionId: string;
   depositAddress?: string | null;
   explorerUrls?: string[];
+  /** When 1Click was last read for this record. */
+  statusCheckedAt?: string | null;
+  /** The record's settled output, when it has one. */
+  amountOut?: string | null;
   /** The deposit address's token, chain, raw amount, and deadline. */
   deposit?: DepositMetadata | null;
 };
@@ -34,9 +48,10 @@ export type SettlementSnapshot = {
 /** Terminal database states painted directly; anything else keeps polling. */
 export function settlementCardState(
   state: string,
-): "settled" | "refunded" | "failed" | null {
+): "settled" | "refunded" | "failed" | "expired" | null {
   if (state === "settled") return "settled";
   if (state === "refunded") return "refunded";
+  if (state === "expired") return "expired";
   if (
     state === "failed" ||
     state === "incomplete_deposit" ||
@@ -110,6 +125,7 @@ export function collectApprovals(
   symbols: Map<string, string>,
   meta: Map<string, AssetMeta>,
   activeAddress?: string | null,
+  decisions?: ApprovalDecisions | null,
 ): ApprovalInfo[] {
   const parts = message.parts;
   // The card's birth is the host message's creation time: the row's
@@ -147,15 +163,16 @@ export function collectApprovals(
     const quoteId = str(quoted?.quoteId) || undefined;
     if (!fromAssetId || !toAssetId || !amount || !recipient) continue;
 
-    // The part state is the primary record; the store covers snapshots saved
-    // before the decision landed, which still read as "requested".
+    // The record is the primary truth: the message snapshot still says
+    // "approval requested" because it was written before the answer landed.
+    // The live part covers the moment between the click and the server read.
     const decision = approvalDecision(p);
-    if (decision === false) rememberApprovalDenied(approvalId);
+    const recorded = decisions?.[approvalId];
     const stored = getApprovalTx(approvalId);
-    const denied = decision === false || isApprovalDenied(approvalId);
+    const denied = recorded === "denied" || decision === false;
     const status: ApprovalStatus = denied
       ? "denied"
-      : decision === true || stored
+      : recorded === "approved" || decision === true || stored
         ? "approved"
         : "awaiting";
 
@@ -225,6 +242,39 @@ export function collectApprovals(
     });
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* the cards on screen                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Every tool approval id the rendered cards can carry.
+ *
+ * This is how the interface asks the record what happened: by the ids it is
+ * showing, not by conversation. A card from a first turn saved before the
+ * chat had a row, from a trashed chat, or from a device that never saw the
+ * decision all resolve to the same read.
+ */
+export function collectApprovalIds(messages: UIMessage[]): string[] {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    if (!Array.isArray(message.parts)) continue;
+    for (const part of message.parts) {
+      const p = part as ToolPart;
+      const name = toolNameOf(p);
+      if (
+        name !== "prepare_swap" &&
+        name !== "prepare_deposit" &&
+        name !== "prepare_withdrawal"
+      ) {
+        continue;
+      }
+      const id = approvalIdOf(p);
+      if (id) ids.add(id);
+    }
+  }
+  return [...ids];
 }
 
 /** Asset ids a turn touches, so missing metadata can resolve server-side. */
@@ -297,6 +347,7 @@ export function collectWithdrawals(
   message: UIMessage,
   symbols: Map<string, string>,
   meta: Map<string, AssetMeta>,
+  decisions?: ApprovalDecisions | null,
 ): WithdrawalInfo[] {
   const metadata = message.metadata as { createdAt?: unknown } | undefined;
   const requestedAt =
@@ -333,13 +384,15 @@ export function collectWithdrawals(
 
     const state = stateOf(p);
     const executed = state === "output-available" || state === "output-error";
+    // The record decides first: a withdrawal refused on another device is
+    // refused here too, and the snapshot cannot say otherwise.
     const decision = approvalDecision(p);
-    if (decision === false) rememberApprovalDenied(approvalId);
+    const recorded = decisions?.[approvalId];
     const stored = getApprovalTx(approvalId);
-    const denied = decision === false || isApprovalDenied(approvalId);
+    const denied = recorded === "denied" || decision === false;
     const status: ApprovalStatus = denied
       ? "denied"
-      : decision === true || stored || executed
+      : recorded === "approved" || decision === true || stored || executed
         ? "approved"
         : "awaiting";
 

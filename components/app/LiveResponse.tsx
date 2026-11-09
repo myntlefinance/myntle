@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useRef, type ReactNode } from "react";
 import type { UIMessage } from "ai";
 import ActivityPills, {
   type ActivityBlock,
@@ -26,7 +26,7 @@ import { depositCardStateForRecord } from "@/lib/intents/deposit-status";
 import { signIntentForSession } from "@/lib/intents/session-signer";
 import AssetMatrix from "@/components/finance/AssetMatrix";
 import AddressPill from "@/components/finance/AddressPill";
-import { UnlockedCard, UnlockRequestCard } from "@/components/app/UnlockCard";
+import { UnlockRequestCard } from "@/components/app/UnlockCard";
 import type { SupportedChain } from "@/components/atoms/TechDataChip";
 import type { AssetGroup } from "@/lib/wallet/balances";
 import {
@@ -36,6 +36,8 @@ import {
   collectApprovals,
   collectWithdrawals,
   settlementCardState,
+  type ApprovalDecisionContext,
+  type ApprovalDecisions,
   type SettlementSnapshot,
 } from "@/components/app/approvals";
 import { useResolvedAssetMeta } from "@/components/app/useAssetMeta";
@@ -43,7 +45,6 @@ import { useWallet } from "@/lib/wallet/registry";
 import { evmChainForSlug } from "@/lib/wallet/evm-chains";
 import { useAuth } from "@/lib/auth/auth-provider";
 import {
-  rememberApprovalDenied,
   rememberApprovalTx,
 } from "@/components/app/approvalStore";
 import {
@@ -85,13 +86,95 @@ export type LiveResponseProps = {
   interactive?: boolean;
   /** A later user message exists, so this turn is a record. */
   superseded?: boolean;
+  /** A later assistant turn answered this turn's unlock card. */
+  resolved?: boolean;
   onRegenerate?: () => void;
   /** Sends a fresh request when an expired unlock card offers one. */
   onRetry?: () => void;
-  onApproval?: (approvalId: string, approved: boolean) => void;
+  /** The chat these cards belong to, so a record can be linked to it. */
+  conversationId?: string | null;
+  /**
+   * Decisions on record for this turn's cards, keyed by tool approval id.
+   * `null` keeps the old whole-read semantics for callers that do not pass
+   * `pendingApprovalIds`: no card may act until the read lands.
+   */
+  decisions?: ApprovalDecisions | null;
+  onApproval?: (
+    approvalId: string,
+    approved: boolean,
+    context: ApprovalDecisionContext,
+  ) => void | Promise<void>;
   /** Database settlements by tool approval id; terminal ones paint at once. */
   settlements?: Record<string, SettlementSnapshot>;
+  /**
+   * Cards whose record has never been read. Their footer is a skeleton, not
+   * an empty decision row, until `/api/approvals/state` answers.
+   */
+  pendingApprovalIds?: ReadonlySet<string>;
+  /**
+   * Called once when a card scrolls into view. The host decides whether the
+   * card's record still needs a read; a card the user never looked at is
+   * never read. Returning `false` means the host was not ready (for example,
+   * the session is still resolving), so the card stays eligible.
+   */
+  onApprovalVisible?: (approvalId: string) => boolean | void;
 };
+
+/**
+ * Reports the first time a money card is actually on screen.
+ *
+ * A transcript can hold dozens of cards above and below the fold. Reading
+ * every record when the chat opens spends requests on cards nobody has
+ * looked at; this wrapper asks only for the one the reader reached. The
+ * observer disconnects after the first report, so scrolling back up does
+ * not repeat the read.
+ */
+function ApprovalVisibility({
+  approvalId,
+  onVisible,
+  className,
+  children,
+}: {
+  approvalId: string;
+  onVisible?: (approvalId: string) => boolean | void;
+  className?: string;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const reported = useRef(false);
+
+  useEffect(() => {
+    if (!onVisible || reported.current) return;
+    const element = ref.current;
+    if (!element) return;
+    // No observer: read once rather than leave the card a skeleton forever.
+    if (typeof IntersectionObserver === "undefined") {
+      if (onVisible(approvalId) === false) return;
+      reported.current = true;
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (reported.current) return;
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        // A host that is not ready yet leaves the card eligible, so the next
+        // callback identity (for example, a resolved session) can read it.
+        if (onVisible(approvalId) === false) return;
+        reported.current = true;
+        observer.disconnect();
+      },
+      { threshold: 0 },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [approvalId, onVisible]);
+
+  return (
+    <div ref={ref} className={className}>
+      {children}
+    </div>
+  );
+}
 
 /**
  * Memoized: the chat re-renders every message per streaming token, but a
@@ -111,10 +194,15 @@ export const LiveResponse = memo(function LiveResponseInner({
   status,
   interactive = false,
   superseded = false,
+  resolved = false,
   onRegenerate,
   onRetry,
+  conversationId,
+  decisions,
   onApproval,
   settlements,
+  pendingApprovalIds,
+  onApprovalVisible,
 }: LiveResponseProps) {
   const approvalIds = useMemo(
     () => collectApprovalAssetIds(message.parts),
@@ -229,24 +317,30 @@ export const LiveResponse = memo(function LiveResponseInner({
     return null;
   })();
 
-  // A continuation turn carries the unlock confirmation on the message, so
-  // the card can lead the reply without the model repeating it.
-  const justUnlocked =
-    (message.metadata as { superJustUnlocked?: unknown } | undefined)
-      ?.superJustUnlocked === true;
+  // A continuation turn no longer carries an unlock confirmation: the
+  // original card in the transcript is the record, and it morphs in place.
   const approvals = collectApprovals(
     message,
     symbols,
     assetMeta,
     account?.address ?? null,
+    decisions,
   );
-  const withdrawals = collectWithdrawals(message, symbols, assetMeta);
+  const withdrawals = collectWithdrawals(message, symbols, assetMeta, decisions);
   const withdrawalById = new Map(
     withdrawals.map((withdrawal) => [withdrawal.approvalId, withdrawal]),
   );
   const balanceViews = collectBalanceViews(message.parts);
   const balanceByCallId = new Map(balanceViews.map((b) => [b.callId, b]));
   const approvalById = new Map(approvals.map((a) => [a.approvalId, a]));
+
+  // An old host that does not pass the set keeps the original rule: while the
+  // whole decision read is null, no card may act. The chat passes the per-card
+  // set, so a card with a known cached record paints while the rest wait.
+  const cardPending = (approvalId: string) =>
+    pendingApprovalIds
+      ? pendingApprovalIds.has(approvalId)
+      : decisions === null;
 
   // Part index each card was born at. The pill row for the same call keeps
   // its place in the trace; the card mounts directly after it.
@@ -387,8 +481,8 @@ export const LiveResponse = memo(function LiveResponseInner({
     const a = approvalById.get(approvalId);
     if (!a) return null;
     // The database row wins when it exists: terminal states paint at
-    // once with no polling, and live rows poll the right record even on
-    // a device whose localStorage never saw the approval.
+    // once, and the active card watches the right record even on a device
+    // whose localStorage never saw the approval.
     const snap = settlements?.[a.approvalId] ?? null;
     const snapState = snap ? settlementCardState(snap.state) : null;
     // A passkey card is the intents path, not a restyle: it has no wallet
@@ -402,21 +496,33 @@ export const LiveResponse = memo(function LiveResponseInner({
       a.status === "denied"
         ? "denied"
         : (snapState ?? (a.status === "approved" ? "submitted" : "awaiting"));
+    const context: ApprovalDecisionContext = {
+      toolName: "prepare_swap",
+      quoteId: a.swapInput?.quoteId,
+      requestedAt: a.requestedAt,
+    };
     const approve = (tx?: { transactionId: string; depositAddress: string }) => {
       if (tx) rememberApprovalTx(a.approvalId, tx);
-      onApproval?.(a.approvalId, true);
+      onApproval?.(a.approvalId, true, context);
     };
-    const deny = () => {
-      rememberApprovalDenied(a.approvalId);
-      onApproval?.(a.approvalId, false);
-    };
+    // A refusal is a server write, not a local flag: the card awaits it and
+    // keeps offering the decision if it did not land.
+    const deny = () => onApproval?.(a.approvalId, false, context);
     return (
-      <div key={a.approvalId} className="mt-2.5">
+      <ApprovalVisibility
+        key={a.approvalId}
+        approvalId={a.approvalId}
+        onVisible={onApprovalVisible}
+        className="mt-2.5"
+      >
         <SentenceTradeCard
           // A passkey proposal is one signed confidential intent, which the
           // route submits as a swap. A wallet keeps the action it was given.
           action={passkeyIdentity ? "swap" : a.action}
           approvalId={a.approvalId}
+          conversationId={conversationId}
+          decisionPending={cardPending(a.approvalId)}
+          active={interactive && !superseded}
           fromSymbol={a.fromSymbol}
           fromChain={a.fromChain}
           toSymbol={a.toSymbol}
@@ -444,18 +550,21 @@ export const LiveResponse = memo(function LiveResponseInner({
               ? swapApproval({
                   quoteId: a.swapInput?.quoteId ?? "",
                   approvalId: a.approvalId,
+                  conversationId,
                   sign: swapSigner,
                 })
               : undefined
           }
           disabled={
+            !interactive ||
+            cardPending(a.approvalId) ||
             a.status !== "awaiting" ||
             (passkeyIdentity !== null && !a.swapInput?.quoteId)
           }
           onApprove={approve}
           onDeny={deny}
         />
-      </div>
+      </ApprovalVisibility>
     );
   }
 
@@ -477,26 +586,38 @@ export const LiveResponse = memo(function LiveResponseInner({
     const recordState = snap
       ? depositCardStateForRecord(snap.state, null, 0)
       : null;
+    // The decision record outranks the snapshot, exactly as it does for a
+    // swap: a deposit approved on another device must not offer Start again
+    // just because this browser never saw the click.
+    const recorded = decisions?.[approvalId] ?? null;
     const state: SentenceCardState =
-      decision === false || partState === "output-denied"
+      recorded === "denied" || decision === false || partState === "output-denied"
         ? "denied"
         : (recordState ??
-          (decision === true || executed ? "waiting" : "awaiting"));
+          (recorded === "approved" || decision === true || executed
+            ? "waiting"
+            : "awaiting"));
+    const context: ApprovalDecisionContext = {
+      toolName: "prepare_deposit",
+      requestedAt: createdAt ? new Date(createdAt).toISOString() : undefined,
+    };
     const approve = (tx?: {
       transactionId: string;
       depositAddress: string;
     }) => {
       if (tx) rememberApprovalTx(approvalId, tx);
-      onApproval?.(approvalId, true);
+      onApproval?.(approvalId, true, context);
     };
-    const deny = () => {
-      rememberApprovalDenied(approvalId);
-      onApproval?.(approvalId, false);
-    };
+    const deny = () => onApproval?.(approvalId, false, context);
     const symbol = assetName(entry.assetId, symbols);
     const amount = rawAmountLabel(entry.assetId, entry.amount);
     return (
-      <div key={approvalId} className="mt-2.5">
+      <ApprovalVisibility
+        key={approvalId}
+        approvalId={approvalId}
+        onVisible={onApprovalVisible}
+        className="mt-2.5"
+      >
         {/* A deposit has no signature to collect: the server mints the exact
             one-time address and the sender funds it from an exchange or
             another wallet. There is no wallet source clause for either kind
@@ -504,6 +625,10 @@ export const LiveResponse = memo(function LiveResponseInner({
         <SentenceTradeCard
           action="deposit"
           approvalId={approvalId}
+          conversationId={conversationId}
+          decisionPending={cardPending(approvalId)}
+          active={interactive && !superseded}
+          requestedAt={createdAt ? new Date(createdAt).toISOString() : undefined}
           fromSymbol={symbol}
           fromChain={assetMeta.get(entry.assetId)?.chain}
           toSymbol={symbol}
@@ -523,13 +648,19 @@ export const LiveResponse = memo(function LiveResponseInner({
             assetId: entry.assetId,
             amount: entry.amount,
             approvalId,
+            conversationId,
           })}
-          disabled={decision !== null}
+          disabled={
+            !interactive ||
+            cardPending(approvalId) ||
+            decision !== null ||
+            recorded !== null
+          }
           onApprove={approve}
           onDeny={deny}
           onRecord={(tx) => rememberApprovalTx(approvalId, tx)}
         />
-      </div>
+      </ApprovalVisibility>
     );
   }
 
@@ -557,13 +688,22 @@ export const LiveResponse = memo(function LiveResponseInner({
       withdrawal.amountIn ??
       rawAmountLabel(withdrawal.fromAssetId, withdrawal.amount);
     return (
-      <div key={approvalId} className="mt-2.5">
+      <ApprovalVisibility
+        key={approvalId}
+        approvalId={approvalId}
+        onVisible={onApprovalVisible}
+        className="mt-2.5"
+      >
         {/* The destination is the stored quote's, and the confidential
             deposit account is never passed: a withdrawal shows where the
             money lands, not the account the intent is signed against. */}
         <SentenceTradeCard
           action="withdraw"
           approvalId={approvalId}
+          conversationId={conversationId}
+          decisionPending={cardPending(approvalId)}
+          active={interactive && !superseded}
+          requestedAt={withdrawal.requestedAt}
           fromSymbol={withdrawal.fromSymbol}
           fromChain={withdrawal.fromChain}
           toSymbol={withdrawal.toSymbol}
@@ -577,16 +717,36 @@ export const LiveResponse = memo(function LiveResponseInner({
           expiresAt={withdrawal.expiresAt}
           state={state}
           transactionId={snap?.transactionId ?? withdrawal.transactionId}
+          initialExplorerUrls={snap?.explorerUrls}
+          initialReceived={snap?.amountOut ?? undefined}
           runApproval={withdrawalApproval({
             quoteId: withdrawal.quoteId ?? "",
             approvalId,
+            conversationId,
             sign: intentSigner,
           })}
-          disabled={withdrawal.status !== "awaiting" || !withdrawal.quoteId}
-          onApprove={() => onApproval?.(approvalId, true)}
-          onDeny={() => onApproval?.(approvalId, false)}
+          disabled={
+            !interactive ||
+            cardPending(approvalId) ||
+            withdrawal.status !== "awaiting" ||
+            !withdrawal.quoteId
+          }
+          onApprove={() =>
+            onApproval?.(approvalId, true, {
+              toolName: "prepare_withdrawal",
+              quoteId: withdrawal.quoteId,
+              requestedAt: withdrawal.requestedAt,
+            })
+          }
+          onDeny={() =>
+            onApproval?.(approvalId, false, {
+              toolName: "prepare_withdrawal",
+              quoteId: withdrawal.quoteId,
+              requestedAt: withdrawal.requestedAt,
+            })
+          }
         />
-      </div>
+      </ApprovalVisibility>
     );
   }
 
@@ -600,6 +760,7 @@ export const LiveResponse = memo(function LiveResponseInner({
         createdAt={createdAt}
         interactive={interactive}
         superseded={superseded}
+        resolved={resolved}
         onRetry={onRetry}
       />
     );
@@ -667,7 +828,6 @@ export const LiveResponse = memo(function LiveResponseInner({
       style={{ animation: "fade-in 300ms ease-out both" }}
     >
       <div className="flex flex-col gap-4">
-        {justUnlocked ? <UnlockedCard /> : null}
         {timeline.map((node, i) => {
           if (node.kind === "balance") return renderBalance(node.callId);
           if (node.kind === "approval") return renderApproval(node.approvalId);
@@ -700,7 +860,12 @@ export const LiveResponse = memo(function LiveResponseInner({
   prev.message === next.message &&
   prev.status === next.status &&
   prev.superseded === next.superseded &&
+  prev.resolved === next.resolved &&
   prev.settlements === next.settlements &&
+  prev.decisions === next.decisions &&
+  prev.pendingApprovalIds === next.pendingApprovalIds &&
+  prev.onApprovalVisible === next.onApprovalVisible &&
+  prev.conversationId === next.conversationId &&
   prev.interactive === next.interactive,
 );
 
@@ -802,27 +967,27 @@ function describeTool(
     case "get_wallet_balances":
       return balancesRow(part);
     case "get_quote":
-      return quoteRow(part, symbols, "Quoted a price");
+      return quoteRow(part, symbols, "Quoted a price", "chart");
     case "prepare_swap": {
       if (state === "approval-requested") {
-        const swap = quoteRow(part, symbols, "Proposed a trade");
+        const swap = quoteRow(part, symbols, "Proposed a trade", "swap");
         return { ...swap, chip: "awaiting approval", mono: false };
       }
       if (state === "approval-responded") {
-        const swap = quoteRow(part, symbols, "Proposed a trade");
+        const swap = quoteRow(part, symbols, "Proposed a trade", "swap");
         if (approvalDecision(part) === false) {
           return { ...swap, chip: "rejected", mono: false };
         }
         return swap;
       }
-      return quoteRow(part, symbols, "Proposed a trade");
+      return quoteRow(part, symbols, "Proposed a trade", "swap");
     }
     case "prepare_deposit": {
       const input = inputOf(part);
       const assetId = str(input.assetId) ?? "";
       const symbol = assetId ? assetName(assetId, symbols) : "deposit";
       const deposit: ToolStep = {
-        icon: "write",
+        icon: "deposit",
         label: "Proposed a deposit",
         chip: symbol,
         mono: true,
@@ -843,7 +1008,7 @@ function describeTool(
       const input = inputOf(part);
       const symbol = assetName(str(input.fromAssetId) ?? "", symbols);
       const withdrawal: ToolStep = {
-        icon: "write",
+        icon: "withdraw",
         label: "Proposed a withdrawal",
         chip: symbol,
         mono: true,
@@ -866,7 +1031,7 @@ function describeTool(
       return superBalancesRow(part);
     case "request_super_unlock":
       return {
-        icon: "write",
+        icon: "unlock",
         label: "Super account",
         chip: "unlock needed",
         mono: false,
@@ -884,7 +1049,7 @@ function describeTool(
       return pageRow(part);
     default:
       return {
-        icon: "run",
+        icon: "unknown",
         label: "Used a tool",
         chip: name.replace(/_/g, " "),
         mono: false,
@@ -896,25 +1061,40 @@ function describeTool(
 
 function iconFor(name: string): string {
   switch (name) {
+    case "get_supported_assets":
+      return "assets";
+    case "get_wallet_balances":
+      return "wallet";
     case "get_quote":
-    case "get_withdrawal_quote":
-    case "get_transaction_status":
-      return "run";
+      return "chart";
     case "prepare_swap":
+      return "swap";
     case "prepare_deposit":
+      return "deposit";
+    case "get_withdrawal_quote":
+      return "price";
     case "prepare_withdrawal":
+      return "withdraw";
+    case "get_transaction_status":
+      return "activity";
+    case "get_transaction_history":
+      return "history";
+    case "get_super_balances":
+      return "lock";
     case "request_super_unlock":
-      return "write";
+      return "unlock";
     case "get_google_news":
+    case "get_crypto_news":
+    case "get_market_news":
+      return "web";
     case "get_reddit_posts":
     case "get_x_posts":
     case "get_x_user_posts":
-    case "get_crypto_news":
-    case "get_market_news":
+      return "social";
     case "get_page_content":
-      return "read";
+      return "article";
     default:
-      return "read";
+      return "unknown";
   }
 }
 
@@ -1004,7 +1184,7 @@ function assetsRow(part: ToolPart): ToolStep {
   const entries = catalogueEntries(part);
   const done = entries.length > 0;
   return {
-    icon: "read",
+    icon: "assets",
     label: symbol ? `Looked up ${symbol}` : "Listed assets",
     chip: symbol
       ? done
@@ -1043,7 +1223,7 @@ function balancesRow(part: ToolPart): ToolStep {
       lines.push({ text: `+${balances.length - 4} more` });
     }
     return {
-      icon: "read",
+      icon: "wallet",
       label: "Read balances",
       chip: `${balances.length} ${balances.length === 1 ? "token" : "tokens"}`,
       mono: false,
@@ -1054,7 +1234,7 @@ function balancesRow(part: ToolPart): ToolStep {
 
   const entries = catalogueEntries(part);
   return {
-    icon: "read",
+    icon: "wallet",
     label: "Read balances",
     chip: entries.length > 0 ? `${entries.length} assets` : "balances",
     mono: false,
@@ -1068,7 +1248,7 @@ function superBalancesRow(part: ToolPart): ToolStep {
 
   if (output.status === "locked") {
     return {
-      icon: "write",
+      icon: "lock",
       label: "Read private balance",
       chip: "locked",
       mono: false,
@@ -1079,7 +1259,7 @@ function superBalancesRow(part: ToolPart): ToolStep {
 
   if (output.status === "error") {
     return {
-      icon: "read",
+      icon: "lock",
       label: "Read private balance",
       chip: "unavailable",
       mono: false,
@@ -1104,7 +1284,7 @@ function superBalancesRow(part: ToolPart): ToolStep {
       lines.push({ text: `+${balances.length - 4} more` });
     }
     return {
-      icon: "read",
+      icon: "lock",
       label: "Read private balance",
       chip: `${balances.length} ${balances.length === 1 ? "token" : "tokens"}`,
       mono: false,
@@ -1114,7 +1294,7 @@ function superBalancesRow(part: ToolPart): ToolStep {
   }
 
   return {
-    icon: "read",
+    icon: "lock",
     label: "Read private balance",
     chip: "empty",
     mono: false,
@@ -1127,6 +1307,7 @@ function quoteRow(
   part: ToolPart,
   symbols: Map<string, string>,
   label: string,
+  icon: string,
 ): ToolStep {
   const input = inputOf(part);
   const output = outputOf(part);
@@ -1159,7 +1340,7 @@ function quoteRow(
   }
 
   return {
-    icon: label === "Proposed a trade" ? "write" : "run",
+    icon,
     label,
     chip:
       amountIn && amountOut && from && to
@@ -1194,7 +1375,7 @@ function withdrawalQuoteRow(
   if (fee) detail.push({ text: `Fee ${formatNum(fee)} ${fromSymbol}` });
 
   return {
-    icon: "run",
+    icon: "price",
     label: "Priced a withdrawal",
     chip:
       amountIn && destination
@@ -1221,7 +1402,7 @@ function statusRow(part: ToolPart): ToolStep {
     });
   }
   return {
-    icon: "run",
+    icon: "activity",
     label: "Checked a trade",
     chip:
       state != null
@@ -1242,7 +1423,7 @@ function historyRow(part: ToolPart): ToolStep {
   const trades = Array.isArray(output.trades) ? output.trades : null;
   const note = str(output.note);
   return {
-    icon: "read",
+    icon: "history",
     label: "Listed trades",
     chip: trades != null ? `${trades.length} trades` : "history",
     mono: false,
@@ -1284,7 +1465,7 @@ function newsRow(name: string, part: ToolPart): ToolStep {
   });
   if (items.length > 4) detail.push({ text: `+${items.length - 4} more` });
   return {
-    icon: "read",
+    icon: isWeb ? "web" : "social",
     label,
     chip: done
       ? `${items.length} ${items.length === 1 ? "story" : "stories"}`
@@ -1368,7 +1549,7 @@ function pageRow(part: ToolPart): ToolStep {
       ? (domainOf(str(pages[0]?.url) ?? requested[0] ?? null) ?? "article")
       : null;
   return {
-    icon: "read",
+    icon: "article",
     label: "Reading articles",
     chip: singleDomain ?? (total > 1 ? `${total} articles` : "article"),
     /* the domain is an identifier; titles and counts are prose */

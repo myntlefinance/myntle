@@ -15,6 +15,8 @@ import {
   passkeyWalletRouteGuard,
 } from "@/lib/intents/route-policy";
 import { evmChainForSlug } from "@/lib/wallet/evm-chains";
+import { conversationIdForUser } from "@/lib/db/conversations";
+import { getToolApproval, recordToolApproval } from "@/lib/db/tool-approvals";
 import {
   createApproval,
   createQuote,
@@ -43,7 +45,7 @@ const Body = z.object({
   recipientField: z.string().max(200).optional(),
   nonce: z.string().max(128).optional(),
   txHash: z.string().optional(),
-  conversationId: z.string().uuid().optional(),
+  conversationId: z.string().max(200).optional(),
   /** Tool approval id (aitxt-…), so the card can rejoin its row on reload. */
   approvalId: z.string().max(200).optional(),
 });
@@ -81,6 +83,33 @@ export async function POST(req: Request) {
   } catch {
     console.error("[approve] invalid body");
     return NextResponse.json({ error: "An error occurred." }, { status: 400 });
+  }
+
+  // The card names the chat it belongs to. Resolve it here so the record is
+  // never linked to someone else's conversation, and so a slug and a uuid
+  // both work. An unknown chat costs the link, never the trade.
+  const conversationId = body.conversationId
+    ? await conversationIdForUser(session.userId, body.conversationId).catch(
+        () => null,
+      )
+    : null;
+
+  // A proposal refused in another tab, or on another device, stays refused.
+  // This is answered before the quote, the signature, or any chain work.
+  if (body.approvalId) {
+    const decided = await getToolApproval(
+      session.userId,
+      body.approvalId,
+    ).catch(() => null);
+    if (decided?.decision === "denied") {
+      return NextResponse.json(
+        {
+          error: "denied",
+          message: "This proposal was rejected. Please ask for a new one.",
+        },
+        { status: 409 },
+      );
+    }
   }
 
   // The browser POST is a claim. The stored dry preview is truth: load
@@ -318,7 +347,7 @@ export async function POST(req: Request) {
     // links to it, while body.quoteId remains the dry preview it matched.
     const wetQuoteId = await createQuote({
       userId: session.userId,
-      conversationId: body.conversationId ?? null,
+      conversationId,
       request: {
         fromAssetId: storedParams.fromAssetId,
         toAssetId: storedParams.toAssetId,
@@ -339,7 +368,7 @@ export async function POST(req: Request) {
     const tx = await createTransaction({
       userId: session.userId,
       approvalId,
-      conversationId: body.conversationId ?? null,
+      conversationId,
       recipient: storedParams.recipient,
       refundTo: storedParams.refundTo,
       originAsset: storedParams.fromAssetId,
@@ -347,8 +376,30 @@ export async function POST(req: Request) {
       amountIn: execution.amountInFormatted,
       expectedOut: execution.amountOutFormatted,
       depositAddress: execution.depositAddress,
+      toolApprovalId: body.approvalId ?? null,
       refs: { txHash: body.txHash ?? null, toolApprovalId: body.approvalId ?? null },
     });
+
+    // The approval is only real once a record exists, so it is written here
+    // rather than when the button was pressed. A failure costs the decision
+    // row, never the trade: the card still rejoins through the transaction.
+    if (body.approvalId) {
+      try {
+        await recordToolApproval({
+          userId: session.userId,
+          toolApprovalId: body.approvalId,
+          toolName: "prepare_swap",
+          decision: "approved",
+          conversationId,
+          quoteId: body.quoteId,
+          requestedAt: body.requestedAt,
+        });
+      } catch {
+        console.error("[approve] decision record failed", {
+          transactionId: tx.id,
+        });
+      }
+    }
 
     const run = await start(swapLifecycle, [
       {

@@ -21,6 +21,29 @@ export function conversationFilter(value: string): string {
   if (UUID_RE.test(v)) return `id.eq.${v}`;
   return `slug.eq.${v}`;
 }
+
+/**
+ * Resolves a chat the user owns, by slug or uuid, including one in the trash.
+ *
+ * Money routes take the conversation id from the browser, so it is resolved
+ * and ownership-checked here before it is written onto a record. A chat that
+ * has been trashed still counts: the decision and the settlement belong to
+ * the turn, not to the sidebar.
+ */
+export async function conversationIdForUser(
+  userId: string,
+  conversationIdOrSlug: string,
+): Promise<string | null> {
+  const sb = getSupabaseAdmin();
+  const { data } = await sb
+    .from("conversations")
+    .select("id")
+    .eq("user_id", userId)
+    .or(conversationFilter(conversationIdOrSlug))
+    .maybeSingle();
+  return ((data as { id: string } | null)?.id) ?? null;
+}
+
 export async function ensureConversation(args: {
   userId: string;
   conversationId?: string;

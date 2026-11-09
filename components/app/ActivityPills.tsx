@@ -31,11 +31,130 @@ export type ActivityBlock =
   | { kind: "tools"; steps: ToolStep[] }
   | { kind: "text"; text: string };
 
+/* One glyph per kind of work, taken from Tabler's outline set on the 24px
+ * grid the row draws at 13px. The label says what happened; the glyph says
+ * which kind of thing happened, so a balance read and a settled trade are
+ * distinguishable without reading the chip. */
+const STROKE = {
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+} as const;
+
 const ICONS: Record<string, ReactNode> = {
   think: <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z" />,
-  write: <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" /></g>,
-  run: <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 17l6-5-6-5M12 19h8" /></g>,
-  read: <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></g>,
+  /* the run header's glyph — the rows below it each carry their own */
+  run: (
+    <g {...STROKE}>
+      <path d="M4 17l6 -5l-6 -5" />
+      <path d="M12 19h8" />
+    </g>
+  ),
+  assets: (
+    <g {...STROKE}>
+      <path d="M9 6l11 0" />
+      <path d="M9 12l11 0" />
+      <path d="M9 18l11 0" />
+      <path d="M5 6l0 .01" />
+      <path d="M5 12l0 .01" />
+      <path d="M5 18l0 .01" />
+    </g>
+  ),
+  wallet: (
+    <g {...STROKE}>
+      <path d="M17 8v-3a1 1 0 0 0 -1 -1h-10a2 2 0 0 0 0 4h12a1 1 0 0 1 1 1v3m0 4v3a1 1 0 0 1 -1 1h-12a2 2 0 0 1 -2 -2v-12" />
+      <path d="M20 12v4h-4a2 2 0 0 1 0 -4h4" />
+    </g>
+  ),
+  chart: (
+    <g {...STROKE}>
+      <path d="M4 19l16 0" />
+      <path d="M4 15l4 -6l4 2l4 -5l4 4" />
+    </g>
+  ),
+  swap: (
+    <g {...STROKE}>
+      <path d="M7 10h14l-4 -4" />
+      <path d="M17 14h-14l4 4" />
+    </g>
+  ),
+  deposit: (
+    <g {...STROKE}>
+      <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" />
+      <path d="M7 11l5 5l5 -5" />
+      <path d="M12 4l0 12" />
+    </g>
+  ),
+  price: (
+    <g {...STROKE}>
+      <path d="M6.5 7.5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+      <path d="M3 6v5.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l5.592 -5.592a2.41 2.41 0 0 0 0 -3.408l-7.71 -7.71a2 2 0 0 0 -1.414 -.586h-5.172a3 3 0 0 0 -3 3" />
+    </g>
+  ),
+  withdraw: (
+    <g {...STROKE}>
+      <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" />
+      <path d="M7 9l5 -5l5 5" />
+      <path d="M12 4l0 12" />
+    </g>
+  ),
+  activity: (
+    <g {...STROKE}>
+      <path d="M3 12h4l3 8l4 -16l3 8h4" />
+    </g>
+  ),
+  history: (
+    <g {...STROKE}>
+      <path d="M12 8l0 4l2 2" />
+      <path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5" />
+    </g>
+  ),
+  lock: (
+    <g {...STROKE}>
+      <path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6" />
+      <path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0" />
+      <path d="M8 11v-4a4 4 0 1 1 8 0v4" />
+    </g>
+  ),
+  unlock: (
+    <g {...STROKE}>
+      <path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2l0 -6" />
+      <path d="M11 16a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+      <path d="M8 11v-5a4 4 0 0 1 8 0" />
+    </g>
+  ),
+  web: (
+    <g {...STROKE}>
+      <path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" />
+      <path d="M3.6 9h16.8" />
+      <path d="M3.6 15h16.8" />
+      <path d="M11.5 3a17 17 0 0 0 0 18" />
+      <path d="M12.5 3a17 17 0 0 1 0 18" />
+    </g>
+  ),
+  social: (
+    <g {...STROKE}>
+      <path d="M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1" />
+    </g>
+  ),
+  article: (
+    <g {...STROKE}>
+      <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+      <path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2" />
+      <path d="M9 9l1 0" />
+      <path d="M9 13l6 0" />
+      <path d="M9 17l6 0" />
+    </g>
+  ),
+  unknown: (
+    <g {...STROKE}>
+      <path d="M4 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+      <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+      <path d="M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+    </g>
+  ),
 };
 
 /** the shimmering in-flight label, same text treatment as the loader */
@@ -263,7 +382,7 @@ function ToolsPill({
                       stroke="currentColor"
                       className={`transition-opacity duration-100 ${expandable ? "group-hover/row:opacity-0" : ""} ${rowOpen ? "opacity-0" : ""}`}
                     >
-                      {ICONS[row.icon]}
+                      {ICONS[row.icon] ?? ICONS.unknown}
                     </svg>
                     {expandable && (
                       <svg

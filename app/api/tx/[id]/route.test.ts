@@ -128,7 +128,10 @@ describe("GET /api/tx/[id]?refresh=1", () => {
 
     expect(res.status).toBe(200);
     expect(getStatusMock).toHaveBeenCalledTimes(1);
-    expect(getStatusMock).toHaveBeenCalledWith(DEPOSIT, null);
+    expect(getStatusMock).toHaveBeenCalledWith(DEPOSIT, null, {
+      originAssetId: ASSET,
+      destinationAssetId: ASSET,
+    });
     // The quote is still valid, so a timed-out workflow is repaired, not
     // reported as a failed deposit.
     expect(setTransactionStateMock).toHaveBeenCalledTimes(1);
@@ -145,6 +148,21 @@ describe("GET /api/tx/[id]?refresh=1", () => {
     });
   });
 
+  it("writes nothing when the state did not move", async () => {
+    getTransactionMock.mockResolvedValue({
+      tx: transaction({ state: "pending" }),
+      events: [],
+    });
+
+    const res = await GET(request("?refresh=1"), params());
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect(body.state).toBe("pending");
+    expect(body.statusCheck).toBe("ok");
+    expect(setTransactionStateMock).not.toHaveBeenCalled();
+  });
+
   it("passes a memo-bearing address its memo to the status check", async () => {
     const tx = transaction();
     tx.refs = { ...tx.refs, depositMemo: "memo-1" };
@@ -152,7 +170,10 @@ describe("GET /api/tx/[id]?refresh=1", () => {
 
     await GET(request("?refresh=1"), params());
 
-    expect(getStatusMock).toHaveBeenCalledWith(DEPOSIT, "memo-1");
+    expect(getStatusMock).toHaveBeenCalledWith(DEPOSIT, "memo-1", {
+      originAssetId: ASSET,
+      destinationAssetId: ASSET,
+    });
   });
 
   it("does not check anything without the refresh flag", async () => {
@@ -181,6 +202,22 @@ describe("GET /api/tx/[id]?refresh=1", () => {
   it("writes Expired when PENDING_DEPOSIT is past the stored deadline", async () => {
     const tx = transaction();
     tx.refs = { ...tx.refs, expiresAt: PAST };
+    getTransactionMock.mockResolvedValue({ tx, events: [] });
+
+    const body = (await (
+      await GET(request("?refresh=1"), params())
+    ).json()) as Record<string, unknown>;
+
+    expect(body.state).toBe("expired");
+    expect(setTransactionStateMock).toHaveBeenCalledWith(TX, "expired", {});
+  });
+
+  it("writes Expired inside the fifteen-minute safety margin", async () => {
+    const tx = transaction();
+    tx.refs = {
+      ...tx.refs,
+      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    };
     getTransactionMock.mockResolvedValue({ tx, events: [] });
 
     const body = (await (
@@ -227,9 +264,40 @@ describe("GET /api/tx/[id]?refresh=1", () => {
     expect(setTransactionStateMock).toHaveBeenCalledWith(TX, "confirming", {});
   });
 
-  it("does not refresh a terminal record", async () => {
+  it("repairs a settled record that was stored without its link", async () => {
     getTransactionMock.mockResolvedValue({
       tx: transaction({ state: "settled" }),
+      events: [],
+    });
+    getStatusMock.mockResolvedValue(
+      status({
+        state: "settled",
+        status: "SUCCESS",
+        explorerUrls: ["https://arbiscan.io/tx/0xabc"],
+      }),
+    );
+
+    const body = (await (
+      await GET(request("?refresh=1"), params())
+    ).json()) as Record<string, unknown>;
+
+    // 1Click reports the hash and no URL, so a settled record written before
+    // the app built links is repaired by the same one-shot check.
+    expect(getStatusMock).toHaveBeenCalledTimes(1);
+    expect(setTransactionStateMock).toHaveBeenCalledWith(TX, "settled", {
+      explorerUrls: ["https://arbiscan.io/tx/0xabc"],
+    });
+    expect(body.outcome).toEqual({
+      explorerUrls: ["https://arbiscan.io/tx/0xabc"],
+    });
+  });
+
+  it("does not refresh a settled record that already has its link", async () => {
+    getTransactionMock.mockResolvedValue({
+      tx: transaction({
+        state: "settled",
+        outcome: { explorerUrls: ["https://arbiscan.io/tx/0xabc"] },
+      }),
       events: [],
     });
 

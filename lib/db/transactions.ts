@@ -25,6 +25,8 @@ export type TxRow = {
   user_id: string;
   approval_id: string | null;
   conversation_id: string | null;
+  /** The tool approval id of the card that produced this trade, if any. */
+  tool_approval_id: string | null;
   state: TxState;
   deposit_address: string | null;
   workflow_run_id: string | null;
@@ -36,6 +38,8 @@ export type TxRow = {
   expected_out: string | null;
   refs: Record<string, unknown>;
   outcome: Record<string, unknown>;
+  /** When the settlement status was last read from 1Click. */
+  status_checked_at?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -126,6 +130,8 @@ export async function createTransaction(args: {
   expectedOut: string;
   depositAddress: string;
   workflowRunId?: string | null;
+  /** The card this trade answers, so it can rejoin its record by id. */
+  toolApprovalId?: string | null;
   refs?: Record<string, unknown>;
   /**
    * The wallet direct route starts life submitted because the wallet has
@@ -152,6 +158,7 @@ export async function createTransaction(args: {
       expected_out: args.expectedOut,
       deposit_address: args.depositAddress,
       workflow_run_id: args.workflowRunId ?? null,
+      tool_approval_id: args.toolApprovalId ?? null,
       refs: args.refs ?? {},
     })
     .select("*")
@@ -217,6 +224,66 @@ export async function setTransactionState(
   await sb.from("transactions").update(patch).eq("id", id);
 }
 
+/**
+ * Whether the database has the dedicated status-check column.
+ *
+ * Migration 007 adds it. A database that has not run the migration must not
+ * lose every settlement card or strand a workflow at its first state: reads
+ * fall back to the columns that exist, and a state write omits only the stamp.
+ * The freshness timestamp is then unavailable; the record still moves.
+ */
+let statusCheckedAtColumn: boolean | null = null;
+let warnedMissingStatusColumn = false;
+
+function missingStatusCheckedAt(error: {
+  code?: string;
+  message?: string;
+} | null): boolean {
+  if (!error) return false;
+  // PostgREST names the missing column; a different 42703 must not be
+  // mistaken for the optional stamp.
+  return /status_checked_at/.test(error.message ?? "");
+}
+
+function noteMissingStatusColumn(): void {
+  statusCheckedAtColumn = false;
+  if (warnedMissingStatusColumn) return;
+  warnedMissingStatusColumn = true;
+  console.warn(
+    "[transactions] status_checked_at is missing; apply " +
+      "supabase/migrations/007_status_checked_at.sql. Settlement writes " +
+      "continue without the status stamp.",
+  );
+}
+
+/**
+ * Record a settlement state together with the moment it was read.
+ *
+ * The workflow owns this write. When the database predates migration 007 the
+ * state still lands; only the stamp is left out, so a missing migration
+ * degrades freshness metadata rather than freezing every deposit.
+ */
+export async function setTransactionStatus(
+  id: string,
+  state: TxState,
+  checkedAt: string,
+): Promise<void> {
+  const sb = getSupabaseAdmin();
+  if (statusCheckedAtColumn !== false) {
+    const { error } = await sb
+      .from("transactions")
+      .update({ state, status_checked_at: checkedAt })
+      .eq("id", id);
+    if (!error) {
+      statusCheckedAtColumn = true;
+      return;
+    }
+    if (!missingStatusCheckedAt(error)) return;
+    noteMissingStatusColumn();
+  }
+  await sb.from("transactions").update({ state }).eq("id", id);
+}
+
 export async function setTransactionRunId(
   id: string,
   runId: string,
@@ -268,68 +335,91 @@ export async function getTransaction(
   };
 }
 
-export type ConversationSettlement = {
+export type ToolApprovalSettlement = {
   toolApprovalId: string;
   transactionId: string;
   state: TxState;
   depositAddress: string | null;
   explorerUrls: string[];
+  /** When 1Click was last read for this record; a real status-check stamp. */
+  statusCheckedAt: string | null;
+  /** The record's settled output, read from the outcome and never priced. */
+  amountOut: string | null;
   /** The one-time address, token, chain, raw amount, and deadline. */
   deposit: DepositMetadata | null;
 };
 
-/** Every settlement in one conversation, keyed by tool approval id. */
-export async function listConversationSettlements(
+/**
+ * Every settlement for a set of cards, keyed by tool approval id.
+ *
+ * The interface asks by the ids it is rendering, so a card rejoins its record
+ * even when the transaction's conversation link is missing, the chat was
+ * trashed, or the decision was taken before the chat had a server row. Newer
+ * rows overwrite older ones for the same id, which is the same order the
+ * conversation read used.
+ */
+export async function listToolApprovalSettlements(
   userId: string,
-  conversationIdOrSlug: string,
-): Promise<ConversationSettlement[]> {
+  toolApprovalIds: string[],
+): Promise<ToolApprovalSettlement[]> {
+  const ids = [...new Set(toolApprovalIds)].slice(0, 200);
+  if (ids.length === 0) return [];
   const sb = getSupabaseAdmin();
-  const filter = conversationIdOrSlug.replace(/"/g, "");
-  const uuidRe =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const orFilter = uuidRe.test(filter)
-    ? `id.eq.${filter}`
-    : `slug.eq.${filter}`;
-  const { data: conv } = await sb
-    .from("conversations")
-    .select("id")
-    .eq("user_id", userId)
-    .is("deleted_at", null)
-    .or(orFilter)
-    .maybeSingle();
-  if (!conv) return [];
-  const { data } = await sb
-    .from("transactions")
-    .select("id, state, deposit_address, refs, outcome")
-    .eq("user_id", userId)
-    .eq("conversation_id", (conv as { id: string }).id)
-    .order("created_at", { ascending: true });
-  const out: ConversationSettlement[] = [];
-  for (const row of (data ?? []) as Array<{
-    id: string;
-    state: TxState;
-    deposit_address: string | null;
-    refs: Record<string, unknown> | null;
-    outcome: Record<string, unknown> | null;
-  }>) {
-    const toolApprovalId = row.refs?.toolApprovalId;
-    if (typeof toolApprovalId !== "string" || toolApprovalId.length === 0) {
-      continue;
+  const byId = new Map<string, ToolApprovalSettlement>();
+  // Chunked for the same reason the decision read is: the filter travels in
+  // the query string, and the ids partition, so batches cannot interleave.
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const columns =
+      "id, state, deposit_address, refs, outcome, tool_approval_id";
+    const read = (selection: string) =>
+      sb
+        .from("transactions")
+        .select(selection)
+        .eq("user_id", userId)
+        .in("tool_approval_id", batch)
+        .order("created_at", { ascending: true });
+    let result = await read(
+      statusCheckedAtColumn === false
+        ? columns
+        : `${columns}, status_checked_at`,
+    );
+    // A database that predates migration 007 must still return the record.
+    // Blank settlements are worse than a missing timestamp: the card loses
+    // its address, its metadata, and its funding controls.
+    if (result.error && missingStatusCheckedAt(result.error)) {
+      noteMissingStatusColumn();
+      result = await read(columns);
     }
-    const urls = (row.outcome as { explorerUrls?: unknown } | null)
-      ?.explorerUrls;
-    out.push({
-      toolApprovalId,
-      transactionId: row.id,
-      state: row.state,
-      depositAddress: row.deposit_address,
-      explorerUrls: Array.isArray(urls)
-        ? urls.filter((u): u is string => typeof u === "string").slice(0, 2)
-        : [],
-      deposit: readDepositMetadata(row.refs, row.deposit_address),
-    });
+    for (const row of (result.data ?? []) as unknown as Array<{
+      id: string;
+      state: TxState;
+      deposit_address: string | null;
+      refs: Record<string, unknown> | null;
+      outcome: Record<string, unknown> | null;
+      tool_approval_id: string | null;
+      status_checked_at?: string | null;
+    }>) {
+      if (!row.tool_approval_id) continue;
+      const urls = (row.outcome as { explorerUrls?: unknown } | null)
+        ?.explorerUrls;
+      const amountOut = (row.outcome as { amountOut?: unknown } | null)
+        ?.amountOut;
+      byId.set(row.tool_approval_id, {
+        toolApprovalId: row.tool_approval_id,
+        transactionId: row.id,
+        state: row.state,
+        depositAddress: row.deposit_address,
+        explorerUrls: Array.isArray(urls)
+          ? urls.filter((u): u is string => typeof u === "string").slice(0, 2)
+          : [],
+        statusCheckedAt: row.status_checked_at ?? null,
+        amountOut: typeof amountOut === "string" ? amountOut : null,
+        deposit: readDepositMetadata(row.refs, row.deposit_address),
+      });
+    }
   }
-  return out;
+  return [...byId.values()];
 }
 
 export type HistoryItem = {

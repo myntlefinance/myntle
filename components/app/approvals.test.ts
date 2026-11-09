@@ -46,6 +46,7 @@ function collect(
   meta: Record<string, { symbol: string; chain?: string; priceUsd?: number }> = {},
   activeAddress?: string | null,
   tickers: [string, string][] = [],
+  decisions?: Record<string, "approved" | "denied"> | null,
 ) {
   return collectApprovals(
     {
@@ -57,6 +58,7 @@ function collect(
     new Map(tickers),
     new Map(Object.entries(meta)),
     activeAddress,
+    decisions,
   );
 }
 
@@ -476,6 +478,7 @@ describe("settlementCardState", () => {
     ["needs_reconciliation", "failed"],
     ["refunded", "refunded"],
     ["settled", "settled"],
+    ["expired", "expired"],
   ])("paints %s as %s", (state, painted) => {
     expect(settlementCardState(state)).toBe(painted);
   });
@@ -484,5 +487,52 @@ describe("settlementCardState", () => {
     for (const state of ["pending", "confirming", "processing", "submitted"]) {
       expect(settlementCardState(state)).toBeNull();
     }
+  });
+});
+
+describe("collectApprovals from the record", () => {
+  beforeEach(() => {
+    resetApprovalStore();
+  });
+
+  // The paused snapshot is saved before the decision exists and is never
+  // rewritten, so a reloaded part still says "approval requested". The record
+  // is what decides, on every device.
+  it("paints a refusal the snapshot never heard about", () => {
+    const [info] = collect(
+      [quotePart(), swapPart("approval-requested", { id: "ap-r1" })],
+      undefined,
+      {},
+      null,
+      [],
+      { "ap-r1": "denied" },
+    );
+    expect(info?.status).toBe("denied");
+  });
+
+  it("paints an approval the snapshot never heard about", () => {
+    const [info] = collect(
+      [quotePart(), swapPart("approval-requested", { id: "ap-r2" })],
+      undefined,
+      {},
+      null,
+      [],
+      { "ap-r2": "approved" },
+    );
+    expect(info?.status).toBe("approved");
+    // The proposal is spent, so the host must not offer it again.
+    expect(info?.swapInput).toBeUndefined();
+  });
+
+  it("leaves an undecided card awaiting", () => {
+    const [info] = collect(
+      [quotePart(), swapPart("approval-requested", { id: "ap-r3" })],
+      undefined,
+      {},
+      null,
+      [],
+      {},
+    );
+    expect(info?.status).toBe("awaiting");
   });
 });
