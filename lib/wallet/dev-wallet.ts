@@ -93,6 +93,9 @@ export function installDevWallet(rawKey: string): void {
 
   let account = privateKeyToAccount(storedKey() ?? privateKey);
   let chain: Chain = mainnet;
+  // A real extension keeps its site grant until the site revokes it, so the
+  // account is only advertised while this wallet has authorised the page.
+  let authorised = true;
   const listeners = new Map<string, Set<Listener>>();
 
   const emit = (event: string, ...args: unknown[]) => {
@@ -117,8 +120,18 @@ export function installDevWallet(rawKey: string): void {
     }): Promise<unknown> {
       switch (method) {
         case "eth_requestAccounts":
-        case "eth_accounts":
+          authorised = true;
           return [account.address];
+
+        case "eth_accounts":
+          return authorised ? [account.address] : [];
+
+        case "wallet_revokePermissions":
+          // MetaMask's disconnect method. wagmi calls it on sign-out and
+          // treats an empty account list as the connection ending.
+          authorised = false;
+          emit("accountsChanged", []);
+          return null;
 
         case "eth_chainId":
           return numberToHex(chain.id);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useAccount, useChainId, useConfig, useConnect, useDisconnect, useSendTransaction, useSignMessage, useSwitchChain, useWriteContract } from "wagmi";
+import { useAccount, useChainId, useConfig, useConnect, useDisconnect, useSendTransaction, useSignMessage, useSwitchChain, useWriteContract, ConnectorAlreadyConnectedError } from "wagmi";
 import { waitForTransactionReceipt } from "wagmi/actions";
 import { useCallback, useMemo } from "react";
 import { erc20Abi } from "viem";
@@ -17,7 +17,7 @@ import { fromHex, type ConnectedWallet } from "./types";
 export function useEvmWallet() {
   const { address, connector, isConnected } = useAccount();
   const { connectAsync, connectors, isPending } = useConnect();
-  const { disconnect } = useDisconnect();
+  const { disconnectAsync } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
   const { sendTransactionAsync } = useSendTransaction();
   const { writeContractAsync } = useWriteContract();
@@ -74,12 +74,50 @@ export function useEvmWallet() {
       // connectAsync waits for the wallet's approval. The plain `connect`
       // returns void immediately, which is what made the picker report
       // success before the user had approved anything.
-      const result = await connectAsync({ connector });
-      const next = result.accounts?.[0] ?? address;
-      if (!next) throw new Error("This wallet did not share an account");
-      return next;
+      try {
+        const result = await connectAsync({ connector });
+        const next = result.accounts?.[0] ?? address;
+        if (!next) throw new Error("This wallet did not share an account");
+        return next;
+      } catch (cause) {
+        // A sign-out that could not release this connector leaves it
+        // connected. The user picked it again in the selector, so reuse the
+        // live connection rather than failing the log-in on a technicality.
+        if (cause instanceof ConnectorAlreadyConnectedError) {
+          const connected = config.state.connections.get(connector.uid);
+          const next = connected?.accounts[0] ?? address;
+          if (next) return next;
+        }
+        throw cause;
+      }
     },
-    disconnect: async () => disconnect(),
+    // `disconnectAsync` resolves after wagmi has actually dropped the
+    // connection. The plain `disconnect` only starts the mutation, so a
+    // caller that awaited it could still read the old account — which is
+    // what showed "Sign In" after a sign-out the user had already confirmed.
+    disconnect: async () => {
+      // A wallet can leave more than one connection in wagmi when a second
+      // wallet was authorised without the first being forgotten. Each call
+      // drops the current connection, so keep going until none are left.
+      for (let guard = 0; guard < 4 && config.state.connections.size > 0; guard += 1) {
+        try {
+          await disconnectAsync();
+        } catch {
+          break;
+        }
+      }
+      if (config.state.connections.size === 0) return;
+      // A connector can also fail its own teardown — an expired
+      // WalletConnect session, a provider that vanished mid-session. The
+      // user confirmed a sign-out, so every connection is forgotten anyway;
+      // leaving one in wagmi's state is what makes the button read "Sign In".
+      config.setState({
+        ...config.state,
+        connections: new Map(),
+        current: null,
+        status: "disconnected",
+      });
+    },
     signMessage: sign,
     /**
      * Funds the 1Click deposit address from the connected EVM wallet.

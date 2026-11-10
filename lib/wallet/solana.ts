@@ -4,6 +4,7 @@ import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
 import { SolanaSignMessage } from "@solana/wallet-standard";
 import { useCallback, useEffect, useState } from "react";
+import { sendSolanaDeposit } from "./solana-transfer";
 
 /**
  * The message signing feature, spelled out locally.
@@ -101,7 +102,22 @@ export function useSolanaWallet() {
     return next;
   }, []);
 
-  const disconnect = useCallback(() => setConnection(null), []);
+  /**
+   * Forgets the connection locally first, then asks the wallet to revoke this
+   * site. The local clear is what the account button reads, so the interface
+   * stops showing the wallet immediately; the revocation is best effort
+   * because not every Wallet Standard wallet implements it, and a wallet
+   * that asks the user for confirmation must not hold up sign-out.
+   */
+  const disconnect = useCallback(() => {
+    const current = connection;
+    setConnection(null);
+    if (!current) return;
+    const feature = current.wallet.features["standard:disconnect"] as
+      | { disconnect: () => Promise<void> }
+      | undefined;
+    void feature?.disconnect().catch(() => {});
+  }, [connection]);
 
   const signMessage = useCallback(
     async (payload: Uint8Array): Promise<{ signature: Uint8Array }> => {
@@ -138,69 +154,14 @@ export function useSolanaWallet() {
       tokenMint?: string | null;
     }): Promise<string> => {
       if (!connection) throw new Error("No Solana wallet is connected");
-      const { PublicKey, SystemProgram, Transaction, Connection } = await import(
-        "@solana/web3.js"
-      );
-      const rpc =
-        process.env.NEXT_PUBLIC_SOLANA_RPC ?? "https://api.mainnet-beta.solana.com";
-      const net = new Connection(rpc, "confirmed");
-      const toPubkey = new PublicKey(input.depositAddress);
-      const fromPubkey = new PublicKey(connection.address);
-      const tx = new Transaction();
-
-      if (input.tokenMint) {
-        const { getAssociatedTokenAddressSync, createTransferInstruction, createAssociatedTokenAccountInstruction, getAccount } =
-          await import("@solana/spl-token");
-        const mint = new PublicKey(input.tokenMint);
-        const fromAta = getAssociatedTokenAddressSync(mint, fromPubkey);
-        const toAta = getAssociatedTokenAddressSync(mint, toPubkey);
-        try {
-          await getAccount(net, toAta);
-        } catch {
-          tx.add(
-            createAssociatedTokenAccountInstruction(fromPubkey, toAta, toPubkey, mint),
-          );
-        }
-        tx.add(
-          createTransferInstruction(fromAta, toAta, fromPubkey, BigInt(input.amount)),
-        );
-      } else {
-        tx.add(
-          SystemProgram.transfer({
-            fromPubkey,
-            toPubkey,
-            lamports: BigInt(input.amount),
-          }),
-        );
-      }
-
-      const { blockhash } = await net.getLatestBlockhash();
-      tx.recentBlockhash = blockhash;
-      tx.feePayer = fromPubkey;
-
-      const feature = connection.wallet.features[
-        "solana:signAndSendTransaction"
-      ] as
-        | {
-            signAndSendTransaction: (...inputs: readonly { account: WalletAccount; transaction: Uint8Array }[]) => Promise<
-              readonly { signature: Uint8Array }[]
-            >;
-          }
-        | undefined;
-      if (!feature) {
-        throw new Error("This wallet cannot send transactions");
-      }
-      const serialized = await tx.serialize({
-        requireAllSignatures: false,
-        verifySignatures: false,
-      });
-      const [output] = await feature.signAndSendTransaction({
+      return sendSolanaDeposit({
+        wallet: connection.wallet,
         account: connection.account,
-        transaction: serialized,
+        address: connection.address,
+        depositAddress: input.depositAddress,
+        amount: input.amount,
+        tokenMint: input.tokenMint,
       });
-      const bytes = await output.signature;
-      const { toHex } = await import("./types");
-      return toHex(bytes);
     },
     [connection],
   );

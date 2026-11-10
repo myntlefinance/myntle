@@ -1,4 +1,4 @@
-import type { ChainKind } from "@/lib/wallet/types";
+import type { ChainKind, ConnectedWallet } from "@/lib/wallet/types";
 
 /**
  * Who the browser is signed in as, decided in one place.
@@ -60,6 +60,42 @@ export function sameAccount(
   return chain === "evm"
     ? address.toLowerCase() === identity.address.toLowerCase()
     : address === identity.address;
+}
+
+const WALLET_STANDARD: Record<ChainKind, ConnectedWallet["standard"]> = {
+  evm: "erc191",
+  solana: "raw_ed25519",
+  near: "nep413",
+};
+
+/**
+ * The wallet-shaped account the interface should display for a session.
+ *
+ * A wallet session belongs to the signer, not to whichever wallet happens to
+ * be connected for another purpose. A different funding wallet must not make
+ * the signed-in account look replaced. The actual connected account is still
+ * available separately for signing and funding; this value is only the
+ * session identity the account menu and pages display.
+ */
+export function sessionAccountFor(
+  identity: SessionIdentity | null,
+  actual: ConnectedWallet | null,
+): ConnectedWallet | null {
+  if (!identity || identity.kind === "passkey") return actual;
+  const matched =
+    actual && sameAccount(actual.kind, actual.address, identity)
+      ? actual
+      : null;
+  return {
+    kind: identity.chain,
+    standard: WALLET_STANDARD[identity.chain],
+    address: identity.address,
+    signerId: identity.intentsAccountId,
+    publicKey: "",
+    ...(matched
+      ? { walletName: matched.walletName, walletIcon: matched.walletIcon }
+      : {}),
+  };
 }
 
 export function resolveSignedIn(input: {

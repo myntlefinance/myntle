@@ -168,6 +168,56 @@ describe("UnlockRequestCard", () => {
     );
   });
 
+  it("keeps a resolved unlock green after the five-minute request window", () => {
+    state.identity = walletIdentity;
+    state.unlocked = false;
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <UnlockRequestCard
+        createdAt={SIX_MINUTES_AGO}
+        interactive
+        superseded={false}
+        resolved
+        onRetry={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Super account unlocked");
+    expect(html).not.toContain("Request expired.");
+  });
+
+  it("keeps a resolved unlock green after a newer message and outside the live chat", () => {
+    state.identity = walletIdentity;
+    state.unlocked = false;
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <UnlockRequestCard
+        createdAt={SIX_MINUTES_AGO}
+        interactive={false}
+        superseded
+        resolved
+        onRetry={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Super account unlocked");
+    expect(html).not.toContain("Request expired.");
+  });
+
+  it("does not turn an old card green just because the account is unlocked now", () => {
+    state.identity = walletIdentity;
+    state.unlocked = true;
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <UnlockRequestCard
+        createdAt={SIX_MINUTES_AGO}
+        interactive
+        superseded
+        onRetry={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Request expired.");
+    expect(html).not.toContain("Super account unlocked");
+  });
+
   it("keeps the unlocked wallet copy for a wallet account", () => {
     state.identity = walletIdentity;
     state.unlocked = true;
@@ -183,5 +233,40 @@ describe("UnlockRequestCard", () => {
     expect(html).toContain("Super account unlocked");
     expect(html).toContain("Myntle has access to your super account.");
     expect(html).not.toContain("Private balance unlocked");
+  });
+
+  it("forces the lock action while the private read refuses a live session", () => {
+    state.identity = walletIdentity;
+    state.unlocked = true;
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <UnlockRequestCard
+        createdAt={null}
+        interactive
+        superseded={false}
+        live
+        forceLocked
+      />,
+    );
+
+    expect(html).toContain("Super account locked");
+    expect(html).toContain("Please unlock your super account to continue.");
+    expect(html).toContain("Unlock");
+    expect(html).not.toContain("Super account unlocked");
+  });
+
+  it("lets the live gate show the unlocked state when the read succeeds", () => {
+    state.identity = walletIdentity;
+    state.unlocked = true;
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <UnlockRequestCard
+        createdAt={null}
+        interactive
+        superseded={false}
+        live
+      />,
+    );
+
+    expect(html).toContain("Super account unlocked");
+    expect(html).not.toContain("Super account locked");
   });
 });

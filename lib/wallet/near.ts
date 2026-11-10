@@ -1,8 +1,9 @@
 "use client";
 
 import { useNearWallet } from "near-connect-hooks";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { fromHex, toHex, type ConnectedWallet } from "./types";
+import { sendNearDepositWithWallet } from "./near-transfer";
 
 /**
  * The NEAR adapter.
@@ -21,8 +22,18 @@ export function useNearWalletAdapter() {
     connector,
   } = useNearWallet();
 
+  /**
+   * The account the wallet refuses to release, pinned out of the interface.
+   *
+   * A NEAR wallet can reject the sign-out request, and near-connect only
+   * clears its account after the wallet agrees. Without this pin the app
+   * would keep reporting a connected account after a confirmed sign-out,
+   * leaving the account button on "Sign In".
+   */
+  const [revoked, setRevoked] = useState<string | null>(null);
+
   const account = useMemo<ConnectedWallet | null>(() => {
-    if (!signedAccountId) return null;
+    if (!signedAccountId || signedAccountId === revoked) return null;
 
     const implicit = /^[0-9a-f]{64}$/.test(signedAccountId);
 
@@ -35,7 +46,7 @@ export function useNearWalletAdapter() {
       // verifier can recover it from the signature, so it is left empty.
       publicKey: "",
     };
-  }, [signedAccountId]);
+  }, [revoked, signedAccountId]);
 
   const sign = useCallback(
     async (payload: Uint8Array): Promise<Uint8Array> => {
@@ -53,7 +64,10 @@ export function useNearWalletAdapter() {
     account,
     isConnected: !!account,
     isPending: loading,
-    connect: async (): Promise<string> => {      await signIn();
+    connect: async (): Promise<string> => {
+      // A fresh connection lifts the pin from a previous sign-out.
+      setRevoked(null);
+      await signIn();
       // signIn resolves after the wallet approves. The hook state updates on
       // the next render, so read the authorised account from the connector
       // as the source of truth, with the hook state as the fallback.
@@ -71,7 +85,16 @@ export function useNearWalletAdapter() {
       }
     },
     disconnect: async () => {
-      await signOut();
+      // Pin the account out of the interface before asking the wallet, then
+      // do not wait on the request: the wallet may show a prompt or refuse
+      // outright, and neither may hold up the sign-out the user confirmed.
+      setRevoked(signedAccountId || null);
+      void signOut()
+        // The hook cleared its own account, so the pin has done its job and
+        // must not outlive the account it was set for. A refusal leaves the
+        // pin in place, which keeps the app signed out anyway.
+        .then(() => setRevoked(null))
+        .catch(() => {});
     },
     signMessage: sign,
     signNEP413: signNEP413Message,
@@ -88,89 +111,7 @@ export function useNearWalletAdapter() {
       tokenContract?: string | null;
     }): Promise<string> => {
       const wallet = await connector.wallet();
-      const withSend = wallet as unknown as {
-        signAndSendTransactions?: (args: {
-          transactions: Array<{
-            receiverId: string;
-            actions: Array<{
-              type: string;
-              params: {
-                methodName: string;
-                args: Record<string, unknown>;
-                gas: string;
-                deposit: string;
-              };
-            }>;
-          }>;
-        }) => Promise<unknown>;
-        signAndSendTransaction?: (args: {
-          receiverId: string;
-          actions: Array<{
-            type: string;
-            params: {
-              methodName: string;
-              args: Record<string, unknown>;
-              gas: string;
-              deposit: string;
-            };
-          }>;
-        }) => Promise<unknown>;
-      };
-      const txs = !input.tokenContract
-        ? [
-            {
-              receiverId: "wrap.near",
-              actions: [
-                {
-                  type: "FunctionCall",
-                  params: {
-                    methodName: "near_deposit",
-                    args: {},
-                    gas: "30000000000000",
-                    deposit: input.amount,
-                  },
-                },
-                {
-                  type: "FunctionCall",
-                  params: {
-                    methodName: "ft_transfer",
-                    args: { receiver_id: input.depositAddress, amount: input.amount },
-                    gas: "50000000000000",
-                    deposit: "1",
-                  },
-                },
-              ],
-            },
-          ]
-        : [
-            {
-              receiverId: input.tokenContract,
-              actions: [
-                {
-                  type: "FunctionCall",
-                  params: {
-                    methodName: "ft_transfer",
-                    args: { receiver_id: input.depositAddress, amount: input.amount },
-                    gas: "50000000000000",
-                    deposit: "1",
-                  },
-                },
-              ],
-            },
-          ];
-      const result = withSend.signAndSendTransactions
-        ? await withSend.signAndSendTransactions({ transactions: txs })
-        : await withSend.signAndSendTransaction?.(txs[0]);
-      const first = Array.isArray(result) ? result[0] : result;
-      const hash =
-        (first as { transaction?: { hash?: string } } | undefined)?.transaction?.hash ??
-        (result as { transaction?: { hash?: string } } | undefined)?.transaction?.hash ??
-        (first as { hash?: string } | undefined)?.hash ??
-        (result as { hash?: string } | undefined)?.hash;
-      if (typeof hash !== "string" || hash.length === 0) {
-        throw new Error("Deposit did not return a transaction hash");
-      }
-      return hash;
+      return sendNearDepositWithWallet(wallet, input);
     },
   };
 }

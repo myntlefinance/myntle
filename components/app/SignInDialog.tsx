@@ -24,6 +24,9 @@ function friendlySignInError(cause: unknown): string {
   if (/disconnect/i.test(raw)) {
     return "Wallet disconnected. Please reconnect.";
   }
+  if (/log out/i.test(raw)) {
+    return raw;
+  }
   if (/no wallet is connected/i.test(raw)) {
     return "No wallet is connected.";
   }

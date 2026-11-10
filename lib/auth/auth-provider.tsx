@@ -16,7 +16,7 @@ import {
 } from "@/lib/wallet/registry";
 import {
   canSign as canSignFor,
-  resolveSignedIn,
+  sessionAccountFor,
   type SessionIdentity,
 } from "@/lib/auth/session-identity";
 import { SIGN_IN_EVENT, SIGN_OUT_EVENT } from "@/lib/auth/events";
@@ -52,12 +52,15 @@ export { SIGN_IN_EVENT, SIGN_OUT_EVENT } from "@/lib/auth/events";
 type AuthValue = {
   /** The shared wallet instance: connection, signature stage, adapters. */
   wallet: WalletValue;
-  /** The connected account, or null while no wallet is connected. */
+  /** The account the interface shows: the session account, or the connected wallet when signed out. */
   account: ConnectedWallet | null;
   /** Whether this browser holds a session, and whose it is. */
   status: SessionStatus;
   identity: SessionIdentity | null;
-  /** Signed in AND the session belongs to the wallet that is connected. */
+  /**
+   * A signed-in session exists. The browser wallet may be a separate funding
+   * source; `canSign` says whether the session wallet is currently connected.
+   */
   signedIn: boolean;
   connected: boolean;
   /** How this session signs: a wallet, a passkey, or nothing yet. */
@@ -207,6 +210,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [apply, refresh]);
 
   const signIn = useCallback(async () => {
+    // Connection is not identity. Once a session exists, changing who is
+    // signed in is a deliberate logout, not a side effect of connecting a
+    // funding wallet.
+    if (state.status === "signed-in") {
+      throw new Error("Log out before signing in with another wallet.");
+    }
     const account = wallet.account;
     await wallet.signIn();
     // The verify response has already set the cookie when this resolves, so
@@ -225,7 +234,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
     window.dispatchEvent(new CustomEvent(SIGN_IN_EVENT));
     void refresh();
-  }, [apply, refresh, wallet]);
+  }, [apply, refresh, state.status, wallet]);
 
   // The passkey routes set the cookie themselves, so the identity is read
   // back from the session route rather than guessed from the credential.
@@ -253,23 +262,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [landPasskeySession]);
 
   const signOut = useCallback(async () => {
+    // Start the wallet teardown first: it masks the account synchronously,
+    // so the session and the account control leave in the same render and
+    // no frame exists where the control reads "Sign In" — connected, with
+    // no session — while the wallet lets go. The request itself is awaited
+    // after the interface has already changed.
+    const teardown = wallet.disconnect();
     apply("signed-out", null);
     window.dispatchEvent(new CustomEvent(SIGN_OUT_EVENT));
-    await wallet.disconnect();
+    await teardown;
   }, [apply, wallet]);
 
-  const account = wallet.account;
-  const signedIn = resolveSignedIn({
-    status: state.status,
-    identity: state.identity,
-    account,
-  });
+  const actualAccount = wallet.account;
+  const account = useMemo(
+    () => sessionAccountFor(state.identity, actualAccount),
+    [state.identity, actualAccount],
+  );
+  // A session stays signed in while the browser wallet is used for something
+  // else, such as funding. Signing authority remains the actual account.
+  const signedIn = state.status === "signed-in" && state.identity !== null;
   const authMethod =
     state.status === "signed-in" ? (state.identity?.kind ?? null) : null;
   const canSign = canSignFor({
     status: state.status,
     identity: state.identity,
-    account,
+    account: actualAccount,
   });
 
   const value = useMemo<AuthValue>(

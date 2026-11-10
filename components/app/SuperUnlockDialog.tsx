@@ -15,6 +15,7 @@ import {
   encodeSignedData,
 } from "@/lib/intents/empty-intent";
 import {
+  notifySuperClosed,
   notifySuperUnlock,
   saveIntentsSession,
   SUPER_CANCEL_EVENT,
@@ -56,7 +57,11 @@ function friendlyUnlockError(cause: unknown): string {
   if (/locked/i.test(raw)) {
     return raw;
   }
-  if (/No wallet is connected|super account yet/i.test(raw)) {
+  if (
+    /No wallet is connected|super account yet|not detected|No saved wallet|Log in to unlock|disconnected/i.test(
+      raw,
+    )
+  ) {
     return raw;
   }
   return "Unlock failed. Please try again.";
@@ -155,15 +160,45 @@ export function SuperUnlockDialog({
   /** The card that opened this dialog, so a cancel can be reported back. */
   sourceCallId?: string | null;
 }) {
-  const { account, signMessage, signNEP413 } = useWallet();
-  const { identity } = useAuth();
+  const {
+    account: rawAccount,
+    signMessage,
+    signNEP413,
+    lastWallet,
+    reconnectWallet,
+    isPending: walletPending,
+  } = useWallet();
+  const { identity, account: sessionAccount, signedIn } = useAuth();
   const passkey = identity?.kind === "passkey" ? identity : null;
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
 
-  const busy = phase === "signing" || phase === "authenticating";
+  const busy = phase === "signing" || phase === "authenticating" || reconnecting;
   const notice = phase === "unlocked" || Boolean(error);
+
+  // The session names the account to unlock. The raw connection is only key
+  // access: it can be gone while the session lives, and unlocking then needs
+  // a reconnect to the same wallet, not a new log-in.
+  const sessionAddress = passkey
+    ? passkey.accountId
+    : (sessionAccount?.address ?? null);
+  const matchesSession =
+    !passkey &&
+    rawAccount &&
+    sessionAccount &&
+    rawAccount.kind === sessionAccount.kind &&
+    (rawAccount.kind === "evm"
+      ? rawAccount.address.toLowerCase() === sessionAccount.address.toLowerCase()
+      : rawAccount.address === sessionAccount.address);
+  // Signed in but the signing key is gone (extension locked, site
+  // disconnected from the wallet side). Reading still works; signing needs
+  // the same wallet again.
+  const needsReconnect =
+    !passkey && signedIn && sessionAddress !== null && !matchesSession;
+  const reconnectName =
+    lastWallet?.walletName ?? sessionAccount?.walletName ?? null;
 
   // Same rhythm as the sign-in dialog: the success notice reads first, then
   // the dialog fades out. The paused turn resumes as the fade starts, so the
@@ -179,12 +214,32 @@ export function SuperUnlockDialog({
       setLeaving(true);
       window.dispatchEvent(new CustomEvent(SUPER_CONTINUE_EVENT));
     }, 850);
-    const done = window.setTimeout(() => closeRef.current(), 1100);
+    // The portfolio behind the dialog has usually finished its private read
+    // by now. Tell it the overlay is gone so it reveals the fetched rows,
+    // instead of swapping the locked background mid-dialog.
+    const done = window.setTimeout(() => {
+      notifySuperClosed();
+      closeRef.current();
+    }, 1100);
     return () => {
       window.clearTimeout(fade);
       window.clearTimeout(done);
     };
   }, [phase]);
+
+  const handleReconnect = async () => {
+    if (reconnecting) return;
+    setError(null);
+    setReconnecting(true);
+    try {
+      await reconnectWallet();
+    } catch (cause) {
+      setError(friendlyUnlockError(cause));
+      setPhase("error");
+    } finally {
+      setReconnecting(false);
+    }
+  };
 
   const handleUnlock = async () => {
     setError(null);
@@ -202,11 +257,20 @@ export function SuperUnlockDialog({
       }
       return;
     }
-    if (!account) {
-      setError("No wallet is connected.");
+    // The session survives a wallet-side disconnect. Ask for the same wallet
+    // again instead of failing; the button above drives this state.
+    if (!matchesSession || !sessionAccount) {
+      setError(
+        signedIn
+          ? reconnectName
+            ? `Your ${reconnectName} disconnected. Reconnect it to continue.`
+            : "Your wallet disconnected. Reconnect it to continue."
+          : "Log in to unlock.",
+      );
       setPhase("error");
       return;
     }
+    const account = sessionAccount;
     if (account.kind !== "evm" && account.kind !== "solana" && account.kind !== "near") {
       setError("This wallet cannot unlock the super account yet.");
       setPhase("error");
@@ -283,6 +347,8 @@ export function SuperUnlockDialog({
         }),
       );
     }
+    // A cancel leaves the account locked, but the overlay is still gone.
+    notifySuperClosed();
     onClose();
   };
 
@@ -325,7 +391,35 @@ export function SuperUnlockDialog({
       busy={busy || phase === "unlocked"}
       leaving={leaving}
       footer={
-        phase === "unlocked" ? undefined : (
+        phase === "unlocked" ? undefined : needsReconnect ? (
+          <>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={closeWithoutUnlock}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="accent"
+              size="sm"
+              onClick={() => void handleReconnect()}
+              disabled={busy || walletPending}
+            >
+              {reconnecting ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <IconLoader2 size={14} stroke={2} className="animate-spin" />
+                  Reconnect
+                </span>
+              ) : (
+                "Reconnect"
+              )}
+            </Button>
+          </>
+        ) : (
           <>
             <Button
               type="button"
@@ -358,7 +452,11 @@ export function SuperUnlockDialog({
     >
       {phase !== "unlocked" && !passkey ? (
         <p className="mt-3 text-[13px] leading-relaxed text-ink-2">
-          Private swaps. Orders that wait for your price.
+          {needsReconnect
+            ? reconnectName
+              ? `Your ${reconnectName} disconnected. Reconnect it and unlock with one signature.`
+              : "Your wallet disconnected. Reconnect it and unlock with one signature."
+            : "Private swaps. Orders that wait for your price."}
         </p>
       ) : null}
 

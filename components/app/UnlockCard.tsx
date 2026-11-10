@@ -16,7 +16,6 @@ import {
   SUPER_CONTINUE_EVENT,
   useSuperUnlocked,
 } from "@/lib/intents/user-session";
-import { useWallet } from "@/lib/wallet/registry";
 
 const FIVE_MINUTES_MS = 5 * 60_000;
 
@@ -126,7 +125,10 @@ export function UnlockRequestCard({
   createdAt,
   interactive,
   superseded,
+  resolved = false,
   onRetry,
+  live = false,
+  forceLocked = false,
 }: {
   callId?: string;
   createdAt: number | null;
@@ -134,21 +136,56 @@ export function UnlockRequestCard({
   interactive: boolean;
   /** A later user message exists, so this request is a record. */
   superseded: boolean;
+  /** Durable evidence that this request was answered by an unlock. */
+  resolved?: boolean;
   /** Present only in the live chat; trash and previews have no composer. */
   onRetry?: () => void;
+  /**
+   * The portfolio's live gate. A transcript card is sticky, because it
+   * records what happened during one request; the gate has to follow the
+   * session both ways or it says "unlocked" over masked balances.
+   */
+  live?: boolean;
+  /**
+   * A live session the private read refused. Show the lock action again so
+   * the user can re-sign, instead of a green card with no way forward.
+   */
+  forceLocked?: boolean;
 }) {
-  const { account } = useWallet();
-  const { identity } = useAuth();
+  const { identity, account: sessionAccount } = useAuth();
   const passkey = identity?.kind === "passkey" ? identity : null;
-  const unlocked = useSuperUnlocked(
-    passkey ? "passkey" : account?.kind,
-    passkey ? passkey.accountId : account?.address,
-  );
+  // The session names the account; the raw connection can be gone while the
+  // session lives, and the unlock state lives in the User-Session, not the
+  // wallet. A card that read the raw wallet would stay locked after a
+  // wallet-side disconnect even with a live session.
+  const unlockChain = passkey ? "passkey" : (sessionAccount?.kind ?? null);
+  const unlockAddress = passkey
+    ? passkey.accountId
+    : (sessionAccount?.address ?? null);
+  const unlocked = useSuperUnlocked(unlockChain, unlockAddress);
   const [canceled, setCanceled] = useState(false);
   const [checking, setChecking] = useState(false);
   const [timedOut, setTimedOut] = useState(
     () => createdAt !== null && Date.now() - createdAt >= FIVE_MINUTES_MS,
   );
+  // An unlock is sticky for this card only. The current session being
+  // unlocked is not enough: an old card must not turn green when a later
+  // request unlocks the account. `resolved` is the transcript evidence that
+  // this card's request was answered by the continuation turn.
+  const [wasUnlocked, setWasUnlocked] = useState(
+    resolved || (unlocked === true && !superseded && !timedOut),
+  );
+
+  useEffect(() => {
+    // The live gate never becomes sticky: its state is the session's.
+    if (live) return;
+    if (resolved) {
+      setWasUnlocked(true);
+      return;
+    }
+    if (!unlocked || superseded || timedOut) return;
+    setWasUnlocked(true);
+  }, [live, resolved, unlocked, superseded, timedOut]);
 
   useEffect(() => {
     if (timedOut || createdAt === null) return;
@@ -172,7 +209,13 @@ export function UnlockRequestCard({
 
   const handleUnlock = async () => {
     if (checking) return;
-    if (!passkey && !account) {
+    if (!passkey && !sessionAccount) {
+      openSuperUnlock(callId);
+      return;
+    }
+    // A live session the read refused needs a new proof, not the token it
+    // already has: reusing it would only repeat the refusal.
+    if (forceLocked) {
       openSuperUnlock(callId);
       return;
     }
@@ -182,7 +225,7 @@ export function UnlockRequestCard({
       // previous dialog): recheck before asking for another signature.
       const token = passkey
         ? await getValidAccessToken("passkey", passkey.accountId)
-        : await getValidAccessToken(account!.kind, account!.address);
+        : await getValidAccessToken(sessionAccount!.kind, sessionAccount!.address);
       if (token) {
         window.dispatchEvent(new CustomEvent(SUPER_CONTINUE_EVENT));
         return;
@@ -193,14 +236,22 @@ export function UnlockRequestCard({
     }
   };
 
-  const state: CardState =
-    !interactive || superseded || timedOut
+  const recordState: CardState = wasUnlocked
+    ? "unlocked"
+    : !interactive || superseded || timedOut
       ? "expired"
-      : unlocked
+      : canceled
+        ? "canceled"
+        : "locked";
+  const state: CardState = forceLocked
+    ? "locked"
+    : live
+      ? unlocked === true
         ? "unlocked"
         : canceled
           ? "canceled"
-          : "locked";
+          : "locked"
+      : recordState;
 
   const lockedTitle = passkey
     ? "Private balance locked"

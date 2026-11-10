@@ -35,6 +35,7 @@ export type SessionRow = {
   created_at: string;
   expires_at: string;
   revoked_at?: string | null;
+  last_seen_at?: string | null;
 };
 
 const AUTH_CHAINS: readonly AuthChain[] = ["evm", "solana", "near"];
@@ -221,10 +222,13 @@ export async function createPasskeySession(args: {
 }
 
 const SESSION_COLUMNS =
-  "user_id, wallet_id, passkey_id, account_kind, intents_account_id, chain, address, created_at, expires_at, revoked_at";
+  "user_id, wallet_id, passkey_id, account_kind, intents_account_id, chain, address, created_at, expires_at, revoked_at, last_seen_at";
 
 const LEGACY_SESSION_COLUMNS =
-  "user_id, wallet_id, chain, address, created_at, expires_at, revoked_at";
+  "user_id, wallet_id, chain, address, created_at, expires_at, revoked_at, last_seen_at";
+
+/** How long a session touch stays valid before it is written again. */
+export const SESSION_TOUCH_MS = 15 * 60_000;
 
 /**
  * True when the query failed because `004_passkeys.sql` has not been
@@ -285,12 +289,18 @@ export async function getSession(id: string): Promise<Session | null> {
     if (passkeyError || !passkey || passkey.revoked_at) return null;
   }
 
-  // Best-effort activity touch. Never blocks the request.
-  void sb
-    .from("sessions")
-    .update({ last_seen_at: new Date().toISOString() })
-    .eq("id", id)
-    .then(() => undefined);
+  // Best-effort activity touch, at most once per window. Every card poll is
+  // an authenticated request, so an unconditional touch turns each read into
+  // a session write. Never blocks the request.
+  const lastSeen = (data as SessionRow).last_seen_at;
+  const lastSeenAt = lastSeen ? Date.parse(lastSeen) : Number.NaN;
+  if (!Number.isFinite(lastSeenAt) || Date.now() - lastSeenAt >= SESSION_TOUCH_MS) {
+    void sb
+      .from("sessions")
+      .update({ last_seen_at: new Date().toISOString() })
+      .eq("id", id)
+      .then(() => undefined);
+  }
 
   return session;
 }

@@ -42,9 +42,9 @@ export function ConnectGate() {
     );
   }
 
-  // A connected wallet without a session is unsigned: the gate offers the
-  // signature, not another connection. Cancelling that signature leaves
-  // this gate exactly where it was.
+  // A connected wallet without a session is unsigned: the press resumes the
+  // signature instead of another connection. The label stays "Log In" in
+  // both cases — one action, one name.
   const unsigned = connected && !signedIn;
 
   return (
@@ -62,7 +62,7 @@ export function ConnectGate() {
             onClick={unsigned ? openSignIn : openWalletPicker}
             className="inline-flex shrink-0"
           >
-            {unsigned ? "Sign In" : "Log In"}
+            Log In
           </Button>
           <span>to start a chat with myntle.</span>
         </p>

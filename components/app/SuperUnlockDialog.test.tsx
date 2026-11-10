@@ -60,7 +60,9 @@ vi.mock("@/lib/auth/passkey-signer", () => ({
 vi.mock("@/lib/intents/user-session", () => ({
   saveIntentsSession: state.save,
   notifySuperUnlock: state.notify,
+  notifySuperClosed: vi.fn(),
   SUPER_UNLOCK_EVENT: "myntle:super-unlock",
+  SUPER_CLOSED_EVENT: "myntle:super-closed",
   SUPER_CANCEL_EVENT: "myntle:super-cancel",
   SUPER_CONTINUE_EVENT: "myntle:super-continue",
 }));

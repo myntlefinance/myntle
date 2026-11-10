@@ -9,6 +9,12 @@ import type { ChainKind, ConnectedWallet } from "./types";
 import { toHex } from "./types";
 import { clearThreadCache } from "@/components/app/threadCache";
 import { clearFinanceCaches } from "@/components/app/portfolioCache";
+import {
+  clearLastWallet,
+  readLastWallet,
+  saveLastWallet,
+  type LastWallet,
+} from "./last-wallet";
 
 /**
  * One wallet interface over three libraries.
@@ -81,6 +87,35 @@ export type WalletValue = ReturnType<typeof useWalletState>;
 
 export const WalletContext = createContext<WalletValue | null>(null);
 
+/**
+ * A confirmed sign-out, remembered per tab.
+ *
+ * A reload asks the wallet libraries to restore their sessions again; a
+ * wallet that never released the site would come back connected, and the
+ * next press would resume sign-in instead of opening the selector. The
+ * marker keeps the tab in the state the user chose until they connect.
+ */
+const SEVERED_KEY = "myntle:signed-out";
+
+function readSevered(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage.getItem(SEVERED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeSevered(next: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (next) window.sessionStorage.setItem(SEVERED_KEY, "1");
+    else window.sessionStorage.removeItem(SEVERED_KEY);
+  } catch {
+    // Storage unavailable; the in-memory flag still covers this visit.
+  }
+}
+
 export function useWalletState() {
   const evm = useEvmWallet();
   const solana = useSolanaWallet();
@@ -88,6 +123,36 @@ export function useWalletState() {
 
   const [pendingChain, setPendingChain] = useState<ChainKind | null>(null);
   const [authStage, setAuthStage] = useState<AuthStage>(null);
+  /**
+   * The wallet the session was signed in with, for one-click reconnect.
+   *
+   * A session outlives its connection, so a locked extension or a
+   * wallet-side disconnect must not force a full log-in. This record names
+   * the exact wallet to ask again, instead of the whole catalogue.
+   */
+  const [lastWallet, setLastWallet] = useState<LastWallet | null>(() =>
+    readLastWallet(),
+  );
+
+  const rememberLastWallet = useCallback((entry: LastWallet) => {
+    setLastWallet(entry);
+    saveLastWallet(entry);
+  }, []);
+  /**
+   * Set by a confirmed sign-out and cleared only by a new connection.
+   *
+   * A wallet library can keep reporting an account after its disconnect
+   * request fails — an expired WalletConnect session, an extension that
+   * refuses to revoke the site. The interface still has to land in the
+   * disconnected state, or the next press resumes sign-in on the account
+   * the user just tried to leave instead of opening the wallet selector.
+   */
+  const [severed, setSeveredState] = useState(readSevered);
+
+  const setSevered = useCallback((next: boolean) => {
+    setSeveredState(next);
+    writeSevered(next);
+  }, []);
 
   const adapters = useMemo(
     () => ({ evm, solana, near }),
@@ -95,6 +160,7 @@ export function useWalletState() {
   );
 
   const account = useMemo<ConnectedWallet | null>(() => {
+    if (severed) return null;
     if (evm.account) return evm.account;
     if (solana.connection) {
       return {
@@ -113,7 +179,7 @@ export function useWalletState() {
     }
     if (near.account) return near.account;
     return null;
-  }, [evm.account, solana.connection, near.account]);
+  }, [evm.account, solana.connection, near.account, severed]);
 
   const verifyEvmOwnership = useCallback(
     async (address: string) => {
@@ -226,13 +292,41 @@ export function useWalletState() {
       setPendingChain("evm");
       setAuthStage("approve");
       try {
-        return await evm.connect(connectorId);
+        const address = await evm.connect(connectorId);
+        // A new connection is the one the interface must show from now on.
+        setSevered(false);
+        // Remember the exact wallet for one-click reconnect: a session
+        // outlives its connection, so the unlock dialog must ask this
+        // wallet again instead of the whole catalogue.
+        const needle = connectorId?.toLowerCase();
+        const used =
+          (needle
+            ? (evm.connectors.find((c) => c.id === connectorId) ??
+              evm.connectors.find(
+                (c) =>
+                  c.id.toLowerCase() === needle ||
+                  c.name.toLowerCase().includes(needle) ||
+                  needle.includes(c.name.toLowerCase()),
+              ))
+            : undefined) ??
+          evm.connectors.find((c) => c.id === "injected") ??
+          evm.connectors[0];
+        if (used) {
+          rememberLastWallet({
+            kind: "evm",
+            address,
+            connectorId: used.id,
+            walletName: used.name,
+            walletIcon: typeof used.icon === "string" ? used.icon : undefined,
+          });
+        }
+        return address;
       } finally {
         setAuthStage(null);
         setPendingChain(null);
       }
     },
-    [evm],
+    [evm, rememberLastWallet, setSevered],
   );
 
   const connectSolanaWallet = useCallback(
@@ -241,13 +335,20 @@ export function useWalletState() {
       setPendingChain("solana");
       setAuthStage("approve");
       try {
-        await solana.connect(wallet);
+        const next = await solana.connect(wallet);
+        setSevered(false);
+        rememberLastWallet({
+          kind: "solana",
+          address: next.address,
+          walletName: wallet.name,
+          walletIcon: wallet.icon,
+        });
       } finally {
         setAuthStage(null);
         setPendingChain(null);
       }
     },
-    [solana],
+    [rememberLastWallet, setSevered, solana],
   );
 
   const connectNear = useCallback(async () => {
@@ -255,12 +356,14 @@ export function useWalletState() {
     setPendingChain("near");
     setAuthStage("approve");
     try {
-      await near.connect();
+      const address = await near.connect();
+      setSevered(false);
+      rememberLastWallet({ kind: "near", address });
     } finally {
       setAuthStage(null);
       setPendingChain(null);
     }
-  }, [near]);
+  }, [near, rememberLastWallet, setSevered]);
 
   const connect = useCallback(
     async (kind: ChainKind) => {
@@ -289,13 +392,30 @@ export function useWalletState() {
     try {
       if (evm.isConnected && evm.account) {
         await verifyEvmOwnership(evm.account.address);
+        const connectorId =
+          evm.connectors.find((c) => c.name === evm.account?.walletName)?.id ??
+          evm.connectors[0]?.id;
+        rememberLastWallet({
+          kind: "evm",
+          address: evm.account.address,
+          ...(connectorId ? { connectorId } : {}),
+          walletName: evm.account.walletName,
+          walletIcon: evm.account.walletIcon,
+        });
       } else if (solana.connection) {
         await verifySolanaOwnership(
           solana.connection.address,
           new Uint8Array(solana.connection.account.publicKey),
         );
+        rememberLastWallet({
+          kind: "solana",
+          address: solana.connection.address,
+          walletName: solana.connection.wallet.name,
+          walletIcon: solana.connection.wallet.icon,
+        });
       } else if (near.isConnected && near.account) {
         await verifyNearOwnership(near.account.address);
+        rememberLastWallet({ kind: "near", address: near.account.address });
       } else {
         throw new Error("No wallet is connected");
       }
@@ -305,22 +425,77 @@ export function useWalletState() {
     } finally {
       setAuthStage(null);
     }
-  }, [evm, near, solana, verifyEvmOwnership, verifyNearOwnership, verifySolanaOwnership]);
+  }, [evm, near, rememberLastWallet, solana, verifyEvmOwnership, verifyNearOwnership, verifySolanaOwnership]);
+
+  /**
+   * Reconnect the wallet the session was signed in with, without a picker.
+   *
+   * A signed-in session survives a wallet-side disconnect, but unlocking and
+   * signing need key access again. This asks the saved wallet only: the EVM
+   * connector id targets its own provider, Solana reuses its Wallet Standard
+   * entry, NEAR reopens its wallet. Nothing signs here; the caller signs next.
+   */
+  const reconnectWallet = useCallback(async () => {
+    const saved = lastWallet ?? readLastWallet();
+    if (!saved) throw new Error("No saved wallet. Log in again.");
+    if (saved.kind === "evm") {
+      await connectEvm(saved.connectorId);
+      return;
+    }
+    if (saved.kind === "solana") {
+      const target = saved.walletName
+        ? solana.wallets.find(
+            (w) =>
+              w.name === saved.walletName ||
+              w.name.toLowerCase().includes(saved.walletName!.toLowerCase()) ||
+              saved.walletName!.toLowerCase().includes(w.name.toLowerCase()),
+          )
+        : solana.wallets[0];
+      if (!target) throw new Error("Wallet not detected. Please try again.");
+      await connectSolanaWallet(target);
+      return;
+    }
+    await connectNear();
+  }, [connectEvm, connectNear, connectSolanaWallet, lastWallet, solana.wallets]);
 
   const disconnect = useCallback(async () => {
-    const { clearAllIntentsSessions } = await import("@/lib/intents/user-session");
+    // The interface leaves the account behind before the wallets are asked
+    // to let go. A refused or slow request must not leave a connected-looking
+    // state that makes the next press resume sign-in instead of the selector.
+    setSevered(true);
+    setLastWallet(null);
+    clearLastWallet();
+    const [{ clearAllIntentsSessions }, { releaseFundingConnections }] =
+      await Promise.all([
+        import("@/lib/intents/user-session"),
+        import("@/lib/wallet/funding/release"),
+      ]);
     clearAllIntentsSessions();
-    void postJson("/api/auth/logout", {}).catch(() => {});
     clearThreadCache();
     // Balances and history belong to the account that just left, so the
     // next person on this browser never sees a painted snapshot of them.
     clearFinanceCaches();
     // As with sign-in, the `myntle:sign-out` broadcast belongs to the
     // provider so the session state and the event agree.
-    if (evm.isConnected) await evm.disconnect();
-    else if (solana.connection) solana.disconnect();
-    else if (near.isConnected) await near.disconnect();
-  }, [evm, near, solana]);
+    //
+    // Every adapter is severed, not just the first one that looks connected:
+    // a browser can hold more than one wallet at a time, and leaving one
+    // behind is what makes the account button land back on "Sign In". Each
+    // call is settled independently so a wallet that refuses cannot stop
+    // the others from being disconnected. The logout request is part of the
+    // same settle: the cookie is what a reload reads, so it must be gone
+    // before sign-out is treated as finished. The funding grants are a
+    // second, separate wallet authorisation made by the deposit dialog;
+    // they are released here too, so a funding wallet cannot survive into
+    // the next login.
+    await Promise.allSettled([
+      postJson("/api/auth/logout", {}).catch(() => {}),
+      releaseFundingConnections(),
+      evm.account ? evm.disconnect() : Promise.resolve(),
+      solana.connection ? solana.disconnect() : Promise.resolve(),
+      near.isConnected ? near.disconnect() : Promise.resolve(),
+    ]);
+  }, [evm, near, setSevered, solana, setLastWallet]);
 
   const signMessage = useCallback(
     async (payload: Uint8Array): Promise<Uint8Array> => {
@@ -388,6 +563,10 @@ export function useWalletState() {
     connectEvm,
     connectSolanaWallet,
     connectNear,
+    /** The wallet the session was signed in with, for one-click reconnect. */
+    lastWallet,
+    /** Reconnect the saved wallet without opening the picker. */
+    reconnectWallet,
     signIn,
     disconnect,
     signMessage,

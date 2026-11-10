@@ -90,8 +90,8 @@ export function PasskeyOptions({
           onClick={() => void flow.run("create")}
           className="flex w-full items-center gap-3 rounded-[10px] border border-line bg-page px-3.5 py-3 text-left transition-colors duration-100 hover:border-line-strong hover:bg-hover disabled:opacity-60"
         >
-          <span className="flex size-9 shrink-0 items-center justify-center text-ink-2">
-            <IconUserPlus size={17} stroke={1.8} aria-hidden />
+          <span className="flex size-7 shrink-0 items-center justify-center text-ink-2">
+            <IconUserPlus size={28} stroke={1.8} aria-hidden />
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-[13px] font-medium text-ink">
@@ -123,8 +123,8 @@ export function PasskeyOptions({
           onClick={() => void flow.run("signin")}
           className="flex w-full items-center gap-3 rounded-[10px] border border-line bg-page px-3.5 py-3 text-left transition-colors duration-100 hover:border-line-strong hover:bg-hover disabled:opacity-60"
         >
-          <span className="flex size-9 shrink-0 items-center justify-center text-ink-2">
-            <IconUser size={17} stroke={1.8} aria-hidden />
+          <span className="flex size-7 shrink-0 items-center justify-center text-ink-2">
+            <IconUser size={28} stroke={1.8} aria-hidden />
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-[13px] font-medium text-ink">

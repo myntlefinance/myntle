@@ -4,6 +4,7 @@ import {
   canSign,
   resolveSignedIn,
   sameAccount,
+  sessionAccountFor,
   type SessionIdentity,
 } from "./session-identity";
 
@@ -163,5 +164,45 @@ describe("canSign", () => {
         account: evmAccount,
       }),
     ).toBe(false);
+  });
+});
+
+describe("sessionAccountFor", () => {
+  const actual = {
+    kind: "evm" as const,
+    standard: "erc191" as const,
+    address: evm.address,
+    signerId: evm.address,
+    publicKey: "",
+    walletName: "MetaMask",
+    walletIcon: "/wallets/metamask.webp",
+  };
+
+  it("keeps the signed-in identity while a different funding wallet is connected", () => {
+    const account = sessionAccountFor(evm, {
+      ...actual,
+      address: "0x1111111111111111111111111111111111111111",
+      signerId: "0x1111111111111111111111111111111111111111",
+      walletName: "Rabby",
+    });
+
+    expect(account).toMatchObject({
+      kind: "evm",
+      address: evm.address,
+      signerId: evm.intentsAccountId,
+    });
+    expect(account?.walletName).toBeUndefined();
+  });
+
+  it("keeps the wallet name when the session wallet is still connected", () => {
+    expect(sessionAccountFor(evm, actual)).toMatchObject({
+      address: evm.address,
+      walletName: "MetaMask",
+      walletIcon: "/wallets/metamask.webp",
+    });
+  });
+
+  it("does not invent an identity without a session", () => {
+    expect(sessionAccountFor(null, actual)).toBe(actual);
   });
 });
