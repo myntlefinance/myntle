@@ -205,7 +205,9 @@ export function AssetMatrix({
               <IconWallet
                 size={15}
                 stroke={1.5}
-                className="text-ink-3 shrink-0"
+                /* The radius is what skullet measures: an icon with no
+                 * radius becomes a sharp square in the skeleton. */
+                className="text-ink-3 shrink-0 rounded-[4px]"
                 aria-hidden="true"
               />
               <span className="text-[13px] font-medium text-ink truncate">
@@ -243,7 +245,7 @@ export function AssetMatrix({
                   <Icon
                     size={13}
                     stroke={1.5}
-                    className={`shrink-0 ${
+                    className={`shrink-0 rounded-[4px] ${
                       active ? "text-ink-2" : "text-ink-3"
                     }`}
                     aria-hidden="true"

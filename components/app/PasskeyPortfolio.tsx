@@ -1,12 +1,20 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { IconLock } from "@tabler/icons-react";
 import { Button } from "@/components/atoms/Button";
-import { AssetMatrix } from "@/components/finance/AssetMatrix";
+import {
+  PortfolioHero,
+  type AllocationGroup,
+} from "@/components/finance/PortfolioHero";
+import {
+  HoldingsTable,
+  flattenGroups,
+} from "@/components/finance/HoldingsTable";
 import { openSuperUnlock } from "@/components/app/SuperUnlockDialog";
 import { usePasskeyPortfolio } from "./portfolioQueries";
 import type { PortfolioSnapshot } from "./portfolioCache";
+import { SAMPLE_PORTFOLIO } from "./portfolioCache";
 import type { PasskeyPortfolioStatus } from "./passkeyPortfolioData";
 
 /* ─────────────────────────────────────────────────────────
@@ -17,19 +25,22 @@ import type { PasskeyPortfolioStatus } from "./passkeyPortfolioData";
  * mounted once by AccountControl in the footer.
  * ───────────────────────────────────────────────────────── */
 
+/** The private side of the sample: what the first paint measures. */
+const SAMPLE_PRIVATE: PortfolioSnapshot = {
+  groups: SAMPLE_PORTFOLIO.superGroups ?? [],
+  totalUsd: SAMPLE_PORTFOLIO.superUsd ?? 0,
+  walletGroups: [],
+  superGroups: SAMPLE_PORTFOLIO.superGroups ?? [],
+  walletUsd: 0,
+  superUsd: SAMPLE_PORTFOLIO.superUsd ?? 0,
+};
+
 function StateFrame({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-[46vh] flex-col items-center justify-center px-4 py-12 text-center">
       {children}
     </div>
   );
-}
-
-function money(value: number): string {
-  return `$${value.toLocaleString(undefined, {
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2,
-  })}`;
 }
 
 export function PasskeyPortfolioBody({
@@ -43,15 +54,14 @@ export function PasskeyPortfolioBody({
   onUnlock: () => void;
   onRetry?: () => void;
 }) {
-  if (status === "pending") {
-    return (
-      <StateFrame>
-        <p className="text-[13.5px] leading-relaxed text-ink-3">
-          Reading your private balance.
-        </p>
-      </StateFrame>
-    );
-  }
+  // Bar selection doubles as the table filter; null shows everything.
+  const [group, setGroup] = useState<AllocationGroup | null>(null);
+
+  // First read with nothing cached: paint the sample shape at once and
+  // revalidate behind it, exactly like the wallet tab does. Never a
+  // bare loading line.
+  const view =
+    snapshot ?? (status === "pending" ? SAMPLE_PRIVATE : null);
 
   if (status === "locked") {
     return (
@@ -85,7 +95,7 @@ export function PasskeyPortfolioBody({
     );
   }
 
-  if (status === "error" || !snapshot) {
+  if (status === "error" || !view) {
     return (
       <StateFrame>
         <p className="max-w-[46ch] text-[13.5px] leading-relaxed text-ink-2">
@@ -107,20 +117,17 @@ export function PasskeyPortfolioBody({
   }
 
   return (
-    <>
-      <p className="mb-4 text-[13.5px] leading-relaxed text-ink">
-        Your private balance totals{" "}
-        <strong className="font-semibold tabular-nums">
-          {money(snapshot.totalUsd)}
-        </strong>
-        .
-      </p>
-      <AssetMatrix
-        groups={snapshot.groups}
-        title="Private balance"
-        totalValueUsd={snapshot.totalUsd}
+    <div className="flex flex-col gap-3">
+      <PortfolioHero
+        total={view.totalUsd}
+        count={flattenGroups(view.superGroups ?? view.groups).length}
+        scope="super"
+        items={flattenGroups(view.superGroups ?? view.groups)}
+        selected={group}
+        onSelect={(next) => setGroup((prev) => (prev === next ? null : next))}
       />
-    </>
+      <HoldingsTable groups={view.superGroups ?? view.groups} group={group} />
+    </div>
   );
 }
 

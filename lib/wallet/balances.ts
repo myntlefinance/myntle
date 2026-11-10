@@ -6,6 +6,17 @@ export type SupportedNetwork =
   | "ethereum"
   | "optimism"
   | "polygon"
+  | "bnb"
+  | "avalanche"
+  | "gnosis"
+  | "linea"
+  | "scroll"
+  | "zksync"
+  | "blast"
+  | "mantle"
+  | "celo"
+  | "unichain"
+  | "soneium"
   | "solana"
   | "near";
 
@@ -16,6 +27,7 @@ export type BalanceFilterOptions = {
   category?: AssetCategory;
   symbol?: string;
   includeZeroValue?: boolean;
+  maxPages?: number;
 };
 
 export type TokenBalance = {
@@ -39,6 +51,7 @@ export type AssetItem = {
   name: string;
   amount: string;
   valueUsd: number;
+  priceUsd?: number;
   category: AssetCategory;
   logo?: string | null;
   contractAddress?: string | null;
@@ -71,6 +84,29 @@ const NETWORK_CONFIG: Record<string, { name: string; icon: string; order: number
   // matic-mainnet, so both spellings have to resolve to the same group.
   matic: { name: "Polygon", icon: "polygon", order: 5 },
   "matic-mainnet": { name: "Polygon", icon: "polygon", order: 5 },
+  bnb: { name: "BNB Chain", icon: "bnb", order: 10 },
+  "bnb-mainnet": { name: "BNB Chain", icon: "bnb", order: 10 },
+  avalanche: { name: "Avalanche", icon: "avax", order: 11 },
+  "avax-mainnet": { name: "Avalanche", icon: "avax", order: 11 },
+  avax: { name: "Avalanche", icon: "avax", order: 11 },
+  gnosis: { name: "Gnosis", icon: "gnosis", order: 12 },
+  "gnosis-mainnet": { name: "Gnosis", icon: "gnosis", order: 12 },
+  linea: { name: "Linea", icon: "linea", order: 13 },
+  "linea-mainnet": { name: "Linea", icon: "linea", order: 13 },
+  scroll: { name: "Scroll", icon: "scroll", order: 14 },
+  "scroll-mainnet": { name: "Scroll", icon: "scroll", order: 14 },
+  zksync: { name: "ZKsync", icon: "zksync", order: 15 },
+  "zksync-mainnet": { name: "ZKsync", icon: "zksync", order: 15 },
+  blast: { name: "Blast", icon: "blast", order: 16 },
+  "blast-mainnet": { name: "Blast", icon: "blast", order: 16 },
+  mantle: { name: "Mantle", icon: "mantle", order: 17 },
+  "mantle-mainnet": { name: "Mantle", icon: "mantle", order: 17 },
+  celo: { name: "Celo", icon: "celo", order: 18 },
+  "celo-mainnet": { name: "Celo", icon: "celo", order: 18 },
+  unichain: { name: "Unichain", icon: "unichain", order: 19 },
+  "unichain-mainnet": { name: "Unichain", icon: "unichain", order: 19 },
+  soneium: { name: "Soneium", icon: "soneium", order: 20 },
+  "soneium-mainnet": { name: "Soneium", icon: "soneium", order: 20 },
   solana: { name: "Solana", icon: "sol", order: 6 },
   "solana-mainnet": { name: "Solana", icon: "sol", order: 6 },
   sol: { name: "Solana", icon: "sol", order: 6 },
@@ -120,6 +156,7 @@ export function groupBalancesByNetwork(balances: TokenBalance[]): AssetGroup[] {
       name: b.name,
       amount: b.balance,
       valueUsd: Number.parseFloat(val.toFixed(2)),
+      priceUsd: b.priceUsd,
       category: b.category ?? classifyAssetCategory(b.symbol, val),
       logo: b.logo,
       contractAddress: b.contractAddress,
@@ -312,6 +349,17 @@ const NETWORK_DEFAULTS: Record<
   "polygon-mainnet": { symbol: "POL", name: "Polygon", decimals: 18 },
   "matic-mainnet": { symbol: "POL", name: "Polygon", decimals: 18 },
   "opt-mainnet": { symbol: "ETH", name: "Optimism ETH", decimals: 18 },
+  "bnb-mainnet": { symbol: "BNB", name: "BNB", decimals: 18 },
+  "avax-mainnet": { symbol: "AVAX", name: "Avalanche", decimals: 18 },
+  "gnosis-mainnet": { symbol: "xDAI", name: "xDAI", decimals: 18 },
+  "linea-mainnet": { symbol: "ETH", name: "Linea ETH", decimals: 18 },
+  "scroll-mainnet": { symbol: "ETH", name: "Scroll ETH", decimals: 18 },
+  "zksync-mainnet": { symbol: "ETH", name: "ZKsync ETH", decimals: 18 },
+  "blast-mainnet": { symbol: "ETH", name: "Blast ETH", decimals: 18 },
+  "mantle-mainnet": { symbol: "MNT", name: "Mantle", decimals: 18 },
+  "celo-mainnet": { symbol: "CELO", name: "Celo", decimals: 18 },
+  "unichain-mainnet": { symbol: "ETH", name: "Unichain ETH", decimals: 18 },
+  "soneium-mainnet": { symbol: "ETH", name: "Soneium ETH", decimals: 18 },
   "solana-mainnet": { symbol: "SOL", name: "Solana", decimals: 9 },
 };
 
@@ -322,6 +370,7 @@ type AlchemyTokenItem = {
   tokenBalance: string;
   isSpam?: boolean;
   spamClassifications?: string[];
+  error?: string | null;
   tokenMetadata?: {
     name?: string | null;
     symbol?: string | null;
@@ -343,12 +392,140 @@ type AlchemyPortfolioResponse = {
   };
   error?: {
     message?: string;
+    partialErrors?: Array<{ network?: string; message?: string }>;
     code?: number;
   };
 };
 
 /**
+ * Every EVM mainnet the Portfolio API is asked about. Alchemy caps one
+ * request at 5 networks per address, so the caller chunks this list and
+ * runs the chunks in parallel. The user never configures it: a watched
+ * address reads all of these by default.
+ */
+const ALL_EVM_PORTFOLIO_NETWORKS = [
+  "eth-mainnet",
+  "base-mainnet",
+  "arb-mainnet",
+  "opt-mainnet",
+  "polygon-mainnet",
+  "bnb-mainnet",
+  "avax-mainnet",
+  "gnosis-mainnet",
+  "linea-mainnet",
+  "scroll-mainnet",
+  "zksync-mainnet",
+  "blast-mainnet",
+  "mantle-mainnet",
+  "celo-mainnet",
+  "unichain-mainnet",
+  "soneium-mainnet",
+];
+
+export const FAST_EVM_NETWORKS = [
+  "eth-mainnet",
+  "base-mainnet",
+  "arb-mainnet",
+  "opt-mainnet",
+  "polygon-mainnet",
+];
+
+function chunkNetworks(networks: string[], size = 5): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < networks.length; i += size) {
+    out.push(networks.slice(i, i + size));
+  }
+  return out;
+}
+
+type AlchemyChunkResult = {
+  tokens: AlchemyTokenItem[];
+  failedNetworks: string[];
+};
+
+/**
+ * One network chunk, fully paged. Follows `pageKey` until Alchemy says
+ * there is no next page, and keeps the successful tokens even when some
+ * networks in the chunk report `partialErrors`.
+ */
+async function fetchAlchemyChunk(
+  apiKey: string,
+  address: string,
+  networks: string[],
+  maxPages = 20,
+  allowRetry = true,
+): Promise<AlchemyChunkResult> {
+  const tokens: AlchemyTokenItem[] = [];
+  const failed = new Set<string>();
+  let pageKey: string | null | undefined;
+  // Safety cap: a dusted whale can page deep, but never loop forever.
+  const cappedPages = Math.max(1, Math.floor(maxPages));
+
+  for (let page = 0; page < cappedPages; page += 1) {
+    const res = await fetch(
+      `https://api.g.alchemy.com/data/v1/${apiKey}/assets/tokens/by-address`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          addresses: [{ address, networks }],
+          withMetadata: true,
+          withPrices: true,
+          includeNativeTokens: true,
+          includeErc20Tokens: true,
+          excludeFilters: ["SPAM"],
+          ...(pageKey ? { pageKey } : {}),
+        }),
+      },
+    );
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(
+        `Alchemy balance lookup failed with status ${res.status}: ${errText.slice(0, 120)}`,
+      );
+    }
+
+    const json = (await res.json()) as AlchemyPortfolioResponse;
+    for (const item of json.data?.tokens ?? []) tokens.push(item);
+    for (const entry of json.error?.partialErrors ?? []) {
+      if (entry.network) failed.add(entry.network);
+    }
+
+    const next = json.data?.pageKey;
+    if (!next) break;
+    pageKey = next;
+  }
+
+  // Retry only the failed networks once, per the partial-failure guidance:
+  // a failed network is absent from the next page, so it needs a new request.
+  // The retry never recurses: a network that fails twice is reported, not
+  // chased, so one bad slug can't hold the whole refresh open.
+  if (allowRetry && failed.size > 0) {
+    const retryNetworks = [...failed].filter((n) => networks.includes(n));
+    if (retryNetworks.length > 0) {
+      try {
+        const retry = await fetchAlchemyChunk(apiKey, address, retryNetworks, maxPages, false);
+        for (const item of retry.tokens) tokens.push(item);
+        for (const n of retry.failedNetworks) failed.add(n);
+        for (const n of retryNetworks) {
+          if (!retry.failedNetworks.includes(n)) failed.delete(n);
+        }
+      } catch {
+        // Keep the successful tokens; the chunk result still reports failures.
+      }
+    }
+  }
+
+  return { tokens, failedNetworks: [...failed] };
+}
+
+/**
  * Fetches token balances for EVM and Solana addresses via Alchemy's Portfolio API.
+ *
+ * EVM reads cover every network in ALL_EVM_PORTFOLIO_NETWORKS by default,
+ * chunked to Alchemy's 5-networks-per-request limit and fully paged via
+ * pageKey. An explicit `networks` filter narrows the read instead.
  */
 async function fetchAlchemyBalances(
   address: string,
@@ -361,6 +538,17 @@ async function fetchAlchemyBalances(
     ethereum: "eth-mainnet",
     optimism: "opt-mainnet",
     polygon: "polygon-mainnet",
+    bnb: "bnb-mainnet",
+    avalanche: "avax-mainnet",
+    gnosis: "gnosis-mainnet",
+    linea: "linea-mainnet",
+    scroll: "scroll-mainnet",
+    zksync: "zksync-mainnet",
+    blast: "blast-mainnet",
+    mantle: "mantle-mainnet",
+    celo: "celo-mainnet",
+    unichain: "unichain-mainnet",
+    soneium: "soneium-mainnet",
   };
 
   let networks: string[];
@@ -377,9 +565,9 @@ async function fetchAlchemyBalances(
       if (filtered.length === 0) {
         return { address, chain, balances: [], totalValueUsd: 0 };
       }
-      networks = filtered;
+      networks = [...new Set(filtered)];
     } else {
-      networks = ["eth-mainnet", "base-mainnet", "arb-mainnet"];
+      networks = [...ALL_EVM_PORTFOLIO_NETWORKS];
     }
   }
 
@@ -396,47 +584,32 @@ async function fetchAlchemyBalances(
   }
 
   try {
-    const res = await fetch(
-      `https://api.g.alchemy.com/data/v1/${apiKey}/assets/tokens/by-address`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          addresses: [{ address, networks }],
-          withMetadata: true,
-          withPrices: true,
-          includeNativeTokens: true,
-          includeErc20Tokens: true,
-          excludeFilters: ["SPAM"],
-        }),
-      },
+    const chunks = chunkNetworks(networks, 5);
+    const maxPages = options?.maxPages;
+    const settled = await Promise.all(
+      chunks.map((group) =>
+        maxPages !== undefined
+          ? fetchAlchemyChunk(apiKey, address, group, maxPages)
+          : fetchAlchemyChunk(apiKey, address, group),
+      ),
     );
 
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
+    const tokens = settled.flatMap((result) => result.tokens);
+    const failedNetworks = [...new Set(settled.flatMap((r) => r.failedNetworks))];
+    if (tokens.length === 0 && failedNetworks.length > 0) {
       return {
         address,
         chain,
         balances: [],
-        error: `Alchemy balance lookup failed with status ${res.status}: ${errText.slice(0, 120)}`,
+        error: `Alchemy error: ${failedNetworks.length} network(s) failed (${failedNetworks.slice(0, 5).join(", ")}).`,
       };
     }
-
-    const json = (await res.json()) as AlchemyPortfolioResponse;
-    if (json.error?.message) {
-      return {
-        address,
-        chain,
-        balances: [],
-        error: `Alchemy error: ${json.error.message}`,
-      };
-    }
-
-    const tokens = json.data?.tokens ?? [];
     const balances: TokenBalance[] = [];
 
     for (const item of tokens) {
       if (!item.tokenBalance) continue;
+      // A per-token metadata or pricing failure: skip the row, keep the rest.
+      if (item.error) continue;
 
       // 1. Alchemy spam filter check (always active)
       const isAlchemySpam =

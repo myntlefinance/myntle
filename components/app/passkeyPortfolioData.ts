@@ -52,7 +52,18 @@ function positiveEntry(entry: PasskeyBalanceEntry): boolean {
 export async function fetchPasskeyPortfolio(
   accountId: string,
 ): Promise<PasskeyPortfolioRead> {
-  const result = await fetchPrivateBalances("passkey", accountId);
+  return fetchSessionPortfolio("passkey", accountId);
+}
+
+/**
+ * The same private read for any session owner: a wallet super
+ * account reads with its own chain and address.
+ */
+export async function fetchSessionPortfolio(
+  chain: string,
+  address: string,
+): Promise<PasskeyPortfolioRead> {
+  const result = await fetchPrivateBalances(chain, address);
   if (!result.ok) return result;
   return { ok: true, entries: result.balances.filter(positiveEntry) };
 }
@@ -108,18 +119,24 @@ export function buildPasskeySnapshot(
 
   const total = items.reduce((sum, item) => sum + item.valueUsd, 0);
 
+  const groups =
+    items.length === 0
+      ? []
+      : [
+          {
+            id: "private-balance",
+            name: "Private balance",
+            icon: "near",
+            items,
+          },
+        ];
+
   return {
-    groups:
-      items.length === 0
-        ? []
-        : [
-            {
-              id: "private-balance",
-              name: "Private balance",
-              icon: "near",
-              items,
-            },
-          ],
+    groups,
     totalUsd: Number.parseFloat(total.toFixed(2)),
+    walletGroups: [],
+    superGroups: groups,
+    walletUsd: 0,
+    superUsd: Number.parseFloat(total.toFixed(2)),
   };
 }

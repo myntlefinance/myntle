@@ -10,6 +10,8 @@ const WALLET = "0x32596df10ff2ac5acde8406e6adcc8d047921073";
 const state = vi.hoisted(() => ({
   auth: {} as Record<string, unknown>,
   usePortfolio: vi.fn(),
+  useWatchedPortfolio: vi.fn(),
+  useWatchlist: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -19,11 +21,13 @@ vi.mock("next/navigation", () => ({
 vi.mock("skullet/react", () => ({
   Skeleton: ({
     children,
+    data,
     sample,
   }: {
     children: (value: unknown) => React.ReactNode;
+    data: unknown;
     sample: unknown;
-  }) => <>{children(sample)}</>,
+  }) => <>{children(data ?? sample)}</>,
 }));
 
 vi.mock("@/components/primitives/SidebarNav", () => ({
@@ -55,30 +59,25 @@ vi.mock("@/components/app/threadQueries", () => ({
   useTrashed: () => ({ data: [] }),
 }));
 
+vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({
+    getQueryData: () => undefined,
+    setQueryData: () => undefined,
+  }),
+}));
+
 vi.mock("@/components/app/portfolioQueries", () => ({
   usePortfolio: state.usePortfolio,
+  useWatchedPortfolio: state.useWatchedPortfolio,
+}));
+
+vi.mock("@/components/app/useWatchlist", () => ({
+  useWatchlist: state.useWatchlist,
 }));
 
 vi.mock("@/components/app/PasskeyPortfolio", () => ({
   PasskeyPortfolio: ({ accountId }: { accountId: string }) =>
     `passkey-portfolio:${accountId}`,
-}));
-
-vi.mock("@/components/finance/AssetMatrix", () => ({
-  AssetMatrix: ({
-    groups,
-    title,
-  }: {
-    groups: Array<{ items: Array<{ symbol: string }> }>;
-    title: string;
-  }) => (
-    <div>
-      {title}{" "}
-      {groups.flatMap((group) =>
-        group.items.map((item) => item.symbol).join(","),
-      )}
-    </div>
-  ),
 }));
 
 vi.mock("@/lib/auth/auth-provider", () => ({
@@ -118,12 +117,67 @@ const WALLET_SNAPSHOT: PortfolioSnapshot = {
           name: "USD Coin",
           amount: "10",
           valueUsd: 10,
+          priceUsd: 1,
+          category: "stables",
+        },
+      ],
+    },
+    {
+      id: "settlement",
+      name: "Settlement Ledger",
+      icon: "near",
+      items: [
+        {
+          id: "intents-usdc",
+          symbol: "USDC",
+          name: "USD Coin",
+          amount: "5",
+          valueUsd: 5,
+          priceUsd: 1,
           category: "stables",
         },
       ],
     },
   ],
-  totalUsd: 10,
+  totalUsd: 15,
+  walletGroups: [
+    {
+      id: "base",
+      name: "Base",
+      icon: "base",
+      items: [
+        {
+          id: "base-usdc",
+          symbol: "USDC",
+          name: "USD Coin",
+          amount: "10",
+          valueUsd: 10,
+          priceUsd: 1,
+          category: "stables",
+        },
+      ],
+    },
+  ],
+  superGroups: [
+    {
+      id: "settlement",
+      name: "Settlement Ledger",
+      icon: "near",
+      items: [
+        {
+          id: "intents-usdc",
+          symbol: "USDC",
+          name: "USD Coin",
+          amount: "5",
+          valueUsd: 5,
+          priceUsd: 1,
+          category: "stables",
+        },
+      ],
+    },
+  ],
+  walletUsd: 10,
+  superUsd: 5,
 };
 
 beforeEach(() => {
@@ -133,6 +187,27 @@ beforeEach(() => {
     error: null,
     authExpired: false,
     isPending: false,
+  });
+  state.useWatchedPortfolio.mockReset();
+  state.useWatchedPortfolio.mockReturnValue({
+    snapshot: null,
+    error: null,
+    authExpired: false,
+    isPending: false,
+    refresh: vi.fn(),
+  });
+  state.useWatchlist.mockReset();
+  state.useWatchlist.mockReturnValue({
+    entries: [],
+    isPending: false,
+    error: null,
+    refresh: vi.fn(),
+    add: vi.fn(),
+    addError: null,
+    isAdding: false,
+    remove: vi.fn(),
+    removeError: null,
+    isRemoving: false,
   });
 });
 
@@ -148,8 +223,13 @@ describe("PortfolioView branches", () => {
 
     const html = ReactDOMServer.renderToStaticMarkup(<PortfolioView />);
 
-    expect(html).toContain("Portfolio balances");
+    expect(html).toContain("Your wallet");
+    expect(html).toContain("Super account");
+    expect(html).toContain("Watchlist");
+    expect(html).toContain("myntle-logo.svg");
+    expect(html).toContain("Your wallet holds $10.00 across 1 asset.");
     expect(html).toContain("USDC");
+    expect(html).toContain("Search assets");
     expect(html).not.toContain("passkey-portfolio");
     expect(state.usePortfolio).toHaveBeenCalledWith("evm", WALLET, true);
   });
@@ -169,5 +249,23 @@ describe("PortfolioView branches", () => {
     expect(html).not.toContain("Connect Wallet");
     expect(html).not.toContain("Private balances are being connected.");
     expect(state.usePortfolio).toHaveBeenCalledWith(null, null, false);
+  });
+
+  it("offers one log-in action to a connected wallet without a session", () => {
+    // The state left behind by a sign-out that has not finished severing the
+    // wallet must not read as a different, second account action.
+    state.auth = {
+      account: { kind: "evm", address: WALLET },
+      connected: true,
+      signedIn: false,
+      status: "signed-out",
+      identity: null,
+    };
+
+    const html = ReactDOMServer.renderToStaticMarkup(<PortfolioView />);
+
+    expect(html).toContain("Please log in to view your portfolio and balances.");
+    expect(html).toContain("Log In");
+    expect(html).not.toContain("Sign In");
   });
 });

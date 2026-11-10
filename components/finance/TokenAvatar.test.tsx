@@ -90,4 +90,12 @@ describe("TokenAvatar", () => {
     // Badge SVG (Base #0000FF from official uploaded base.svg)
     expect(html).toContain("#0000FF");
   });
+
+  it("reads as one skeleton block so the badge draws no second circle", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <TokenAvatar symbol="USDC" networkBadge="base" size={28} />,
+    );
+    expect(html).toContain('skullet-block=""');
+    expect(html).toContain("rounded-full");
+  });
 });

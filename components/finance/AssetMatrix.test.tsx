@@ -107,6 +107,20 @@ describe("AssetMatrix", () => {
     expect(html).toContain("$100.00");
   });
 
+  it("rounds every icon so the measured skeleton has no sharp squares", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <AssetMatrix title="Portfolio balances" groups={MOCK_GROUPS} />,
+    );
+
+    const iconClasses = [...html.matchAll(/<svg[^>]*class="([^"]*)"/g)].map(
+      (match) => match[1],
+    );
+    expect(iconClasses.length).toBeGreaterThan(0);
+    expect(
+      iconClasses.every((classes) => classes.includes("rounded-[4px]")),
+    ).toBe(true);
+  });
+
   it("keeps the header and total when one network holds several rows", () => {
     const groups: AssetGroup[] = [
       {

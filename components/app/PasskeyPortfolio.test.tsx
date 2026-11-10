@@ -94,11 +94,17 @@ describe("passkey private balance", () => {
     );
     const html = renderBody("loaded", snapshot);
 
-    expect(html).toContain("Your private balance totals");
+    expect(html).toContain("Your super account holds $2.50 across 1 asset.");
     expect(html).toContain("USDC");
     expect(html).toContain("2.5");
     expect(html).toContain("$2.50");
-    expect(html).toContain("Private balance");
+  });
+
+  it("paints the sample shape while the first private read lands", () => {
+    const html = renderBody("pending", null);
+    expect(html).not.toContain("Reading your private balance.");
+    expect(html).toContain("Your super account holds $896.98 across 4 assets.");
+    expect(html).toContain("USDC");
   });
 
   it("renders the unlock action while the session is locked", async () => {

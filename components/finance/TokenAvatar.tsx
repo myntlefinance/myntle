@@ -1,8 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState, useMemo } from "react";
-import { NetworkIcon } from "./NetworkIcon";
+import { useId, useState, useMemo } from "react";
+import { NetworkIcon, isolateSvgIds } from "./NetworkIcon";
 import { UPLOADED_TOKENS } from "./uploadedSvgs";
 
 export type TokenAvatarProps = {
@@ -93,13 +93,18 @@ export function TokenSvg({
   size?: number;
 }): ReactNode {
   const resolved = resolveUploadedToken(symbol);
-  if (!resolved) return null;
+  const uid = useId();
+  const svg = useMemo(
+    () => (resolved ? isolateSvgIds(resolved.svg, uid) : null),
+    [resolved, uid],
+  );
+  if (!resolved || !svg) return null;
 
   return (
     <div
-      className={`w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden [&>svg]:w-full [&>svg]:h-full select-none ${resolved.paddingClass}`}
+      className={`w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden [&>svg]:block [&>svg]:w-full [&>svg]:h-full select-none ${resolved.paddingClass}`}
       style={{ width: size, height: size }}
-      dangerouslySetInnerHTML={{ __html: resolved.svg }}
+      dangerouslySetInnerHTML={{ __html: svg }}
     />
   );
 }
@@ -123,13 +128,19 @@ export function TokenAvatar({
   const sym = symbol.toUpperCase();
   const label = name || symbol;
   const badgeSize = Math.max(7, Math.round(size * 0.39));
-  // The ring separating badge from token thins out with small badges so the
-  // stroke never eats the glyph; large avatars keep the wider ring.
-  const badgeRing = badgeSize < 10 ? "ring-1" : "ring-2";
+  // An 11px badge (28px avatar) with ring-2 reads as a halo: 2px is ~18%
+  // of the diameter and eats the glyph. Keep ring-1 until the badge is
+  // large enough (~14px) to carry the wider ring.
+  const badgeRing = badgeSize < 14 ? "ring-1" : "ring-2";
   const monogram = sym.charAt(0);
+  const uid = useId();
 
   // 1. Direct inline SVG lookup for curated / uploaded tokens (instant, zero rasterization)
   const uploaded = resolveUploadedToken(symbol);
+  const uploadedSvg = useMemo(
+    () => (uploaded ? isolateSvgIds(uploaded.svg, uid) : null),
+    [uploaded, uid],
+  );
 
   // 2. Candidate remote URL fallback for unlisted / dynamic tokens
   const remoteUrl = useMemo(() => {
@@ -143,15 +154,18 @@ export function TokenAvatar({
 
   return (
     <span
-      className={`relative inline-flex shrink-0 select-none ${className}`}
+      /* One bone for the token disc. Without this the badge is measured on
+       * its own and the skeleton draws two overlapping circles. */
+      {...{ "skullet-block": "" }}
+      className={`relative inline-flex shrink-0 select-none rounded-full ${className}`}
       style={{ width: size, height: size }}
       title={label}
     >
-      {uploaded ? (
+      {uploaded && uploadedSvg ? (
         <span
-          className={`w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden [&>svg]:w-full [&>svg]:h-full select-none ${uploaded.paddingClass}`}
+          className={`w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden [&>svg]:block [&>svg]:w-full [&>svg]:h-full select-none ${uploaded.paddingClass}`}
           style={{ width: size, height: size }}
-          dangerouslySetInnerHTML={{ __html: uploaded.svg }}
+          dangerouslySetInnerHTML={{ __html: uploadedSvg }}
         />
       ) : remoteUrl && !remoteFailed ? (
         <span
@@ -184,7 +198,7 @@ export function TokenAvatar({
       {/* Overlapping network badge at bottom-right corner */}
       {networkBadge && (
         <span
-          className={`absolute -bottom-0.5 -right-0.5 flex items-center justify-center rounded-full ${badgeRing} ring-surface`}
+          className={`absolute -bottom-0.5 -right-0.5 flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-surface ${badgeRing} ring-surface`}
         >
           <NetworkIcon network={networkBadge} size={badgeSize} />
         </span>
