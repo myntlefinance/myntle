@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { QueryObserverResult } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth/auth-provider";
@@ -48,6 +48,10 @@ export function usePortfolio(
   enabled: boolean,
 ) {
   const { refresh } = useAuth();
+  // A manual refresh must reach Alchemy, not the balances route's 60s
+  // response cache. The flag is read by the query function and reset once
+  // the refetch settles, so its retries stay uncached too.
+  const forceRead = useRef(false);
   const scope = useMemo(
     () => (chain && address ? portfolioScope(chain, address) : null),
     [chain, address],
@@ -57,7 +61,11 @@ export function usePortfolio(
     queryKey: [...PORTFOLIO_QUERY_KEY, scope ?? "anonymous"],
     queryFn: () => {
       if (!chain || !address) throw new Error("No wallet is connected.");
-      return fetchPortfolio(address, chain);
+      return fetchPortfolio(
+        address,
+        chain,
+        forceRead.current ? { refresh: true } : undefined,
+      );
     },
     enabled: enabled && scope !== null,
     // Balances settle slowly: serve the cache for 60s across tab switches
@@ -84,12 +92,66 @@ export function usePortfolio(
     writePortfolioRowCount(scope, "wallet", countGroupRows(walletGroups));
   }, [scope, query.data]);
 
+  // The section title's Refresh calls this instead of `query.refetch`
+  // directly: same revalidation and error handling, but with `refresh=1`
+  // so the route re-reads the chains rather than replaying its cached
+  // body. The watched reader already works this way.
+  const readNow = async () => {
+    forceRead.current = true;
+    try {
+      await query.refetch();
+    } finally {
+      forceRead.current = false;
+    }
+  };
+
   return {
     snapshot: query.data ?? null,
     error: query.error,
     authExpired,
     isPending: query.isPending,
-    refresh: query.refetch,
+    // Background revalidation counts too, so the title row shows the
+    // in-flight state the same way the watched section does.
+    isRefreshing: query.isFetching && query.data !== undefined,
+    refresh: readNow,
+  };
+}
+
+/* Non-EVM chains read in one request; the single group below stands in
+ * for the network fan-out so the merge path stays the same shape. */
+const SINGLE_NETWORK_GROUP: string[] = ["__all__"];
+
+type WatchedGroupRead = {
+  /** The resolved group snapshots. */
+  parts: PortfolioSnapshot[];
+  complete: boolean;
+  fetching: boolean;
+  authExpired: boolean;
+  firstError: Error | null;
+};
+
+/* useQueries hands back a fresh results array on every render, so deriving
+ * the merge inputs from it re-merged — and re-set — the shown snapshot on
+ * every render, which React ends at the 51st consecutive passive update
+ * with "Maximum update depth exceeded". Combining inside the observer keeps
+ * the aggregate referentially stable (structural sharing) unless content
+ * actually moved, so the candidate below only changes on a real read. */
+function combineWatchedGroups(
+  results: Array<QueryObserverResult<PortfolioSnapshot, Error>>,
+): WatchedGroupRead {
+  return {
+    parts: results.flatMap((query) =>
+      query.data !== undefined ? [query.data] : [],
+    ),
+    complete:
+      results.length > 0 && results.every((query) => query.isFetched),
+    fetching: results.some(
+      (query) => query.isFetching || query.isPending,
+    ),
+    authExpired: results.some(
+      (query) => query.error instanceof AuthExpiredError,
+    ),
+    firstError: results.find((query) => query.error !== null)?.error ?? null,
   };
 }
 
@@ -224,15 +286,11 @@ export function useWatchedPortfolio(
   const snapshot = shown;
   const isPending = shown === null;
   const isRefreshing =
-    (fast.isFetching ||
-      groupQueries.some((query) => query.isFetching || query.isPending) ||
-      manualRefreshing) &&
+    (fast.isFetching || grouped.fetching || manualRefreshing) &&
     snapshot !== null;
   const authExpired =
-    fast.error instanceof AuthExpiredError ||
-    groupQueries.some((query) => query.error instanceof AuthExpiredError);
-  const firstGroupError =
-    groupQueries.find((query) => query.error !== null)?.error ?? null;
+    fast.error instanceof AuthExpiredError || grouped.authExpired;
+  const firstGroupError = grouped.firstError;
   const error = snapshot === null ? (firstGroupError ?? fast.error ?? null) : null;
 
   const refresh = async () => {
