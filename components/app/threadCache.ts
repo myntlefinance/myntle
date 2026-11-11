@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import { clearApprovalRecords } from "./approvalRecords";
 
 /* ─────────────────────────────────────────────────────────
  * THREAD CACHE
@@ -12,13 +13,42 @@ export type ThreadItem = { id: string; label: string | null };
 
 export type TrashedItem = { id: string; label: string | null; deletedAt: string };
 
+/** One first page from the messages route, shared by hover and open. */
+export type ThreadMessagesBody = {
+  messages?: UIMessage[];
+  title?: string | null;
+  hasMore?: boolean;
+  oldestSeq?: number;
+};
+
+export type ThreadMessagesLoad =
+  | { kind: "ok"; body: ThreadMessagesBody }
+  | { kind: "unauthorized" }
+  | { kind: "error" };
+
+export type TrashedMessagesBody = {
+  messages?: UIMessage[];
+  title?: string | null;
+  deletedAt?: string | null;
+};
+
+export type TrashedMessagesLoad =
+  | { kind: "ok"; body: TrashedMessagesBody }
+  | { kind: "unauthorized" }
+  | { kind: "error" };
+
 // Per-chat history cache for the session. Clicking a visited chat renders
 // instantly from here; a background revalidate keeps it honest. Hovering a
 // thread warms one entry. Nothing is prefetched in bulk.
 export const messageCache = new Map<string, UIMessage[]>();
-export const prefetchInflight = new Set<string>();
+/** One message read per chat. A hover prefetch and the click join the same promise. */
+const threadLoads = new Map<string, Promise<ThreadMessagesLoad>>();
+/** When this tab last read a thread from the server, for the click freshness window. */
+const threadReadAt = new Map<string, number>();
+const THREAD_READ_FRESH_MS = 15_000;
 export const trashedMessageCache = new Map<string, UIMessage[]>();
-export const trashedPrefetchInflight = new Set<string>();
+/** One trashed-preview read per chat, shared by hover and open. */
+const trashedLoads = new Map<string, Promise<TrashedMessagesLoad>>();
 export const threadPagination = new Map<string, { hasMore: boolean; oldestSeq?: number }>();
 
 export function getCachedMessages(slug: string): UIMessage[] | undefined {
@@ -104,7 +134,8 @@ export function flushCachedMessages(slug?: string) {
 
 export function deleteCachedMessages(slug: string) {
   messageCache.delete(slug);
-  prefetchInflight.delete(slug);
+  threadLoads.delete(slug);
+  threadReadAt.delete(slug);
   const timer = persistTimers.get(slug);
   if (timer) {
     clearTimeout(timer);
@@ -141,9 +172,11 @@ export function clearThreadCache() {
   persistAt.clear();
   messageCache.clear();
   trashedMessageCache.clear();
-  prefetchInflight.clear();
-  trashedPrefetchInflight.clear();
+  threadLoads.clear();
+  threadReadAt.clear();
+  trashedLoads.clear();
   threadPagination.clear();
+  clearApprovalRecords();
   threadsInflightPromise = null;
   trashedInflightPromise = null;
   threadsMemoryCache = null;
@@ -239,6 +272,26 @@ export function readTrashedCache(): TrashedItem[] {
   return [];
 }
 
+/**
+ * Whether the trash has been read before, even if the answer was "nothing
+ * deleted". `readTrashedCache` alone cannot say: it returns an empty array
+ * both for a known-empty trash and for a cache that was never written, and
+ * treating the second as the first is what made the page show a skeleton on
+ * every visit. A stored empty array is a result, so the key's presence is
+ * the marker.
+ */
+export function hasTrashedCache(): boolean {
+  if (trashedMemoryCache !== null) return true;
+  try {
+    return (
+      typeof localStorage !== "undefined" &&
+      localStorage.getItem(TRASHED_KEY) !== null
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function writeTrashedCache(items: TrashedItem[]) {
   trashedMemoryCache = items;
   try {
@@ -311,55 +364,130 @@ export async function fetchTrashed(limit = 100): Promise<TrashedItem[]> {
   return trashedInflightPromise;
 }
 
-/** Hover intent on a thread: warm its history so opening it is instant. */
-export function prefetchThread(slug: string) {
-  if (messageCache.has(slug) || prefetchInflight.has(slug)) return;
-  prefetchInflight.add(slug);
-  void fetch(`/api/conversations/${encodeURIComponent(slug)}/messages?limit=20`)
-    .then((res) => {
+/** Remember that this tab just read the thread from the server. */
+export function markThreadRead(slug: string) {
+  threadReadAt.set(slug, Date.now());
+}
+
+/** True when this tab read the thread recently enough to skip a duplicate. */
+export function threadReadRecently(
+  slug: string,
+  maxAgeMs = THREAD_READ_FRESH_MS,
+): boolean {
+  const at = threadReadAt.get(slug);
+  return at !== undefined && Date.now() - at < maxAgeMs;
+}
+
+/**
+ * One first page of a thread, shared by the hover prefetch and the open.
+ *
+ * Both callers ask for the same slug, so the second one joins the promise
+ * instead of starting a second GET. A prefetch marks the request so the
+ * messages route skips its lazy title repair; a real open still repairs.
+ * The loader owns the cache write and pagination, so callers only consume
+ * the result.
+ */
+export function loadThreadMessages(
+  slug: string,
+  options: { prefetch?: boolean } = {},
+): Promise<ThreadMessagesLoad> {
+  const existing = threadLoads.get(slug);
+  if (existing) return existing;
+
+  const query = new URLSearchParams({ limit: "20" });
+  if (options.prefetch) query.set("prefetch", "1");
+
+  const request = (async (): Promise<ThreadMessagesLoad> => {
+    try {
+      const res = await fetch(
+        `/api/conversations/${encodeURIComponent(slug)}/messages?${query.toString()}`,
+      );
       if (res.status === 401) {
         clearThreadCache();
-        return null;
+        return { kind: "unauthorized" };
       }
-      return res.ok ? res.json() : null;
-    })
-    .then((body: { messages?: UIMessage[]; hasMore?: boolean; oldestSeq?: number } | null) => {
-      if (body?.messages && body.messages.length > 0) {
+      if (!res.ok) return { kind: "error" };
+      const body = (await res.json()) as ThreadMessagesBody | null;
+      if (!body) return { kind: "error" };
+      if (body.messages && body.messages.length > 0) {
         setCachedMessages(slug, body.messages);
-        if (body.hasMore !== undefined) {
-          threadPagination.set(slug, {
-            hasMore: body.hasMore,
-            oldestSeq: body.oldestSeq,
-          });
-        }
+        markThreadRead(slug);
       }
-    })
-    .catch(() => undefined)
-    .finally(() => {
-      prefetchInflight.delete(slug);
-    });
+      if (body.hasMore !== undefined) {
+        threadPagination.set(slug, {
+          hasMore: body.hasMore,
+          oldestSeq: body.oldestSeq,
+        });
+      }
+      return { kind: "ok", body };
+    } catch {
+      return { kind: "error" };
+    }
+  })();
+
+  threadLoads.set(slug, request);
+  void request.finally(() => {
+    if (threadLoads.get(slug) === request) threadLoads.delete(slug);
+  });
+  return request;
+}
+
+/**
+ * Hover intent on a thread: warm its history so opening it is instant.
+ *
+ * The card records are deliberately not warmed here. A decision and a
+ * settlement are read by the card that is actually on screen, never by a
+ * row someone merely hovered. A history already in the tab needs no
+ * warm-up; a stale one is revalidated by the open, not by the hover.
+ */
+export function prefetchThread(slug: string) {
+  if (threadLoads.has(slug) || threadReadRecently(slug)) return;
+  if (getCachedMessages(slug)) return;
+  void loadThreadMessages(slug, { prefetch: true });
+}
+
+/**
+ * One first page of a trashed chat, shared by the hover preview and the open.
+ *
+ * A trashed chat cannot gain messages, so a preview already in the tab needs
+ * no read at all. The page size matches the live thread: the preview shows
+ * the tail, not the whole deleted transcript.
+ */
+export function loadTrashedMessages(
+  slug: string,
+): Promise<TrashedMessagesLoad> {
+  const existing = trashedLoads.get(slug);
+  if (existing) return existing;
+
+  const request = (async (): Promise<TrashedMessagesLoad> => {
+    try {
+      const res = await fetch(
+        `/api/conversations/${encodeURIComponent(slug)}/messages?limit=20&trashed=1`,
+      );
+      if (res.status === 401) {
+        clearThreadCache();
+        return { kind: "unauthorized" };
+      }
+      if (!res.ok) return { kind: "error" };
+      const body = (await res.json()) as TrashedMessagesBody | null;
+      if (!body) return { kind: "error" };
+      trashedMessageCache.set(slug, body.messages ?? []);
+      return { kind: "ok", body };
+    } catch {
+      return { kind: "error" };
+    }
+  })();
+
+  trashedLoads.set(slug, request);
+  void request.finally(() => {
+    if (trashedLoads.get(slug) === request) trashedLoads.delete(slug);
+  });
+  return request;
 }
 
 /** Hover intent on a trashed thread: warm its history so previewing it is instant. */
 export function prefetchTrashedThread(slug: string) {
-  if (trashedMessageCache.has(slug) || trashedPrefetchInflight.has(slug)) return;
-  trashedPrefetchInflight.add(slug);
-  void fetch(`/api/conversations/${encodeURIComponent(slug)}/messages?limit=100&trashed=1`)
-    .then((res) => {
-      if (res.status === 401) {
-        clearThreadCache();
-        return null;
-      }
-      return res.ok ? res.json() : null;
-    })
-    .then((body: { messages?: UIMessage[] } | null) => {
-      if (body?.messages && body.messages.length > 0) {
-        trashedMessageCache.set(slug, body.messages);
-      }
-    })
-    .catch(() => undefined)
-    .finally(() => {
-      trashedPrefetchInflight.delete(slug);
-    });
+  if (trashedMessageCache.has(slug) || trashedLoads.has(slug)) return;
+  void loadTrashedMessages(slug);
 }
 

@@ -29,8 +29,7 @@ import {
 import {
   deleteCachedMessages,
   findThreadLabel,
-  messageCache,
-  prefetchInflight,
+  loadTrashedMessages,
   prefetchThread,
   readThreadsCache,
   readTrashedCache,
@@ -144,32 +143,24 @@ export default function TrashDetailView({ slug }: { slug: string }) {
     if (cached) {
       setMessages(cached);
       setMissing(false);
-    } else {
-      setMessages(null);
-      setMissing(false);
+      // A trashed chat cannot gain messages. A preview warmed on hover is
+      // already the read; fetching it again would only repeat the page.
+      return;
     }
-    void fetch(`/api/conversations/${encodeURIComponent(id)}/messages?limit=100&trashed=1`)
-      .then((res) => {
-        if (!res.ok) throw new Error("not found");
-        return res.json();
-      })
-      .then(
-        (body: {
-          messages?: UIMessage[];
-          title?: string | null;
-          deletedAt?: string | null;
-        }) => {
-          if (cancelled) return;
-          const msgs = body.messages ?? [];
-          trashedMessageCache.set(id, msgs);
-          setMessages(msgs);
-          setTitle(body.title ?? null);
-          if (body.deletedAt) setDeletedAt(body.deletedAt);
-        },
-      )
-      .catch(() => {
-        if (!cancelled) setMissing(true);
-      });
+    setMessages(null);
+    setMissing(false);
+    void loadTrashedMessages(id).then((result) => {
+      if (cancelled) return;
+      if (result.kind !== "ok") {
+        setMissing(true);
+        return;
+      }
+      const body = result.body;
+      setMessages(body.messages ?? []);
+      setTitle(body.title ?? null);
+      if (body.deletedAt) setDeletedAt(body.deletedAt);
+      setMissing(false);
+    });
     return () => {
       cancelled = true;
     };

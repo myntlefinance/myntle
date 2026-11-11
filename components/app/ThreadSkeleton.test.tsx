@@ -4,12 +4,17 @@ import ReactDOMServer from "react-dom/server";
 import { ThreadSkeleton } from "@/components/app/ThreadSkeleton";
 
 describe("ThreadSkeleton", () => {
-  it("renders with default padding", () => {
+  it("renders a measured sample with the default padding", () => {
     const html = ReactDOMServer.renderToStaticMarkup(<ThreadSkeleton />);
     expect(html).toContain("Loading chat.");
+    expect(html).toContain("skullet-status");
     expect(html).toContain("padding-bottom:2rem");
-    // Each bar is a skullet box, so the page's one shimmer paints it.
-    expect(html).toContain("skullet-bar");
+    // The sample carries the real turn shape: user bubble, activity pill,
+    // reply, and the action row that reserves its height.
+    expect(html).toContain("Swap 100 USDC for NEAR");
+    expect(html).toContain("Checked your balances");
+    expect(html).toContain("[&amp;_svg]:rounded-[4px]");
+    expect(html).toContain("[&amp;_img]:rounded-[6px]");
   });
 
   it("applies bottomPad when provided", () => {

@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
-import { SkeletonBox } from "skullet/react";
+import { Skeleton } from "skullet/react";
+import { TrashSample } from "@/components/app/TrashSample";
 import {
   IconArrowBackUp,
   IconChevronLeft,
@@ -27,8 +28,7 @@ import {
   fetchThreads,
   fetchTrashed,
   findThreadLabel,
-  messageCache,
-  prefetchInflight,
+  hasTrashedCache,
   prefetchThread,
   prefetchTrashedThread,
   readThreadsCache,
@@ -40,6 +40,8 @@ import {
   type TrashedItem,
 } from "@/components/app/threadCache";
 import { TITLE_MAX_CHARS } from "@/lib/ai/title";
+import { useHoverIntent } from "@/components/app/useHoverIntent";
+import { useAuth } from "@/lib/auth/auth-provider";
 
 /* ─────────────────────────────────────────────────────────
  * TRASH
@@ -410,6 +412,7 @@ type DialogState =
 
 export default function TrashView() {
   const router = useRouter();
+  const { status } = useAuth();
 
   useEffect(() => {
     const onSignOut = () => router.replace("/");
@@ -420,7 +423,10 @@ export default function TrashView() {
   const [threads, setThreads] = useState<ThreadItem[]>(() => readThreadsCache());
   const [items, setItems] = useState<TrashedItem[]>(() => readTrashedCache());
   const queryClient = useQueryClient();
-  const [loaded, setLoaded] = useState(() => readTrashedCache().length > 0);
+  // The stored list is the result. An empty array means the trash was read
+  // and had nothing in it, not that the read never happened, so a repeat
+  // visit paints that answer instead of a skeleton.
+  const [loaded, setLoaded] = useState(() => hasTrashedCache());
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<DialogState>(null);
@@ -428,6 +434,13 @@ export default function TrashView() {
   const [exiting, setExiting] = useState<Set<string>>(new Set());
   const [lockedHeights, setLockedHeights] = useState<Record<string, number>>({});
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
+  // Deleted-chat previews are the heaviest hover fetch in the app. Rest on a
+  // row before warming it; crossing the list must not issue one per row.
+  const hoverTrash = useCallback(
+    (id: string) => prefetchTrashedThread(id),
+    [],
+  );
+  const hoverIntent = useHoverIntent(hoverTrash);
 
   const refresh = useCallback(async () => {
     const [nextItems, nextThreads] = await Promise.all([
@@ -470,6 +483,11 @@ export default function TrashView() {
         (item.label ?? "New chat").toLowerCase().includes(query.trim().toLowerCase()),
       )
     : items;
+
+  // Once the auth check says there is no session, there is nothing to wait
+  // for: the trash route would only answer 401. Show the empty result
+  // instead of a skeleton that has to time out first.
+  const waiting = !loaded && status !== "signed-out";
 
   const allSelected =
     visible.length > 0 && visible.every((item) => selected.has(item.id));
@@ -704,10 +722,9 @@ export default function TrashView() {
 
       <div className="flex min-w-0 flex-1 flex-col gap-2.5">
         <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-line bg-page">
-          {/* ── Unified Header: Title on line 1, Search + Actions on line 2 (no dividing div/border between them) ── */}
-          <header className="shrink-0 border-b border-line px-4 pb-2.5 pt-3">
-            {/* Line 1: Icon prefix + Trash title on its own line */}
-            <div className="flex items-center justify-between">
+          {/* Title bar, isolated by the divider: same 44px height as Portfolio and History. */}
+          <header className="flex h-11 shrink-0 items-center border-b border-line px-4">
+            <div className="flex w-full min-w-0 items-center justify-between">
               <div className="flex min-w-0 items-center gap-2">
                 <button
                   type="button"
@@ -725,36 +742,36 @@ export default function TrashView() {
                 </h1>
               </div>
             </div>
-
-            {/* Line 2: Search on its own row */}
-            <div className="mt-2.5 flex items-center">
-              <div className="flex h-7.5 w-1/2 min-w-[200px] items-center overflow-hidden rounded-control bg-field px-2.5 text-ink-2 shadow-hairline transition-all duration-150 focus-within:bg-surface focus-within:text-ink focus-within:shadow-btn">
-                <span className="flex shrink-0 items-center justify-center text-ink-3">
-                  <IconSearch size={13} stroke={2} />
-                </span>
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape") setQuery("");
-                  }}
-                  placeholder="Search deleted chats"
-                  aria-label="Search deleted chats"
-                  className="ml-2 min-w-0 flex-1 bg-transparent text-[12.5px] text-ink outline-none placeholder:text-ink-3"
-                />
-                {query && (
-                  <button
-                    type="button"
-                    aria-label="Clear search"
-                    onClick={() => setQuery("")}
-                    className="mr-0.5 flex size-4.5 shrink-0 items-center justify-center rounded-full text-ink-3 transition-colors duration-100 hover:bg-hover-2 hover:text-ink"
-                  >
-                    <IconX size={11} stroke={2.5} />
-                  </button>
-                )}
-              </div>
-            </div>
           </header>
+
+          {/* Search below the divider, unchanged from its original row. */}
+          <div className="flex shrink-0 items-center px-4 pt-2.5">
+            <div className="flex h-7.5 w-1/2 min-w-[200px] items-center overflow-hidden rounded-control bg-field px-2.5 text-ink-2 shadow-hairline transition-all duration-150 focus-within:bg-surface focus-within:text-ink focus-within:shadow-btn">
+              <span className="flex shrink-0 items-center justify-center text-ink-3">
+                <IconSearch size={13} stroke={2} />
+              </span>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setQuery("");
+                }}
+                placeholder="Search deleted chats"
+                aria-label="Search deleted chats"
+                className="ml-2 min-w-0 flex-1 bg-transparent text-[12.5px] text-ink outline-none placeholder:text-ink-3"
+              />
+              {query && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={() => setQuery("")}
+                  className="mr-0.5 flex size-4.5 shrink-0 items-center justify-center rounded-full text-ink-3 transition-colors duration-100 hover:bg-hover-2 hover:text-ink"
+                >
+                  <IconX size={11} stroke={2.5} />
+                </button>
+              )}
+            </div>
+          </div>
 
           {/* ── Sub-header: Select all aligned with chat row checkboxes on left, Empty trash on extreme right ── */}
           {loaded && items.length > 0 && (
@@ -786,25 +803,10 @@ export default function TrashView() {
 
           {/* ── Compact Chat List with tight row spacing and instant hover ── */}
           <div className="min-h-0 flex-1 overflow-y-auto scroll-slim px-3 py-1.5 [scrollbar-gutter:stable]">
-            {!loaded ? (
-              <div className="flex flex-col gap-0.5" aria-busy="true">
-                <span className="sr-only" role="status">
-                  Loading deleted chats.
-                </span>
-                {[62, 48, 71, 55, 66, 44].map((width) => (
-                  <div
-                    key={width}
-                    aria-hidden
-                    className="flex h-9 items-center gap-2.5 rounded-[6px] px-2.5 py-1"
-                  >
-                    <SkeletonBox width={14} height={14} radius={3} />
-                    <div className="min-w-0 flex-1">
-                      <SkeletonBox width={`${width}%`} height={12} radius={3} />
-                    </div>
-                    <SkeletonBox width={40} height={12} radius={3} />
-                  </div>
-                ))}
-              </div>
+            {waiting ? (
+              <Skeleton loading label="Loading deleted chats.">
+                <TrashSample />
+              </Skeleton>
             ) : (
               <>
                 <div className="flex flex-col gap-0.5">
@@ -829,8 +831,14 @@ export default function TrashView() {
                       >
                         {/* Compact row with dedicated checkbox hit zone and full-height chat trigger */}
                         <div
-                          onClick={() => void openChat(item.id)}
-                          onMouseEnter={() => prefetchTrashedThread(item.id)}
+                          onClick={() => {
+                            hoverIntent.cancel();
+                            void openChat(item.id);
+                          }}
+                          onPointerEnter={(event) =>
+                            hoverIntent.enter(item.id, event.pointerType)
+                          }
+                          onPointerLeave={() => hoverIntent.leave(item.id)}
                           className={`group relative flex h-9 cursor-pointer items-center rounded-[6px] pr-2.5 transition-colors duration-75 hover:bg-hover-2 ${
                             isSelected ? "bg-hover-2" : ""
                           }`}
@@ -845,6 +853,7 @@ export default function TrashView() {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
+                              hoverIntent.cancel();
                               void openChat(item.id);
                             }}
                             title={item.label ?? "New chat"}

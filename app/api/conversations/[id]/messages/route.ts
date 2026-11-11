@@ -35,6 +35,9 @@ export async function GET(
   );
   const beforeRaw = url.searchParams.get("beforeSeq");
   const beforeSeq = beforeRaw ? Number(beforeRaw) : undefined;
+  // A hover prefetch warms the transcript; it must not spend an AI title call.
+  // The real open (no flag) still repairs an orphaned title.
+  const isPrefetch = url.searchParams.get("prefetch") === "1";
 
   // Trashed chats are invisible to the normal loader, so the trash preview
   // reads them through this flag instead of restoring first.
@@ -60,7 +63,7 @@ export async function GET(
   // an untitled (NULL) chat is named from its oldest prompt in the
   // background. Conditional so a manual rename always wins. Skipped on
   // older-page loads; the first page already triggered it.
-  if (title === null && beforeSeq === undefined) {
+  if (title === null && beforeSeq === undefined && !isPrefetch) {
     const slug = decodeURIComponent(id);
     const userId = session.userId;
     after(async () => {

@@ -7,6 +7,10 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 import Harness from "@/components/site/Harness";
 import { AccountControl } from "@/components/app/AccountControl";
 import { MODELS, DEFAULT_MODEL } from "@/lib/ai/provider";
+import {
+  SUPER_CONTINUE_PROMPT,
+  withoutSuperContinueMessages,
+} from "@/lib/ai/messages/continuation";
 import { TITLE_MAX_CHARS } from "@/lib/ai/title";
 import { focusComposer } from "@/lib/composer";
 import { openWalletPicker } from "@/components/app/ConnectGate";
@@ -26,28 +30,55 @@ import {
   deleteCachedMessages,
   findThreadLabel,
   getCachedMessages,
-  messageCache,
-  prefetchInflight,
+  loadThreadMessages,
+  markThreadRead,
   prefetchThread,
   readThreadsCache,
   readTrashedCache,
   setCachedMessages,
   threadPagination,
+  threadReadRecently,
   writeThreadsCache,
   writeTrashedCache,
   type ThreadItem,
   type TrashedItem,
 } from "@/components/app/threadCache";
-import type { SettlementSnapshot } from "@/components/app/approvals";
-import type { DepositMetadata } from "@/lib/intents/deposit-metadata";
 import {
+  collectApprovalIds,
+  collectApprovalAssetIds,
+  type ApprovalDecisionContext,
+  type ApprovalDecisions,
+  type SettlementSnapshot,
+} from "@/components/app/approvals";
+import {
+  approvalRecordNeedsRead,
+  fetchApprovalRecords,
+  readApprovalRecords,
+  rememberApprovalDecision,
+} from "@/components/app/approvalRecords";
+import { useAssetMetaResolution } from "@/components/app/useAssetMeta";
+import {
+  harvestAssetMeta,
   isToolPart,
   outputOf,
   toolNameOf,
+  type AssetMeta,
   type ToolPart,
 } from "@/components/app/toolParts";
 
 export type GatedExchange = { id: number; prompt: string };
+
+/** A saved thread read on the server, so a hard load does not wait for the
+ * same messages to come back through a client fetch after the wallet bundle. */
+export type InitialThread = {
+  messages: UIMessage[];
+  title: string | null;
+  hasMore: boolean;
+  oldestSeq?: number;
+};
+
+/** No card is waiting: every card on screen has a known record. */
+const NO_PENDING_APPROVALS: ReadonlySet<string> = new Set();
 
 /**
  * True when the assistant's last turn stopped on the super account: either it
@@ -69,14 +100,22 @@ function stoppedOnUnlock(message: UIMessage | undefined): boolean {
 
 export default function ChatView({
   initialConversationId = null,
+  initialThread = null,
 }: {
   initialConversationId?: string | null;
+  initialThread?: InitialThread | null;
 }) {
   const queryClient = useQueryClient();
-  const { data: threads = [] } = useThreads();
-  const { data: trashed = [] } = useTrashed();
-  const [model, setModel] = useState(DEFAULT_MODEL);
   const { connected, account, identity, signedIn, status: sessionStatus, refresh: refreshSession } = useAuth();
+  // The cached lists paint immediately; the network read waits until there
+  // is a session to read. A signed-out visitor used to make two 401 requests
+  // and clear the cache on every load. `sessionStatus` is the authentication
+  // answer; `signedIn` additionally requires the wallet to be able to sign,
+  // which a disconnected-on-reload wallet cannot, and the list does not need.
+  const sessionAuthenticated = sessionStatus === "signed-in";
+  const { data: threads = [] } = useThreads(sessionAuthenticated);
+  const { data: trashed = [] } = useTrashed(50, sessionAuthenticated);
+  const [model, setModel] = useState(DEFAULT_MODEL);
   // Chats require a signed-in session, not merely a connected wallet. A
   // connected-but-unsigned visitor queues prompts exactly like a
   // disconnected one; the gate offers the signature instead of a send.
@@ -90,17 +129,41 @@ export default function ChatView({
   const [conversationId, setConversationId] = useState<string | null>(
     initialConversationId,
   );
-  // Database settlements for the open conversation, keyed by tool approval
-  // id. One fetch covers every card in the thread — historical cards paint
-  // their terminal state at once instead of each polling /api/tx on load.
+  // Database settlements read in this tab, keyed by tool approval id. A read
+  // is requested by a card that is actually on screen, and the map survives a
+  // switch so a revisited card keeps its address and state.
   const [settlements, setSettlements] = useState<
     Record<string, SettlementSnapshot>
   >({});
+  // Decisions returned by a card's visible read, keyed the same way. The
+  // approval cache handles revisits; this keeps the current answer immediate
+  // without waiting for the cache to be re-read.
+  const [fetchedDecisions, setFetchedDecisions] = useState<ApprovalDecisions>(
+    {},
+  );
+  // Cards whose record has been read for this visit, including an empty
+  // answer. An empty answer still earns a read: the card falls back to its
+  // message snapshot instead of holding a skeleton forever.
+  const [readApprovalIds, setReadApprovalIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const readApprovalIdsRef = useRef(readApprovalIds);
+  useEffect(() => {
+    readApprovalIdsRef.current = readApprovalIds;
+  }, [readApprovalIds]);
+  // A screen can reveal several cards at once. Coalesce them into one read
+  // rather than one request per card.
+  const approvalReadQueueRef = useRef(new Set<string>());
+  const approvalReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const conversationIdRef = useRef<string | null>(conversationId);
   conversationIdRef.current = conversationId;
 
   const [title, setTitle] = useState<string | null>(() =>
-    findThreadLabel(initialConversationId ?? null),
+    initialThread
+      ? initialThread.title
+      : findThreadLabel(initialConversationId ?? null),
   );
   const titleRef = useRef<string | null>(title);
   titleRef.current = title;
@@ -112,15 +175,23 @@ export default function ChatView({
 
   const [loadingThread, setLoadingThread] = useState(() => {
     if (!initialConversationId) return false;
+    if (initialThread?.messages.length) return false;
     const cached = getCachedMessages(initialConversationId);
     return !cached || cached.length === 0;
   });
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [assetGate, setAssetGate] = useState(!!initialConversationId);
   const [hasMoreOlder, setHasMoreOlder] = useState(() => {
     if (!initialConversationId) return false;
+    if (initialThread) return initialThread.hasMore;
     return Boolean(threadPagination.get(initialConversationId)?.hasMore);
   });
-  const lastLoadedConvRef = useRef<string | null>(null);
+  // A server-seeded thread has already been read for this visit. Marking it
+  // loaded skips the duplicate client fetch without changing what a switch
+  // to another chat does.
+  const lastLoadedConvRef = useRef<string | null>(
+    initialThread?.messages.length ? initialConversationId : null,
+  );
   const routeSlugRef = useRef<string | null | undefined>(undefined);
 
   // Old ?c= links become /chat/<slug>.
@@ -138,9 +209,11 @@ export default function ChatView({
     // Seed first paint from cache so a thread route never flashes the
     // composer. useChat only reads this once; later switches go through
     // setMessages in switchConversation.
-    messages: initialConversationId
-      ? (getCachedMessages(initialConversationId) ?? [])
-      : [],
+    messages: initialThread?.messages.length
+      ? initialThread.messages
+      : initialConversationId
+        ? (getCachedMessages(initialConversationId) ?? [])
+        : [],
     transport: new DefaultChatTransport({
       api: "/api/chat",
       // A fresh access token per request, refreshed silently from the
@@ -166,6 +239,13 @@ export default function ChatView({
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+  // The continuation turn is a transport instruction, not something the
+  // person typed. It stays out of the transcript so it cannot render a user
+  // bubble or count as a newer message that expires an unlock card.
+  const visibleMessages = useMemo(
+    () => withoutSuperContinueMessages(messages),
+    [messages],
+  );
 
   // A failed turn must look the same live as it does after a refresh. The
   // server persists `error-<userId>` ("An error occurred.") when the stream
@@ -219,6 +299,14 @@ export default function ChatView({
       setTitle(null);
       setGated([]);
       setSettlements({});
+      setFetchedDecisions({});
+      setReadApprovalIds(new Set());
+      readApprovalIdsRef.current = new Set();
+      approvalReadQueueRef.current.clear();
+      if (approvalReadTimerRef.current !== null) {
+        clearTimeout(approvalReadTimerRef.current);
+        approvalReadTimerRef.current = null;
+      }
       setLoadingThread(false);
       setHasMoreOlder(false);
       setLoadingOlder(false);
@@ -284,59 +372,126 @@ export default function ChatView({
     return () => clearTimeout(timer);
   }, [conversationId, messages.length, status, queryClient]);
 
-  // Settlement rows for the open conversation, in one request. Cards join
-  // by tool approval id; rows approved before the join existed stay on the
-  // localStorage fallback inside the card.
-  useEffect(() => {
-    if (!conversationId) {
-      setSettlements({});
-      return;
+  // The record for a money card, read when that card is actually on screen:
+  // the decision that was taken and the settlement it produced. The read is
+  // keyed by tool approval id, so a card rejoins its row even when the chat
+  // link is missing (a first turn, a trashed chat) and on a device that never
+  // saw the click. A card above or below the fold is not read.
+  const approvalIds = useMemo(
+    () => collectApprovalIds(messages).slice(-200),
+    [messages],
+  );
+  // The assets a card's sentence names. Resolving them before the thread
+  // paints is what keeps the first card from reading as a raw contract id.
+  const approvalAssetIds = useMemo(
+    () => messages.flatMap((message) => collectApprovalAssetIds(message.parts)),
+    [messages],
+  );
+  // A quote turn usually carries the catalogue rows for the assets it names.
+  // Merge those first, so the thread does not wait on /api/assets for an id
+  // the transcript already describes.
+  const inTurnAssetMeta = useMemo(() => {
+    const merged = new Map<string, AssetMeta>();
+    for (const message of messages) {
+      for (const [id, meta] of harvestAssetMeta(message.parts)) {
+        if (!merged.has(id)) merged.set(id, meta);
+      }
     }
-    let cancelled = false;
-    void fetch(
-      `/api/conversations/${encodeURIComponent(conversationId)}/transactions`,
-    )
-      .then((res) => (res.ok ? res.json() : null))
-      .then(
-        (
-          body: {
-            settlements?: Array<{
-              toolApprovalId: string;
-              transactionId: string;
-              state: string;
-              depositAddress?: string | null;
-              explorerUrls?: string[];
-              deposit?: DepositMetadata | null;
-            }>;
-          } | null,
-        ) => {
-          if (!body || cancelled) return;
-          const next: Record<string, SettlementSnapshot> = {};
-          for (const s of body.settlements ?? []) {
-            if (typeof s.toolApprovalId === "string" && s.toolApprovalId) {
-              next[s.toolApprovalId] = {
-                state: s.state,
-                transactionId: s.transactionId,
-                depositAddress: s.depositAddress,
-                explorerUrls: s.explorerUrls,
-                deposit: s.deposit,
-              };
-            }
-          }
-          setSettlements(next);
-        },
-      )
-      .catch(() => {
-        // Cards fall back to their own status poll.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [conversationId]);
+    return merged;
+  }, [messages]);
+  const { pending: assetsPending } = useAssetMetaResolution(
+    approvalAssetIds,
+    inTurnAssetMeta,
+  );
+  // A record read once is kept by approval id, so a switch paints the cards
+  // from what the last read said. The cache fills in the cards from earlier
+  // threads; a card with no cache entry asks only when it is on screen.
+  const cachedRecords = useMemo(
+    () => readApprovalRecords(approvalIds),
+    [approvalIds],
+  );
+  const decisions = useMemo(() => {
+    if (sessionStatus === "signed-out") return {};
+    const merged: ApprovalDecisions = { ...cachedRecords.decisions };
+    Object.assign(merged, fetchedDecisions);
+    return merged;
+  }, [sessionStatus, cachedRecords, fetchedDecisions]);
+  const mergedSettlements = useMemo(
+    () => ({ ...cachedRecords.settlements, ...settlements }),
+    [cachedRecords, settlements],
+  );
+  const knownApprovalIds = useMemo(() => {
+    const known = new Set(cachedRecords.known);
+    for (const id of Object.keys(fetchedDecisions)) known.add(id);
+    for (const id of Object.keys(settlements)) known.add(id);
+    return known;
+  }, [cachedRecords, fetchedDecisions, settlements]);
+  // A card with no known record and no read yet shows its footer skeleton
+  // instead of a body that names a state nobody checked. A card that has been
+  // read, even with an empty answer, falls back to its message snapshot.
+  const pendingApprovalIds = useMemo(() => {
+    if (sessionStatus === "signed-out") return NO_PENDING_APPROVALS;
+    return new Set(
+      approvalIds.filter(
+        (id) => !knownApprovalIds.has(id) && !readApprovalIds.has(id),
+      ),
+    );
+  }, [sessionStatus, approvalIds, knownApprovalIds, readApprovalIds]);
+
+  /**
+   * A money card scrolled into view. Queue its id so a screen with several
+   * cards makes one read, and let the cache answer a card that already has a
+   * decision and a settlement.
+   */
+  const requestApprovalRecord = useCallback(
+    (approvalId: string): boolean => {
+      if (sessionStatus !== "signed-in" || !approvalId) return false;
+      if (readApprovalIdsRef.current.has(approvalId)) return true;
+      if (!approvalRecordNeedsRead(approvalId)) return true;
+      approvalReadQueueRef.current.add(approvalId);
+      if (approvalReadTimerRef.current !== null) return true;
+      approvalReadTimerRef.current = setTimeout(() => {
+        approvalReadTimerRef.current = null;
+        const ids = [...approvalReadQueueRef.current];
+        approvalReadQueueRef.current.clear();
+        if (ids.length === 0) return;
+        void fetchApprovalRecords(ids).then((body) => {
+          if (!body) return;
+          setFetchedDecisions((current) => ({
+            ...current,
+            ...body.decisions,
+          }));
+          setSettlements((current) => ({
+            ...current,
+            ...body.settlements,
+          }));
+          setReadApprovalIds((current) => {
+            const next = new Set(current);
+            for (const id of ids) next.add(id);
+            return next;
+          });
+        });
+      }, 0);
+      return true;
+    },
+    [sessionStatus, setFetchedDecisions, setSettlements, setReadApprovalIds],
+  );
+
+  useEffect(
+    () => () => {
+      if (approvalReadTimerRef.current !== null) {
+        clearTimeout(approvalReadTimerRef.current);
+        approvalReadTimerRef.current = null;
+      }
+      approvalReadQueueRef.current.clear();
+    },
+    [],
+  );
 
   const switchConversation = useCallback(
     (targetId: string | null, pushHistory = true) => {
       if (targetId === conversationIdRef.current) return;
+      setAssetGate(targetId !== null);
 
       // Stash current conversation messages in cache before switching
       if (conversationIdRef.current && messagesRef.current.length > 0) {
@@ -347,8 +502,14 @@ export default function ChatView({
       titleDirtyRef.current = false;
       pendingRef.current = null;
       setGated([]);
-      setSettlements({});
       setLoadingOlder(false);
+      // A read queued for the thread we are leaving has no card left to
+      // paint. Drop it rather than spend a request on the old screen.
+      approvalReadQueueRef.current.clear();
+      if (approvalReadTimerRef.current !== null) {
+        clearTimeout(approvalReadTimerRef.current);
+        approvalReadTimerRef.current = null;
+      }
 
       if (targetId) {
         setConversationId(targetId);
@@ -367,6 +528,10 @@ export default function ChatView({
           setLoadingThread(true);
           setHasMoreOlder(false);
         }
+        // Each open gets its own visibility reads; the cache still answers a
+        // card whose record is already known without a request.
+        setReadApprovalIds(new Set());
+        readApprovalIdsRef.current = new Set();
 
         try {
           localStorage.setItem("myntle-conv", targetId);
@@ -393,6 +558,8 @@ export default function ChatView({
         }
         setMessages([]);
         setLoadingThread(false);
+        setReadApprovalIds(new Set());
+        readApprovalIdsRef.current = new Set();
         setHasMoreOlder(false);
 
         if (pushHistory) {
@@ -420,8 +587,20 @@ export default function ChatView({
       setCachedMessages(conversationId, messages);
   }, [conversationId, messages]);
 
+  // The server seeded this thread for the first paint. Mark it fresh so a
+  // quick switch away and back does not refetch what the page already read.
+  useEffect(() => {
+    if (initialConversationId && initialThread?.messages.length) {
+      markThreadRead(initialConversationId);
+    }
+  }, [initialConversationId, initialThread]);
+
   useEffect(() => {
     if (!conversationId) return;
+    // Wait for the session answer. A signed-out deep link is about to be
+    // redirected; fetching its history first only buys a 401. A signed-in
+    // thread normally arrives server-seeded and never reaches this fetch.
+    if (sessionStatus !== "signed-in") return;
     // Visited before: render instantly from cache
     const cached = getCachedMessages(conversationId);
     if (cached && cached.length > 0 && messages.length === 0) {
@@ -443,69 +622,84 @@ export default function ChatView({
     }
 
     if (messages.length > 0 && lastLoadedConvRef.current === conversationId) return;
+    // A history that was just read by a hover prefetch, or by the previous
+    // open, is already this read. A stale cache still revalidates below.
+    if (cached && cached.length > 0 && threadReadRecently(conversationId)) {
+      lastLoadedConvRef.current = conversationId;
+      setLoadingThread(false);
+      return;
+    }
     lastLoadedConvRef.current = conversationId;
 
     let cancelled = false;
-    void fetch(`/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=20`)
-      .then((res) => {
-        if (res.status === 401) {
-          clearThreadCache();
-          setMessages([]);
-          setConversationId(null);
-          setTitle(null);
-          setLoadingThread(false);
-          // The cookie is gone or expired. Say so everywhere at once
-          // instead of only on this screen.
-          void refreshSession();
-          try {
-            window.history.replaceState(null, "", "/");
-          } catch {
-            // Ignore.
-          }
-          return null;
+    void loadThreadMessages(conversationId).then((result) => {
+      if (cancelled) return;
+      if (result.kind === "unauthorized") {
+        setMessages([]);
+        setConversationId(null);
+        setTitle(null);
+        setLoadingThread(false);
+        // The cookie is gone or expired. Say so everywhere at once instead
+        // of only on this screen.
+        void refreshSession();
+        try {
+          window.history.replaceState(null, "", "/");
+        } catch {
+          // Ignore.
         }
-        return res.ok ? res.json() : null;
-      })
-      .then(
-        (
-          body: {
-            messages?: UIMessage[];
-            title?: string | null;
-            hasMore?: boolean;
-            oldestSeq?: number;
-          } | null,
-        ) => {
-          if (!body || cancelled) return;
-          if (body.messages && body.messages.length > 0) {
-            setCachedMessages(conversationId, body.messages);
-            setMessages(body.messages);
-          }
-          if (body.hasMore !== undefined) {
-            setHasMoreOlder(body.hasMore);
-            threadPagination.set(conversationId, {
-              hasMore: body.hasMore,
-              oldestSeq: body.oldestSeq,
-            });
-          }
-          // Title comes from the database here, so it must not mark dirty.
-          // NULL means untitled; only a stored string counts as named.
-          if (body.title != null) {
-            titleDirtyRef.current = false;
-            setTitle(body.title);
-          } else if (titleRef.current?.trim() === "New chat") {
-            titleDirtyRef.current = false;
-            setTitle(null);
-          }
-          setLoadingThread(false);
-        },
-      )
-      .catch(() => {
-        if (!cancelled) setLoadingThread(false);
-      });
+        return;
+      }
+      if (result.kind === "error") {
+        setLoadingThread(false);
+        return;
+      }
+      const body = result.body;
+      if (body.messages && body.messages.length > 0) {
+        setMessages(body.messages);
+      }
+      if (body.hasMore !== undefined) setHasMoreOlder(body.hasMore);
+      // Title comes from the database here, so it must not mark dirty.
+      // NULL means untitled; only a stored string counts as named.
+      if (body.title != null) {
+        titleDirtyRef.current = false;
+        setTitle(body.title);
+      } else if (titleRef.current?.trim() === "New chat") {
+        titleDirtyRef.current = false;
+        setTitle(null);
+      }
+      setLoadingThread(false);
+    });
     return () => {
       cancelled = true;
     };
-  }, [conversationId, messages.length, setMessages, threads, refreshSession]);
+  }, [
+    conversationId,
+    messages.length,
+    sessionStatus,
+    setMessages,
+    threads,
+    refreshSession,
+  ]);
+
+  /**
+   * Releases the thread's asset gate.
+   *
+   * Asset metadata is the one thing that still holds the whole transcript:
+   * painting a card before its ticker resolves is what made it read
+   * `nep141:1720…a33a1` and a deposit offer "Start" on an address it had
+   * already issued. The turn's own catalogue rows and the session-persisted
+   * cache usually satisfy this immediately; only a genuinely unseen id waits.
+   *
+   * Approval records do not gate the transcript at all: a card that is on
+   * screen reads its own record, and an off-screen card is not read.
+   */
+  useEffect(() => {
+    if (!assetGate) return;
+    // The messages themselves are still loading; nothing to check yet.
+    if (loadingThread) return;
+    if (assetsPending) return;
+    setAssetGate(false);
+  }, [assetGate, loadingThread, assetsPending]);
 
   // Learn the server conversation after the first saved turn, persist the
   // local title, refresh the list, then move off the composer onto its
@@ -604,23 +798,36 @@ export default function ChatView({
     [signedIn, sendMessage],
   );
 
-  // After unlocking, continue the paused turn instead of resending the
-  // prompt as a new user message. Regenerating drops the "locked" reply and
-  // answers the same request now that the token exists.
+  // After unlocking, continue the paused turn as a new assistant message.
+  // Regenerating the old message would delete the unlock card at the moment
+  // it is supposed to morph and become part of the transcript. The synthetic
+  // user turn is hidden by `visibleMessages` and kept out of the database, so
+  // the original request stays exactly where it was.
+  const continuingRef = useRef(false);
   useEffect(() => {
     const onContinue = () => {
+      if (continuingRef.current) return;
       const lastAssistant = [...messagesRef.current]
         .reverse()
         .find((message) => message.role === "assistant");
       if (!lastAssistant || !stoppedOnUnlock(lastAssistant)) return;
-      void regenerate({
-        messageId: lastAssistant.id,
-        body: { superJustUnlocked: true },
+      continuingRef.current = true;
+      void sendMessage(
+        {
+          text: SUPER_CONTINUE_PROMPT,
+          metadata: {
+            superContinue: true,
+            createdAt: new Date().toISOString(),
+          },
+        },
+        { body: { superJustUnlocked: true } },
+      ).finally(() => {
+        continuingRef.current = false;
       });
     };
     window.addEventListener(SUPER_CONTINUE_EVENT, onContinue);
     return () => window.removeEventListener(SUPER_CONTINUE_EVENT, onContinue);
-  }, [regenerate]);
+  }, [sendMessage]);
 
   // Once the sign-in lands, the gated turns clear and the latest prompt starts
   // the real conversation, so the thread reads as a fresh chat.
@@ -828,16 +1035,82 @@ export default function ChatView({
     [signedIn, askToSignIn, sendMessage],
   );
 
-  const respondToApproval = useCallback(
-    (approvalId: string, approved: boolean) => {
-      void addToolApprovalResponse({ id: approvalId, approved });
+  const rememberDecision = useCallback(
+    (approvalId: string, decision: "approved" | "denied") => {
+      rememberApprovalDecision(approvalId, decision);
+      setFetchedDecisions((current) => ({
+        ...current,
+        [approvalId]: decision,
+      }));
+      setReadApprovalIds((current) => {
+        if (current.has(approvalId)) return current;
+        const next = new Set(current);
+        next.add(approvalId);
+        return next;
+      });
     },
-    [addToolApprovalResponse],
+    [setFetchedDecisions, setReadApprovalIds],
+  );
+
+  const respondToApproval = useCallback(
+    async (
+      approvalId: string,
+      approved: boolean,
+      context: ApprovalDecisionContext,
+    ) => {
+      if (approved) {
+        // The money route already wrote the decision before this host was
+        // told; the part is only the transcript, so a failure here cannot
+        // undo the record and must not surface as one.
+        void addToolApprovalResponse({ id: approvalId, approved: true });
+        rememberDecision(approvalId, "approved");
+        return;
+      }
+      // A refusal is written before the card may call it one. The route
+      // answers with the decision actually on record, so a second device that
+      // answered first wins and this card paints that answer.
+      if (signedIn) {
+        const res = await fetch("/api/approvals/deny", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            approvalId,
+            toolName: context.toolName,
+            conversationId: conversationIdRef.current,
+            quoteId: context.quoteId,
+            requestedAt: context.requestedAt,
+          }),
+        });
+        if (!res.ok) throw new Error("deny-failed");
+        const body = (await res.json().catch(() => null)) as {
+          decision?: "approved" | "denied";
+        } | null;
+        const decision = body?.decision === "approved" ? "approved" : "denied";
+        rememberDecision(approvalId, decision);
+        // The answer is on record either way. A failure to update the local
+        // transcript is not a failure to decide.
+        try {
+          await addToolApprovalResponse({
+            id: approvalId,
+            approved: decision === "approved",
+          });
+        } catch {
+          // The transcript catches up on the next read.
+        }
+        return;
+      }
+      try {
+        await addToolApprovalResponse({ id: approvalId, approved: false });
+      } catch {
+        // The transcript catches up on the next read.
+      }
+    },
+    [addToolApprovalResponse, signedIn, rememberDecision],
   );
 
   const live = useMemo(
     () => ({
-      messages,
+      messages: visibleMessages,
       status,
       send,
       // Failed turns are materialized as durable "An error occurred."
@@ -847,9 +1120,25 @@ export default function ChatView({
       regenerate: regenerateTurn,
       editAndSend,
       respondToApproval,
-      settlements,
+      conversationId,
+      decisions,
+      settlements: mergedSettlements,
+      pendingApprovalIds,
+      onApprovalVisible: requestApprovalRecord,
     }),
-    [messages, status, send, regenerateTurn, editAndSend, respondToApproval, settlements],
+    [
+      visibleMessages,
+      status,
+      send,
+      regenerateTurn,
+      editAndSend,
+      respondToApproval,
+      conversationId,
+      decisions,
+      mergedSettlements,
+      pendingApprovalIds,
+      requestApprovalRecord,
+    ],
   );
 
   // Seeded mounts skip the history fetch (messages already present) but
@@ -943,7 +1232,7 @@ export default function ChatView({
       onOpenTrash={openTrash}
       onOpenPortfolio={openPortfolio}
       onOpenHistory={openHistory}
-      loadingThread={loadingThread}
+      loadingThread={loadingThread || (assetGate && assetsPending)}
       onLoadOlder={loadOlderMessages}
       hasMoreOlder={hasMoreOlder}
       loadingOlder={loadingOlder}

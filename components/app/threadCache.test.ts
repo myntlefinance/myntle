@@ -1,15 +1,34 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  beforeAll,
+  afterAll,
+  vi,
+} from "vitest";
 import type { UIMessage } from "ai";
 import {
   getCachedMessages,
   setCachedMessages,
   deleteCachedMessages,
   clearThreadCache,
+  hasTrashedCache,
+  loadThreadMessages,
+  loadTrashedMessages,
   messageCache,
+  prefetchThread,
+  prefetchTrashedThread,
+  readTrashedCache,
+  threadReadRecently,
+  trashedMessageCache,
+  writeTrashedCache,
 } from "./threadCache";
 
 describe("threadCache", () => {
   const store = new Map<string, string>();
+  const localStore = new Map<string, string>();
   const mockSessionStorage = {
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, val: string) => store.set(key, val),
@@ -20,18 +39,35 @@ describe("threadCache", () => {
       return store.size;
     },
   };
+  const mockLocalStorage = {
+    getItem: (key: string) => localStore.get(key) ?? null,
+    setItem: (key: string, val: string) => localStore.set(key, val),
+    removeItem: (key: string) => localStore.delete(key),
+    clear: () => localStore.clear(),
+    key: (i: number) => Array.from(localStore.keys())[i] ?? null,
+    get length() {
+      return localStore.size;
+    },
+  };
 
   beforeAll(() => {
     (globalThis as unknown as { sessionStorage: typeof mockSessionStorage }).sessionStorage = mockSessionStorage;
+    (globalThis as unknown as { localStorage: typeof mockLocalStorage }).localStorage = mockLocalStorage;
   });
 
   afterAll(() => {
     delete (globalThis as unknown as { sessionStorage?: typeof mockSessionStorage }).sessionStorage;
+    delete (globalThis as unknown as { localStorage?: typeof mockLocalStorage }).localStorage;
   });
 
   beforeEach(() => {
     store.clear();
+    localStore.clear();
     clearThreadCache();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   const sampleMessages: UIMessage[] = [
@@ -82,5 +118,95 @@ describe("threadCache", () => {
     expect(getCachedMessages("conv-b")).toBeUndefined();
     expect(mockSessionStorage.getItem("myntle-msgs-conv-a")).toBeNull();
     expect(mockSessionStorage.getItem("myntle-msgs-conv-b")).toBeNull();
+  });
+
+  it("shares one message read between a hover prefetch and the open", async () => {
+    const fetchMock = vi.fn(async (_url: string) =>
+      new Response(
+        JSON.stringify({ messages: sampleMessages, hasMore: false }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const prefetch = loadThreadMessages("conv-hover", { prefetch: true });
+    const open = loadThreadMessages("conv-hover");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("prefetch=1");
+
+    const [first, second] = await Promise.all([prefetch, open]);
+    expect(first).toEqual(second);
+    expect(first.kind).toBe("ok");
+    expect(threadReadRecently("conv-hover")).toBe(true);
+    expect(getCachedMessages("conv-hover")).toEqual(sampleMessages);
+  });
+
+  it("marks a cold hover as a prefetch and skips a fresh one", async () => {
+    const fetchMock = vi.fn(async (_url: string) =>
+      new Response(JSON.stringify({ messages: sampleMessages }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    prefetchThread("conv-cold");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("prefetch=1");
+
+    // The open joins the hover read instead of starting a second request.
+    await loadThreadMessages("conv-cold");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Once the read landed, another hover has nothing left to warm.
+    prefetchThread("conv-cold");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a trashed preview at the 20-message page size", async () => {
+    const fetchMock = vi.fn(async (_url: string) =>
+      new Response(JSON.stringify({ messages: sampleMessages }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    prefetchTrashedThread("trash-1");
+    const open = loadTrashedMessages("trash-1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("limit=20");
+    expect(url).toContain("trashed=1");
+
+    await expect(open).resolves.toEqual({
+      kind: "ok",
+      body: { messages: sampleMessages },
+    });
+    expect(trashedMessageCache.get("trash-1")).toEqual(sampleMessages);
+  });
+
+  it("treats an empty trash list as a result, not a cache miss", () => {
+    expect(hasTrashedCache()).toBe(false);
+
+    writeTrashedCache([]);
+
+    expect(hasTrashedCache()).toBe(true);
+    expect(readTrashedCache()).toEqual([]);
+  });
+
+  it("remembers an empty trash across a reload", () => {
+    mockLocalStorage.setItem("myntle-trashed-v2", "[]");
+
+    expect(hasTrashedCache()).toBe(true);
+    expect(readTrashedCache()).toEqual([]);
+  });
+
+  it("drops the trash marker on sign-out", () => {
+    writeTrashedCache([]);
+    clearThreadCache();
+
+    expect(hasTrashedCache()).toBe(false);
   });
 });

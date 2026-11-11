@@ -16,6 +16,10 @@ import {
   backfillApprovedSwapOutputs,
   pruneHistoricalToolOutputs,
 } from "@/lib/ai/messages/prune";
+import {
+  isSuperContinueMessage,
+  lastRealUserMessage,
+} from "@/lib/ai/messages/continuation";
 import { getSession, SESSION_COOKIE } from "@/lib/auth/session";
 import { checkRateLimit, clientIp } from "@/lib/auth/rate-limit";
 import {
@@ -138,8 +142,11 @@ export async function POST(req: Request) {
         title: firstTitle,
       });
       const lastUser = [...messages].reverse().find((m) => m.role === "user");
-      if (isNewChat) newChatPrompt = extractPromptText(lastUser).slice(0, 500);
-      if (lastUser) {
+      const lastTypedUser = lastRealUserMessage(messages);
+      if (isNewChat) newChatPrompt = extractPromptText(lastTypedUser).slice(0, 500);
+      // The unlock continuation is a transport instruction. It is not a real
+      // user message, so it must never become a bubble in saved history.
+      if (lastUser && !isSuperContinueMessage(lastUser)) {
         try {
           await saveUIMessage(conv.id, lastUser);
           const sb = getSupabaseAdmin();
@@ -171,9 +178,7 @@ export async function POST(req: Request) {
   // Per-turn scoping: a balance question pays no trading/news schema
   // cost. Ambiguous input keeps the full set; money intents always keep
   // trading+intents so prepare_swap is never scoped out from under a trade.
-  const lastUserText = extractPromptText(
-    [...messages].reverse().find((m) => m.role === "user"),
-  );
+  const lastUserText = extractPromptText(lastRealUserMessage(messages));
   const intent = routeIntent(lastUserText);
 
   const instructions = buildSystemPrompt({
@@ -237,9 +242,6 @@ export async function POST(req: Request) {
       : generateId,
     messageMetadata: () => ({
       createdAt: new Date().toISOString(),
-      // Only the continuation turn carries this; the interface renders the
-      // green card from it instead of the model repeating the confirmation.
-      ...(justUnlocked ? { superJustUnlocked: true } : {}),
     }),
     onFinish: ({ messages: finalMessages, outcome, responseMessage }) => {
       if (!conv) return;
@@ -259,7 +261,10 @@ export async function POST(req: Request) {
               parts: [{ type: "text", text: "An error occurred." }],
             } as UIMessage);
           } else {
-            await saveNewUIMessages(conversationIdForSave, finalMessages);
+            await saveNewUIMessages(
+              conversationIdForSave,
+              finalMessages.filter((m) => !isSuperContinueMessage(m)),
+            );
             // Aborted mid-stream still leaves a partial to keep history honest.
             if (
               (outcome.status === "aborted" || outcome.status === "unknown") &&

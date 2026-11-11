@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "skullet/react";
 import { IconChevronLeft, IconHistory } from "@tabler/icons-react";
-import { StatusPill } from "@/components/atoms/StatusPill";
 import { Button } from "@/components/atoms/Button";
 import SidebarNav from "@/components/primitives/SidebarNav";
 import { AccountControl } from "@/components/app/AccountControl";
@@ -16,17 +16,30 @@ import { useResolvedAssetMeta } from "@/components/app/useAssetMeta";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { accountScope } from "@/lib/auth/session-identity";
 import {
+  THREADS_QUERY_KEY,
+  TRASHED_QUERY_KEY,
   useThreads,
   useTrashed,
 } from "@/components/app/threadQueries";
-import { networkDisplayName } from "@/lib/wallet/balances";
-import { assetName, type AssetMeta } from "@/components/app/toolParts";
-import { useHistory } from "./historyQueries";
 import {
-  historyStateMeta,
-  SAMPLE_HISTORY_ROWS,
-  type HistoryRow,
-} from "./historyCache";
+  deleteCachedMessages,
+  findThreadLabel,
+  prefetchThread,
+  readThreadsCache,
+  readTrashedCache,
+  writeThreadsCache,
+  writeTrashedCache,
+  type ThreadItem,
+  type TrashedItem,
+} from "@/components/app/threadCache";
+import { TITLE_MAX_CHARS } from "@/lib/ai/title";
+import { useHistory } from "./historyQueries";
+import { SAMPLE_HISTORY_ROWS } from "./historyCache";
+import {
+  HistoryList,
+  NO_HISTORY_META,
+  NO_HISTORY_SYMBOLS,
+} from "@/components/app/HistoryList";
 
 /* ─────────────────────────────────────────────────────────
  * HISTORY
@@ -35,90 +48,9 @@ import {
  * assistant read, kept current by the settlement workflow.
  * ───────────────────────────────────────────────────────── */
 
-function formatWhen(iso: string): string {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return "";
-  return at.toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
-
-const NO_META = new Map<string, AssetMeta>();
-const NO_SYMBOLS = new Map<string, string>();
-
-function HistoryList({
-  rows,
-  meta,
-  symbols,
-}: {
-  rows: HistoryRow[];
-  meta: Map<string, AssetMeta>;
-  symbols: Map<string, string>;
-}) {
-  return (
-    <ol className="flex flex-col gap-2.5">
-      {rows.map((row) => {
-        const from = row.originAsset
-          ? assetName(row.originAsset, symbols)
-          : "—";
-        const to = row.destinationAsset
-          ? assetName(row.destinationAsset, symbols)
-          : "—";
-        const out = row.amountOut ?? row.expectedOut;
-        const fromChain = row.originAsset
-          ? meta.get(row.originAsset)?.chain
-          : undefined;
-        const toChain = row.destinationAsset
-          ? meta.get(row.destinationAsset)?.chain
-          : undefined;
-        const route =
-          fromChain || toChain
-            ? ` · ${networkDisplayName(fromChain)} → ${networkDisplayName(toChain)}`
-            : "";
-        const { label, tone } = historyStateMeta(row.state);
-        return (
-          <li
-            key={row.id}
-            className="rounded-card bg-surface px-3.5 py-3 shadow-card"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <p className="min-w-0 text-[14px] leading-snug text-ink">
-                <strong className="font-semibold tabular-nums">
-                  {row.amountIn ?? "—"} {from}
-                </strong>{" "}
-                <span className="text-ink-3">→</span>{" "}
-                <strong className="font-semibold tabular-nums">
-                  {out ?? "—"} {to}
-                </strong>
-                <span className="text-[12.5px] text-ink-3">{route}</span>
-              </p>
-              <StatusPill tone={tone}>{label}</StatusPill>
-            </div>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-3">
-              {formatWhen(row.createdAt) ? (
-                <time>{formatWhen(row.createdAt)}</time>
-              ) : null}
-              {row.explorerUrls[0] ? (
-                <a
-                  href={row.explorerUrls[0]}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-accent-ink hover:underline"
-                >
-                  View on explorer
-                </a>
-              ) : null}
-            </div>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
 export default function HistoryView() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { data: threads = [] } = useThreads();
   const { data: trashed = [] } = useTrashed();
   const { connected, signedIn, status, identity } = useAuth();
@@ -146,6 +78,86 @@ export default function HistoryView() {
     }
     return out;
   }, [meta]);
+
+  // Sidebar thread management: same rename/delete the chat pages use, so
+  // the kebab renders (SidebarNav hides it when both are missing) and
+  // hover prefetches the thread history.
+  const renameThread = useCallback(
+    (id: string, next: string) => {
+      const cleaned = next.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX_CHARS);
+      if (!cleaned) return;
+      const current = findThreadLabel(id);
+      if (current != null && cleaned === current.trim()) return;
+      const prevThreads = queryClient.getQueryData<ThreadItem[]>(THREADS_QUERY_KEY);
+      const prevCache = readThreadsCache();
+      queryClient.setQueryData<ThreadItem[]>(THREADS_QUERY_KEY, (old) => {
+        if (!old) return old;
+        if (!old.some((t) => t.id === id)) return old;
+        return old.map((t) => (t.id === id ? { ...t, label: cleaned } : t));
+      });
+      if (prevCache.some((t) => t.id === id)) {
+        writeThreadsCache(
+          prevCache.map((t) => (t.id === id ? { ...t, label: cleaned } : t)),
+        );
+      }
+      void fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: cleaned }),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error("rename failed");
+        })
+        .catch(() => {
+          if (prevThreads) queryClient.setQueryData(THREADS_QUERY_KEY, prevThreads);
+          writeThreadsCache(prevCache);
+        });
+    },
+    [queryClient],
+  );
+
+  const deleteThread = useCallback(
+    (id: string) => {
+      const label =
+        queryClient.getQueryData<ThreadItem[]>(THREADS_QUERY_KEY)?.find((t) => t.id === id)?.label ??
+        findThreadLabel(id) ??
+        "New chat";
+      void fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      })
+        .then(async (res) => {
+          if (!res.ok) throw new Error("delete failed");
+          let deletedAt = new Date().toISOString();
+          try {
+            const body = (await res.json()) as { deletedAt?: string };
+            if (typeof body?.deletedAt === "string" && body.deletedAt) {
+              deletedAt = body.deletedAt;
+            }
+          } catch {
+            // DELETE succeeded; fall back to now for the trash ordering.
+          }
+          return deletedAt;
+        })
+        .then((deletedAt) => {
+          deleteCachedMessages(id);
+          const entry: TrashedItem = { id, label, deletedAt };
+          queryClient.setQueryData<ThreadItem[]>(THREADS_QUERY_KEY, (old) =>
+            old ? old.filter((t) => t.id !== id) : old,
+          );
+          writeThreadsCache(readThreadsCache().filter((t) => t.id !== id));
+          queryClient.setQueryData<TrashedItem[]>(TRASHED_QUERY_KEY, (old) =>
+            old ? [entry, ...old.filter((t) => t.id !== id)] : [entry],
+          );
+          const prevTrashed = readTrashedCache().filter((t) => t.id !== id);
+          writeTrashedCache([entry, ...prevTrashed]);
+        })
+        .catch(() => {
+          // No list change was made, so nothing to roll back. SidebarNav's
+          // safety timer releases the collapsed row so it glides back.
+        });
+    },
+    [queryClient],
+  );
 
   // One prompt serves both ways of arriving unsigned: connected with no
   // session yet, and a request that came back 401 mid-visit.
@@ -202,7 +214,7 @@ export default function HistoryView() {
       label="Reading your history."
     >
       {(sample) => (
-        <HistoryList rows={sample} meta={NO_META} symbols={NO_SYMBOLS} />
+        <HistoryList rows={sample} meta={NO_HISTORY_META} symbols={NO_HISTORY_SYMBOLS} />
       )}
     </Skeleton>
   );
@@ -215,6 +227,9 @@ export default function HistoryView() {
         recents={threads.map((t) => ({ id: t.id, label: t.label ?? "New chat" }))}
         onPick={(id) => router.push(`/chat/${encodeURIComponent(id)}`)}
         onNewChat={() => router.push("/")}
+        onHoverThread={prefetchThread}
+        onRenameChat={renameThread}
+        onDeleteChat={deleteThread}
         onOpenTrash={() => router.push("/trash")}
         onOpenPortfolio={() => router.push("/portfolio")}
         historyActive
@@ -226,8 +241,8 @@ export default function HistoryView() {
 
       <div className="flex min-w-0 flex-1 flex-col gap-2.5">
         <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-line bg-page">
-          <header className="shrink-0 border-b border-line px-4 pb-2.5 pt-3">
-            <div className="flex items-center justify-between">
+          <header className="flex h-11 shrink-0 items-center border-b border-line px-4">
+            <div className="flex w-full min-w-0 items-center justify-between">
               <div className="flex min-w-0 items-center gap-2">
                 <button
                   type="button"
@@ -247,7 +262,7 @@ export default function HistoryView() {
             </div>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto scroll-slim px-4 py-4 sm:px-6">
+          <div className="min-h-0 flex-1 overflow-y-auto scroll-slim px-4 py-4 sm:px-6 [scrollbar-gutter:stable]">
             <div className="mx-auto w-full max-w-[860px]">
               {!signedIn ? (
                 status === "unknown" ? (
