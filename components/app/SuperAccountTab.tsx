@@ -99,6 +99,7 @@ export function SuperAccountTab({
   address,
   publicGroups,
   publicPending = false,
+  publicRefreshing = false,
   sampleRows = null,
   group,
   onToggleGroup,
@@ -109,6 +110,8 @@ export function SuperAccountTab({
   publicGroups: AssetGroup[];
   /** The public ledger is still on its way; the tab holds its shape. */
   publicPending?: boolean;
+  /** The public half of a refresh started from the title row. */
+  publicRefreshing?: boolean;
   /** The last read's row count, so a cold skeleton matches this table. */
   sampleRows?: number | null;
   group: AllocationGroup | null;
@@ -228,6 +231,7 @@ export function SuperAccountTab({
     onRefresh();
     void priv.refresh();
   };
+  const refreshing = publicRefreshing || (priv.isRefreshing ?? false);
   // A locked card is its own shape family: the masked hero and the
   // reserved 50vh area never share the unlocked table's remembered
   // shape, so the id follows the gate rather than the session alone.
@@ -267,7 +271,7 @@ export function SuperAccountTab({
 
         return (
           <div className="flex flex-col gap-3">
-            <BalancesTitleRow onRefresh={refreshAll} />
+            <BalancesTitleRow onRefresh={refreshAll} refreshing={refreshing} />
             <PortfolioHero
               total={view.totalUsd}
               count={viewItems.length}

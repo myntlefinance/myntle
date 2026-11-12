@@ -511,6 +511,8 @@ export function useSuperPrivateBalances(
     entries,
     error: query.error,
     isPending: query.isPending,
+    // Drives the title row's in-flight state alongside the public read.
+    isRefreshing: query.isFetching && query.data !== undefined,
     refresh,
   };
 }

@@ -124,6 +124,7 @@ function WalletPanel({
   group,
   onToggleGroup,
   onRefresh,
+  refreshing = false,
 }: {
   snapshot: PortfolioSnapshot | null;
   /** The last read's row count, so a cold skeleton matches this table. */
@@ -131,6 +132,7 @@ function WalletPanel({
   group: AllocationGroup | null;
   onToggleGroup: (next: AllocationGroup) => void;
   onRefresh: () => void;
+  refreshing?: boolean;
 }) {
   const pending = snapshot === null;
   const sample = useMemo(() => {
@@ -172,7 +174,7 @@ function WalletPanel({
           );
         return (
           <div className="flex flex-col gap-3">
-            <BalancesTitleRow onRefresh={onRefresh} />
+            <BalancesTitleRow onRefresh={onRefresh} refreshing={refreshing} />
             <PortfolioHero
               total={total}
               count={items.length}
@@ -202,6 +204,7 @@ function PortfolioBody({
   tab,
   onTabChange,
   onRefresh,
+  isRefreshing = false,
   watch,
 }: {
   snapshot: PortfolioSnapshot | null;
@@ -212,6 +215,8 @@ function PortfolioBody({
   onTabChange: (next: PortfolioTab) => void;
   /** Re-reads the public balances; each tab titles it the same way. */
   onRefresh: () => void;
+  /** That public re-read is in flight. */
+  isRefreshing?: boolean;
   watch: WatchControls;
 }) {
   // Bar selection doubles as the table filter; null shows everything.
@@ -256,6 +261,7 @@ function PortfolioBody({
               setGroup((prev) => (prev === next ? null : next))
             }
             onRefresh={onRefresh}
+            refreshing={isRefreshing}
           />
         ) : tab === "Super account" ? (
           <SuperAccountTab
@@ -263,6 +269,7 @@ function PortfolioBody({
             address={address}
             publicGroups={snapshot?.superGroups ?? []}
             publicPending={snapshot === null}
+            publicRefreshing={isRefreshing}
             sampleRows={superRows}
             group={group}
             onToggleGroup={(next) =>
@@ -629,6 +636,7 @@ export default function PortfolioView({
       tab={tab}
       onTabChange={handleTab}
       onRefresh={() => void portfolio.refresh()}
+      isRefreshing={portfolio.isRefreshing}
       watch={{
         entries: watchlist.entries,
         listError: watchlist.error,

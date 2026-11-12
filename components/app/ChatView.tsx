@@ -655,9 +655,16 @@ export default function ChatView({
       }
       const body = result.body;
       if (body.messages && body.messages.length > 0) {
+        setCachedMessages(conversationId, body.messages);
         setMessages(body.messages);
       }
-      if (body.hasMore !== undefined) setHasMoreOlder(body.hasMore);
+      if (body.hasMore !== undefined) {
+        setHasMoreOlder(body.hasMore);
+        threadPagination.set(conversationId, {
+          hasMore: body.hasMore,
+          oldestSeq: body.oldestSeq,
+        });
+      }
       // Title comes from the database here, so it must not mark dirty.
       // NULL means untitled; only a stored string counts as named.
       if (body.title != null) {
