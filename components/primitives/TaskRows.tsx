@@ -29,11 +29,16 @@ export function SpinnerRing({
   active,
   size = 24,
   stroke = 2,
+  track = "var(--line)",
+  color = "var(--ink-3)",
   children,
 }: {
   active?: boolean;
   size?: number;
   stroke?: number;
+  /** Track and moving arc. Defaults preserve the existing standalone spinner. */
+  track?: string;
+  color?: string;
   children?: React.ReactNode;
 }) {
   const r = (size - stroke) / 2;
@@ -54,7 +59,7 @@ export function SpinnerRing({
           cy={size / 2}
           r={r}
           fill="none"
-          stroke="var(--line)"
+          stroke={track}
           strokeWidth={stroke}
         />
         {active && (
@@ -63,7 +68,7 @@ export function SpinnerRing({
             cy={size / 2}
             r={r}
             fill="none"
-            stroke="var(--ink-3)"
+            stroke={color}
             strokeWidth={stroke}
             strokeLinecap="round"
             strokeDasharray={`${c * 0.28} ${c * 0.72}`}

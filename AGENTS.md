@@ -118,9 +118,10 @@ app/
   api/auth/                      chain challenge, verification, session
   api/agent/                     agent key, policy, revocation
   layout.tsx                     the frame
+  (app)/layout.tsx               the shared provider boundary for app routes
   providers.tsx                  the wallet providers
   providers-loader.tsx           loads them without server rendering
-  page.tsx                       the chat screen, driving the harness
+  (app)/page.tsx                 the chat screen, driving the harness
   globals.css                    the design foundation
 workflows/
   swap-lifecycle.ts              durable execution, polling, reconciliation
@@ -144,7 +145,7 @@ components/
 context/                         the documentation set (see below)
 ```
 
-**The harness is the interface.** `components/site/Harness.tsx` is BeautifulUI's own chat application, taken whole, and it is what the user sees. It takes an optional `live` prop; without one it runs the upstream demo, and with one it runs the real assistant. Do not reimplement the layout in `app/`. `app/page.tsx` wires the assistant to the harness and nothing else.
+**The harness is the interface.** `components/site/Harness.tsx` is BeautifulUI's own chat application, taken whole, and it is what the user sees. It takes an optional `live` prop; without one it runs the upstream demo, and with one it runs the real assistant. Do not reimplement the layout in `app/`. `app/(app)/page.tsx` wires the assistant to the harness and nothing else.
 
 **The lab is a scratchpad, not part of the product.** See *Building new components* below.
 
@@ -187,7 +188,9 @@ Never build a component in the lab. The lab is where a component is decided.
 
 **Retries distinguish failure from refusal.** A step that throws is retried. A step that throws `FatalError` is not. A failed status poll is retried; a settlement that failed on-chain is not. Note that `FatalError` is exported from the main `workflow` entry, not from `workflow/errors`.
 
-**The wallet providers are client-only.** One of the wallet connectors reaches for `indexedDB` when it is evaluated, and the server has no such thing. The whole provider tree is loaded with `ssr: false` for that reason, and the wallet standard's registry is imported inside an effect for the same reason.
+**The wallet providers are client-only.** One of the wallet connectors reaches for `indexedDB` when it is evaluated, and the server has no such thing. The whole provider tree is loaded with `ssr: false` for that reason, and the wallet standard's registry is imported inside an effect for the same reason. They mount once, in `app/(app)/layout.tsx`; do not wrap an individual page in `ProvidersLoader`, because a page-level mount is torn down on every navigation and takes the session and query cache with it.
+
+**Numbers that move.** A visually important number that updates in place, such as the portfolio hero total, renders through the `MorphMoney` wrapper so its digits morph by place value instead of cutting. Table cells and sentences stay static unless a prototype says otherwise, and the masked, skeleton, and reduced-motion states always render plain text with the morph disabled.
 
 ## Design rules
 
@@ -242,6 +245,12 @@ The order of preference when a label does not fit is: a shorter label, then a wi
 *Short version: never invent interface design on your own. Every animation, component, and style is either reused from what the product already renders or taken from an installed skill, and anything that fits neither is proposed to the person in charge before it is built.*
 
 No motion, component, or style is designed from scratch in a working session. The product's own foundation comes first: the keyframes, easing tokens, radii, shadows, and primitives in `app/globals.css`, `components/atoms/`, and `components/primitives/`. Where the foundation has no answer, the installed skills do: Emil Kowalski's design engineering skill (`emil-design-eng`) for motion and interaction craft, Jakub Linowski's *Less is More* for copy and restraint. A new keyframe, a new easing curve, or a new component pattern that fits neither source is not committed directly; it is prototyped in the lab and proposed to the person in charge first.
+
+### The One-Glyph-Per-Tool Rule
+
+*Short version: every tool call shows an icon that says what kind of work it did, and a new tool is not finished until it has one. A small palette of generic verbs is not enough, because it makes reading a balance and settling a trade look identical.*
+
+Each row in a tool run takes an `icon` key from its `ToolStep`; the key is chosen per tool in `components/app/LiveResponse.tsx` and drawn in `components/app/ActivityPills.tsx`. Drawings come from the installed Tabler outline set on the 24px grid the row renders at 13px, so an icon is never invented for a single screen. Tools that do the same job against different sources may share a glyph, as the news tools do, because the label is already the same. `unknown` is a fallback and not a destination: a new tool ships with its own key in the same change. Check a new glyph at 13px before committing it, because detail that reads at 40px disappears at the size the row actually draws.
 
 ## Context documents
 

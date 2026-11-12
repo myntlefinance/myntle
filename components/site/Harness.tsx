@@ -30,7 +30,12 @@ import {
   IconWallet,
 } from "@tabler/icons-react";
 import { LiveResponse } from "@/components/app/LiveResponse";
-import type { SettlementSnapshot } from "@/components/app/approvals";
+import { unlockResolvedAfter } from "@/lib/ai/messages/continuation";
+import type {
+  ApprovalDecisionContext,
+  ApprovalDecisions,
+  SettlementSnapshot,
+} from "@/components/app/approvals";
 import { ConnectGate } from "@/components/app/ConnectGate";
 import { UserBubble, AgentMessageActions } from "@/components/app/MessageActions";
 import { ThreadSkeleton } from "@/components/app/ThreadSkeleton";
@@ -573,7 +578,9 @@ function homeRevealStyle(
 function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { onSend: (text: string, id: ScenarioId) => void; shuffle: () => void; offset: number; live?: LiveChat; models?: PromptModel[]; onModelChange?: (modelId: string) => void }) {
   const pool = live ? LIVE_SUGGESTIONS : SUGGESTION_POOL;
   const shown = [0, 1, 2].map((i) => pool[(offset + i) % pool.length]);
-  const [stage, setStage] = useState(homeRevealPlayed ? 4 : 0);
+  /* The live composer is the primary action, not a scene to reveal. It is
+   * present on the first frame; the staged blur-fade stays on the demo. */
+  const [stage, setStage] = useState(live || homeRevealPlayed ? 4 : 0);
   useEffect(() => {
     const skipReveal = () => setStage(4);
     window.addEventListener(FOCUS_COMPOSER_EVENT, skipReveal);
@@ -581,6 +588,7 @@ function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { 
   }, []);
 
   useEffect(() => {
+    if (live) return;
     if (homeRevealPlayed) {
       setStage(4);
       return;
@@ -597,7 +605,7 @@ function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { 
       timers.forEach(clearTimeout);
       setStage(4);
     };
-  }, []);
+  }, [live]);
 
   return (
     <div className="mx-auto flex min-h-full w-full flex-col justify-center px-4 py-10 sm:px-8 lg:px-12">
@@ -818,9 +826,24 @@ export type LiveChat = {
   error?: string;
   regenerate?: (messageId?: string) => void;
   editAndSend?: (messageId: string, nextText: string) => void;
-  respondToApproval?: (approvalId: string, approved: boolean) => void;
+  respondToApproval?: (
+    approvalId: string,
+    approved: boolean,
+    context: ApprovalDecisionContext,
+  ) => void | Promise<void>;
+  /** The chat these cards belong to, so a record can be linked to it. */
+  conversationId?: string | null;
+  /** Decisions on record; null while the read is in flight. */
+  decisions?: ApprovalDecisions | null;
   /** Database settlements by tool approval id, for instant card states. */
   settlements?: Record<string, SettlementSnapshot>;
+  /** Cards whose record has never been read; their footer is a skeleton. */
+  pendingApprovalIds?: ReadonlySet<string>;
+  /**
+   * Called once when a money card scrolls into view, so the host can read
+   * only the record the reader actually reached.
+   */
+  onApprovalVisible?: (approvalId: string) => boolean | void;
 };
 
 const useIsomorphicLayoutEffect =
@@ -1457,6 +1480,12 @@ export default function Harness({
                   live.messages
                     .slice(messageIndex + 1)
                     .some((entry) => entry.role === "user");
+                // An assistant turn with no real user message between it and
+                // this one is the continuation that answered the unlock card.
+                const unlockResolved = unlockResolvedAfter(
+                  live.messages,
+                  messageIndex,
+                );
                 // The request this card belongs to, so a new prompt from an
                 // old card retries that request rather than the newest one.
                 let priorUserText = "";
@@ -1513,6 +1542,7 @@ export default function Harness({
                           status={messageStatus}
                           interactive
                           superseded={superseded}
+                          resolved={unlockResolved}
                           onRetry={() => live.send(retryText)}
                           onRegenerate={
                             live.regenerate
@@ -1520,7 +1550,11 @@ export default function Harness({
                               : undefined
                           }
                           onApproval={live.respondToApproval}
+                          conversationId={live.conversationId}
+                          decisions={live.decisions}
                           settlements={live.settlements}
+                          pendingApprovalIds={live.pendingApprovalIds}
+                          onApprovalVisible={live.onApprovalVisible}
                         />
                       )}
                     </div>

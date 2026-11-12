@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -22,6 +23,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { focusComposer } from "@/lib/composer";
+import { useHoverIntent } from "@/components/app/useHoverIntent";
 
 /* ─────────────────────────────────────────────────────────
  * SIDEBAR NAV
@@ -45,6 +47,19 @@ export type SidebarRecent = {
   label: string;
   prompt?: string;
 };
+
+/* Parents rebuild this list on every render (usually a `.map` over the
+ * threads), so a new array identity says nothing about new content.
+ * Comparing by value lets the sync effect below bail out instead of
+ * scheduling a state update — and a render — for an identical list. */
+function sameRecentItems(a: SidebarRecent[], b: SidebarRecent[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id || a[i].label !== b[i].label || a[i].prompt !== b[i].prompt)
+      return false;
+  }
+  return true;
+}
 
 const DEFAULT_RECENTS: SidebarRecent[] = [
   { id: "suppliers", label: "Vendor records" },
@@ -224,6 +239,13 @@ export default function SidebarNav({
     onNavigate?.(key);
   };
   const [demoActiveTitle, setDemoActiveTitle] = useState<string | null>(null);
+  // A row must be rested on before its history is warmed. Crossing the list,
+  // or a row sliding under a stationary pointer during a scroll, is not intent.
+  const hoverThread = useCallback(
+    (id: string) => onHoverThread?.(id),
+    [onHoverThread],
+  );
+  const hoverIntent = useHoverIntent(hoverThread);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [chatsOpen, setChatsOpen] = useState(true);
@@ -326,8 +348,12 @@ export default function SidebarNav({
       return;
     }
 
-    // Normal update (single item added or renamed)
-    setDisplayedRecents(recents);
+    // Normal update (single item added or renamed). The guard skips the
+    // common no-op: a fresh array with the same rows must not schedule
+    // an update, or every parent render becomes a sidebar render.
+    setDisplayedRecents((prev) =>
+      sameRecentItems(prev, recents) ? prev : recents,
+    );
     const prev = new Set(prevIds);
     const added = ids.find((id) => !prev.has(id));
     if (added && ids.length === prevIds.length + 1) {
@@ -593,6 +619,10 @@ export default function SidebarNav({
     setQuery("");
   };
 
+  /* `skullet-ignore` is inert in the app. It tells the skeleton measurer to
+   * keep the element's layout but draw no bone for it: the brand mark, the
+   * collapse control and the chat search are chrome, not content, and a bone
+   * for each one reads as a skeleton inside a skeleton. */
   return (
     <aside
       data-sidebar-collapsed={collapsed}
@@ -621,6 +651,7 @@ export default function SidebarNav({
               src="/myntle-logo.svg"
               alt="Myntle"
               className="h-[31px] w-auto"
+              {...{ "skullet-ignore": "" }}
             />
           </div>
 
@@ -631,6 +662,7 @@ export default function SidebarNav({
             tabIndex={collapsed ? -1 : 0}
             onClick={collapse}
             className="sidebar-collapse-control absolute right-2 top-1 flex size-8 items-center justify-center rounded-[8px] text-ink-3 transition-[opacity,background-color,color] duration-150 hover:bg-hover-2 hover:text-ink"
+            {...{ "skullet-ignore": "" }}
           >
             <IconLayoutSidebarLeftCollapse size={18} />
           </button>
@@ -641,6 +673,7 @@ export default function SidebarNav({
             tabIndex={collapsed ? 0 : -1}
             onClick={() => setCollapsed(false)}
             className="sidebar-expand-control absolute left-2 top-0.5 flex size-9 items-center justify-center rounded-[8px] text-ink-3 transition-[opacity,background-color,color] duration-150 hover:bg-hover-2 hover:text-ink"
+            {...{ "skullet-ignore": "" }}
           >
             <IconLayoutSidebarLeftCollapse size={18} className="rotate-180" />
           </button>
@@ -711,6 +744,7 @@ export default function SidebarNav({
               <IconChevronDown
                 size={16}
                 className={`shrink-0 transition-transform duration-150 ${chatsOpen ? "" : "-rotate-90"}`}
+                {...{ "skullet-ignore": "" }}
               />
               <span>Chats</span>
             </button>
@@ -726,6 +760,7 @@ export default function SidebarNav({
               }}
               className={`absolute right-0 top-0 z-10 flex size-8 items-center justify-center rounded-[8px] text-ink-3 transition-[opacity,background-color,color,transform] hover:bg-hover-2 hover:text-ink active:scale-[0.96] ${searchOpen ? "pointer-events-none opacity-0" : "opacity-100"}`}
               style={{ transitionDuration: `${CHAT_SEARCH_MOTION.duration}ms` }}
+              {...{ "skullet-ignore": "" }}
             >
               <IconSearch size={16} />
             </button>
@@ -737,6 +772,7 @@ export default function SidebarNav({
                 transitionDuration: `${CHAT_SEARCH_MOTION.duration}ms`,
                 transitionTimingFunction: CHAT_SEARCH_MOTION.easing,
               }}
+              {...{ "skullet-ignore": "" }}
             >
               <span className="ml-2 flex shrink-0 items-center justify-center">
                 <IconSearch size={15} />
@@ -784,7 +820,10 @@ export default function SidebarNav({
                   <div
                     key={item.id}
                     role="none"
-                    onMouseEnter={() => onHoverThread?.(item.id)}
+                    onPointerEnter={(event) =>
+                      hoverIntent.enter(item.id, event.pointerType)
+                    }
+                    onPointerLeave={() => hoverIntent.leave(item.id)}
                     style={
                       isExitingAll
                         ? {
@@ -847,6 +886,9 @@ export default function SidebarNav({
                         type="button"
                         title={item.label}
                         onClick={() => {
+                          // The click is the read. A dwell timer still
+                          // pending for this row must not fire after it.
+                          hoverIntent.cancel();
                           selectNav("chats");
                           if (activeTitle === undefined)
                             setDemoActiveTitle(item.label);

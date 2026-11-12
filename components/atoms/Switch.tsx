@@ -15,14 +15,14 @@ export function Switch({
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={`relative h-6 w-10 shrink-0 rounded-full transition-colors duration-200
-        ${checked ? "bg-ink" : "bg-line-strong"}`}
+      className={`relative h-4.5 w-7.5 shrink-0 rounded-full transition-colors duration-150
+        ${checked ? "bg-accent" : "bg-line-strong"}`}
     >
       <span
-        className="absolute top-0.5 left-0.5 size-5 rounded-full bg-white
-          shadow-[0_1px_2px_rgba(0,0,0,0.2)] transition-transform duration-200"
+        className="absolute top-0.5 left-0.5 size-3.5 rounded-full bg-white
+          shadow-btn transition-transform duration-150"
         style={{
-          transform: checked ? "translateX(16px)" : "translateX(0)",
+          transform: checked ? "translateX(12px)" : "translateX(0)",
           transitionTimingFunction: "cubic-bezier(0.23, 1, 0.32, 1)",
         }}
       />

@@ -10,8 +10,12 @@ import BridgeCard from "@/components/lab/samples/BridgeCard";
 import WithdrawCard from "@/components/lab/samples/WithdrawCard";
 import LimitOrderCard from "@/components/lab/samples/LimitOrderCard";
 import ChipHoverCards from "@/components/lab/samples/ChipHoverCards";
+import PillWrapping from "@/components/lab/samples/PillWrapping";
 import AuthProbe from "@/components/lab/samples/AuthProbe";
 import UnlockCardStates from "@/components/lab/samples/UnlockCardStates";
+import PortfolioRevamp from "@/components/lab/samples/PortfolioRevamp";
+import WatchedSelector from "@/components/lab/samples/WatchedSelector";
+import MorphMoneySample from "@/components/lab/samples/MorphMoney";
 
 export const metadata = {
   title: "Lab",
@@ -33,8 +37,12 @@ const PROTOTYPES: Record<string, React.ComponentType<{ variant?: string }>> = {
   "withdraw-card": WithdrawCard,
   "limit-order-card": LimitOrderCard,
   "chip-hover-cards": ChipHoverCards,
+  "pill-wrapping": PillWrapping,
   "auth-probe": AuthProbe,
   "unlock-card": UnlockCardStates,
+  "portfolio-revamp": PortfolioRevamp,
+  "watched-selector": WatchedSelector,
+  "morph-money": MorphMoneySample,
 };
 
 /** Sources are read at build time so each frame can offer its own file. */

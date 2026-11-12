@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { syncThemeColor } from "@/lib/theme";
 
 /* The stored theme is read during the first render, not in an effect, so a
  * remount — e.g. opening the wallet menu — renders the thumb in place
@@ -29,6 +30,7 @@ export function ThemeToggle({ compact = false }: { compact?: boolean } = {}) {
     const root = document.documentElement;
     root.classList.add("theme-switching");
     root.classList.toggle("dark", next);
+    syncThemeColor(next);
     requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove("theme-switching")));
     try {
       localStorage.setItem("bui-theme", next ? "dark" : "light");
