@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useMounted } from "@/lib/use-mounted";
 import { IconCheck, IconCopy, IconWallet } from "@tabler/icons-react";
 import { StatusPill } from "@/components/atoms/StatusPill";
 import { TokenAvatar } from "@/components/finance/TokenAvatar";
@@ -16,8 +17,6 @@ import { NetworkIcon } from "@/components/finance/NetworkIcon";
  * kind of account it is. All figures are sample data. Lab-only: production
  * still needs a real price-history source, which the codebase does not have.
  */
-
-type Variant = "Token" | "Address" | "Venue";
 
 /* Sample 24-point price history for the graph. Production has no such
  * feed; this stands in for whatever source gets wired later. */
@@ -285,22 +284,21 @@ function HoverChip({
   const focusOpened = useRef(false);
   // Portal target only exists in the browser; the first render (and the
   // server) shows no popup so hydration always matches.
-  const [mounted, setMounted] = useState(false);
+  const mounted = useMounted();
   // What was open on the previous render: switching straight from another
-  // open card renders instantly, after the tooltip rule.
-  const prevOpen = useRef<string | null>(null);
+  // open card renders instantly, after the tooltip rule. Tracked in state
+  // (synced during render) so the render-time read is state, not a ref.
+  const [prevOpen, setPrevOpen] = useState<string | null>(null);
   const open = openId === id;
+  if (prevOpen !== openId) {
+    setPrevOpen(openId);
+  }
 
   useEffect(() => {
-    setMounted(true);
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
   }, []);
-
-  useEffect(() => {
-    prevOpen.current = openId;
-  }, [openId ]);
 
   const show = () => {
     if (timer.current) clearTimeout(timer.current);
@@ -364,7 +362,7 @@ function HoverChip({
               label={popupLabel}
               height={popupHeight}
               instant={
-                prevOpen.current !== null && prevOpen.current !== id
+                prevOpen !== null && prevOpen !== id
               }
               onClose={() =>
                 setOpenId((current) => (current === id ? null : current))

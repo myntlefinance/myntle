@@ -290,124 +290,141 @@ export default function SidebarNav({
   /* newly persisted chat: the row grows from 0 to full height so the rows
    * below it glide down instead of jumping. Cleared once the keyframes end. */
   const [enteringId, setEnteringId] = useState<string | null>(null);
-  const prevIdsRef = useRef<string[] | null>(null);
   const [displayedRecents, setDisplayedRecents] = useState(recents);
   const [isExitingAll, setIsExitingAll] = useState(false);
   const [isEnteringAll, setIsEnteringAll] = useState(false);
-  const exitAllTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const enterAllTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  // Row counts captured when a cascade starts, so the completion timer
+  // below keeps the duration the start dictated even if props move first.
+  const [exitTotal, setExitTotal] = useState(0);
+  const [enterTotal, setEnterTotal] = useState(0);
+  // The last committed chat ids. List transitions (sign-out clearing the
+  // list, sign-in filling it, a single row arriving) are detected during
+  // render against this snapshot — never synced in an effect.
+  const [prevIds, setPrevIds] = useState<string[] | null>(null);
+  // Read once per mount for the animation branches below. The OS setting
+  // is not a subscription here; a mid-session toggle waits for a remount.
+  const [prefersReducedMotion] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  // The live list for the delete timers: a row the parent drops meanwhile
+  // (sign-out, refetch) must not receive a late delete for its collapse.
+  const liveRecentsRef = useRef(recents);
   useEffect(() => {
-    return () => {
-      if (exitAllTimerRef.current) clearTimeout(exitAllTimerRef.current);
-      if (enterAllTimerRef.current) clearTimeout(enterAllTimerRef.current);
-    };
-  }, []);
+    liveRecentsRef.current = recents;
+  });
 
-  useEffect(() => {
-    const ids = recents.map((item) => item.id);
-    const prevIds = prevIdsRef.current;
-    prevIdsRef.current = ids;
-
-    if (prevIds === null) {
-      setDisplayedRecents(recents);
-      return;
-    }
-
-    // Sign out / clearing all: previous list had items, now empty
-    if (prevIds.length > 0 && recents.length === 0) {
-      const reduced =
-        typeof window !== "undefined" &&
-        typeof window.matchMedia === "function" &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      if (reduced) {
+  // List transitions, detected during render against the last committed
+  // ids. Flags rise on the same pass that sees the new list; the completion
+  // timers below only clear them, so no effect body sets state.
+  const recentIds = recents.map((item) => item.id);
+  if (prevIds === null) {
+    // Mount: displayedRecents already seeds from recents; just snapshot.
+    setPrevIds(recentIds);
+  } else if (
+    prevIds.length !== recentIds.length ||
+    prevIds.some((id, index) => id !== recentIds[index])
+  ) {
+    setPrevIds(recentIds);
+    if (prevIds.length > 0 && recentIds.length === 0) {
+      // Sign-out clearing the list: the rows cascade out, then leave.
+      // Reduced motion skips the cascade and clears at once.
+      if (prefersReducedMotion) {
         setDisplayedRecents([]);
         setIsExitingAll(false);
-        return;
+      } else {
+        setExitTotal(prevIds.length);
+        setIsExitingAll(true);
       }
-      setIsExitingAll(true);
-      if (exitAllTimerRef.current) clearTimeout(exitAllTimerRef.current);
-      const exitDuration = 275 + Math.min(prevIds.length, 8) * 25;
-      exitAllTimerRef.current = setTimeout(() => {
-        setDisplayedRecents([]);
-        setIsExitingAll(false);
-        exitAllTimerRef.current = null;
-      }, exitDuration);
-      return;
-    }
-
-    // Sign in / bulk entrance: previous was empty, now has items
-    if (prevIds.length === 0 && recents.length > 0) {
-      if (exitAllTimerRef.current) {
-        clearTimeout(exitAllTimerRef.current);
-        exitAllTimerRef.current = null;
-      }
+    } else if (prevIds.length === 0 && recentIds.length > 0) {
+      // Sign-in filling the list: paint it at once, then glide it in.
+      // Dropping the exit flag also cancels a cascade still in flight.
       setIsExitingAll(false);
       setDisplayedRecents(recents);
+      setEnterTotal(recentIds.length);
       setIsEnteringAll(true);
-      if (enterAllTimerRef.current) clearTimeout(enterAllTimerRef.current);
-      const enterDuration = 275 + Math.min(recents.length, 8) * 25;
-      enterAllTimerRef.current = setTimeout(() => {
-        setIsEnteringAll(false);
-        enterAllTimerRef.current = null;
-      }, enterDuration);
-      return;
+    } else {
+      // A single arrival glides down; any other change paints at once.
+      // The guard skips the common no-op: a fresh array with the same rows
+      // must not schedule an update, or every parent render cascades.
+      if (!sameRecentItems(displayedRecents, recents)) {
+        setDisplayedRecents(recents);
+      }
+      const known = new Set(prevIds);
+      const added = recentIds.find((id) => !known.has(id));
+      if (added && recentIds.length === prevIds.length + 1) {
+        setEnteringId(added);
+      }
     }
+  } else if (!sameRecentItems(displayedRecents, recents)) {
+    // Same rows, new content (a rename landing): keep the paint in sync.
+    setDisplayedRecents(recents);
+  }
 
-    // Normal update (single item added or renamed). The guard skips the
-    // common no-op: a fresh array with the same rows must not schedule
-    // an update, or every parent render becomes a sidebar render.
-    setDisplayedRecents((prev) =>
-      sameRecentItems(prev, recents) ? prev : recents,
-    );
-    const prev = new Set(prevIds);
-    const added = ids.find((id) => !prev.has(id));
-    if (added && ids.length === prevIds.length + 1) {
-      setEnteringId(added);
-      const timer = setTimeout(() => setEnteringId(null), 350);
-      return () => clearTimeout(timer);
-    }
-  }, [recents]);
+  // The exit cascade started above (or by sign-out) completes on its own
+  // timer; clearing the flag cancels a cascade a fresh list interrupts.
+  useEffect(() => {
+    if (!isExitingAll) return;
+    const duration = 275 + Math.min(exitTotal, 8) * 25;
+    const timer = setTimeout(() => {
+      setDisplayedRecents([]);
+      setIsExitingAll(false);
+    }, duration);
+    return () => clearTimeout(timer);
+  }, [isExitingAll, exitTotal]);
 
-  // Direct sign-out event listener: start reverse cascade animation immediately
+  // The entrance cascade completes the same way, from its own timer.
+  useEffect(() => {
+    if (!isEnteringAll) return;
+    const duration = 275 + Math.min(enterTotal, 8) * 25;
+    const timer = setTimeout(() => setIsEnteringAll(false), duration);
+    return () => clearTimeout(timer);
+  }, [isEnteringAll, enterTotal]);
+
+  // A newly arrived row holds its growth keyframes, then releases them.
+  useEffect(() => {
+    if (!enteringId) return;
+    const timer = setTimeout(() => setEnteringId(null), 350);
+    return () => clearTimeout(timer);
+  }, [enteringId]);
+
+  // Direct sign-out event: start the reverse cascade immediately. The
+  // completion timer on isExitingAll clears the list when it lands.
   useEffect(() => {
     const onSignOut = () => {
       if (displayedRecents.length === 0) return;
-      setIsExitingAll(true);
-      if (exitAllTimerRef.current) clearTimeout(exitAllTimerRef.current);
-      const exitDuration = 275 + Math.min(displayedRecents.length, 8) * 25;
-      exitAllTimerRef.current = setTimeout(() => {
+      if (prefersReducedMotion) {
         setDisplayedRecents([]);
-        setIsExitingAll(false);
-        exitAllTimerRef.current = null;
-      }, exitDuration);
+        return;
+      }
+      setExitTotal(displayedRecents.length);
+      setIsExitingAll(true);
     };
 
     window.addEventListener("myntle:sign-out", onSignOut);
     return () => window.removeEventListener("myntle:sign-out", onSignOut);
-  }, [displayedRecents.length]);
+  }, [displayedRecents.length, prefersReducedMotion]);
 
   const selectedTitle =
     activeTitle === undefined ? demoActiveTitle : activeTitle;
   // Drop an optimistic label once the server list moves past the label it
   // replaced — to the new name on success, or back on a failed write — so
-  // a retry never sticks a stale name on screen.
-  useEffect(() => {
+  // a retry never sticks a stale name on screen. Pruned during render so
+  // the rows below never paint a label the list has already moved past.
+  const staleOptimisticIds = Object.keys(optimisticLabels).filter(
+    (id) =>
+      (recents.find((item) => item.id === id)?.label ?? null) !==
+      optimisticLabels[id].base,
+  );
+  if (staleOptimisticIds.length > 0) {
     setOptimisticLabels((prev) => {
-      const ids = Object.keys(prev);
-      if (ids.length === 0) return prev;
-      let changed = false;
       const next = { ...prev };
-      for (const id of ids) {
-        const server = recents.find((item) => item.id === id)?.label ?? null;
-        if (server !== prev[id].base) {
-          delete next[id];
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
+      for (const id of staleOptimisticIds) delete next[id];
+      return next;
     });
-  }, [recents]);
+  }
   const visibleRecents = displayedRecents
     .map((item) =>
       optimisticLabels[item.id]
@@ -435,13 +452,17 @@ export default function SidebarNav({
   };
 
   // A collapsed rail has no room for a popup trigger, and the row it was
-  // anchored to is 36px wide.
-  useEffect(() => {
-    if (!collapsed) return;
-    setMenu(null);
-    setArmedDelete(false);
-    setRenamingId(null);
-  }, [collapsed]);
+  // anchored to is 36px wide. Reset on the pass that sees the collapse so
+  // no effect has to chase it afterwards.
+  const [wasCollapsed, setWasCollapsed] = useState(collapsed);
+  if (wasCollapsed !== collapsed) {
+    setWasCollapsed(collapsed);
+    if (collapsed) {
+      setMenu(null);
+      setArmedDelete(false);
+      setRenamingId(null);
+    }
+  }
 
   // Dismiss on an outside press, Escape, resize, or any scroll: the popup is
   // fixed to the viewport, so a scroll or resize would leave it behind the
@@ -554,14 +575,10 @@ export default function SidebarNav({
     closeMenu();
     // Hold the row through the collapse, then hand it to the application.
     // Each id owns its timer so a second delete never cancels the first.
-    // The list update unmounts the row; the effect below clears an id the
-    // list drops, and the safety timer glides back a row a failed request
-    // leaves behind — all without any list refetch.
-    const reduced =
-      typeof window !== "undefined" &&
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) {
+    // The list update unmounts the row; the timer below drops an id the
+    // list no longer holds, and the safety timer glides back a row a
+    // failed request leaves behind — all without any list refetch.
+    if (prefersReducedMotion) {
       onDeleteChat?.(id);
       return;
     }
@@ -571,45 +588,54 @@ export default function SidebarNav({
       next.add(id);
       return next;
     });
+    const release = () =>
+      setExitingIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     const timer = setTimeout(() => {
       exitTimerRef.current.delete(id);
+      // A list the parent cleared meanwhile (sign-out, refetch) must not
+      // receive a late delete: read the live list through a ref and only
+      // release the collapse when the row is already gone.
+      if (!liveRecentsRef.current.some((item) => item.id === id)) {
+        release();
+        return;
+      }
       onDeleteChat?.(id);
       // Safety: a failed delete never drops the row from the list, so
       // release the collapse and let it glide back instead of sticking.
       const safety = setTimeout(() => {
         exitTimerRef.current.delete(id);
-        setExitingIds((prev) => {
-          if (!prev.has(id)) return prev;
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
+        release();
       }, 4000);
       exitTimerRef.current.set(id, safety);
     }, 275);
     exitTimerRef.current.set(id, timer);
   };
 
-  useEffect(() => {
-    if (exitingIds.size === 0) return;
-    const gone = [...exitingIds].filter(
-      (id) => !recents.some((item) => item.id === id),
-    );
-    if (gone.length === 0) return;
-    for (const id of gone) {
-      const timer = exitTimerRef.current.get(id);
-      if (timer) clearTimeout(timer);
-      exitTimerRef.current.delete(id);
-    }
+  // An id the list no longer holds leaves the exiting set on the pass that
+  // sees it gone (after a successful delete, or a refetch that dropped a
+  // mid-collapse row). Pending timers answer for themselves through the
+  // live list above, so this block only releases the paint.
+  const goneExiting =
+    exitingIds.size === 0
+      ? null
+      : [...exitingIds].filter(
+          (id) => !recents.some((item) => item.id === id),
+        );
+  if (goneExiting && goneExiting.length > 0) {
     setExitingIds((prev) => {
       const next = new Set(prev);
       let changed = false;
-      for (const id of gone) {
+      for (const id of goneExiting) {
         if (next.delete(id)) changed = true;
       }
       return changed ? next : prev;
     });
-  }, [recents, exitingIds]);
+  }
 
   useEffect(
     () => () => {
@@ -653,6 +679,7 @@ export default function SidebarNav({
             aria-hidden={collapsed}
             className="sidebar-logo absolute left-4 top-1 flex h-8 items-center"
           >
+            {/* eslint-disable-next-line @next/next/no-img-element -- static local SVG logo; next/image serves SVGs as-is with no benefit */}
             <img
               src="/myntle-logo.svg"
               alt="Myntle"

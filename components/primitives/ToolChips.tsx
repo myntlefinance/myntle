@@ -164,7 +164,8 @@ export default function ToolChips({
   const toggleRow = (label: string) =>
     setOpenRows((current) => {
       const next = new Set(current);
-      next.has(label) ? next.delete(label) : next.add(label);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
       onToggleRow?.(label, next.has(label));
       return next;
     });

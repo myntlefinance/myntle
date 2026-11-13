@@ -154,10 +154,15 @@ export function AssetMatrix({
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
 
-  // Synchronize activeFilter if initialFilter prop changes
-  useEffect(() => {
+  // The prop is the initial choice, not a subscription: when the parent
+  // passes a new one, adopt it during render instead of syncing in an
+  // effect. A user pick afterwards still wins until the prop moves again.
+  const [prevInitialFilter, setPrevInitialFilter] =
+    useState<AssetFilter>(initialFilter);
+  if (prevInitialFilter !== initialFilter) {
+    setPrevInitialFilter(initialFilter);
     setActiveFilter(initialFilter);
-  }, [initialFilter]);
+  }
 
   // Resolve grouped data either from prop or auto-grouping from flat balances
   const groups = useMemo(() => {

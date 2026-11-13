@@ -193,6 +193,7 @@ export function TokenAvatar({
           className={`w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden select-none ${localFile.paddingClass}`}
           style={{ width: size, height: size }}
         >
+          {/* eslint-disable-next-line @next/next/no-img-element -- long-tail static SVG from public/tokens with onError fallback; SVGs gain nothing from next/image */}
           <img
             src={`/tokens/${localFile.file}.svg`}
             alt={label}
@@ -208,6 +209,7 @@ export function TokenAvatar({
           className="w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden bg-white/5"
           style={{ width: size, height: size }}
         >
+          {/* eslint-disable-next-line @next/next/no-img-element -- dynamic remote token logo from an arbitrary host with onError fallback; cannot allowlist for next/image */}
           <img
             src={remoteUrl}
             alt={label}

@@ -131,6 +131,7 @@ function AttachmentThumb({ file }: { file: AttachedFile }) {
   const [fallbackFailed, setFallbackFailed] = useState(false);
   if (file.kind === "image" || file.kind === "svg") {
     return (
+      // eslint-disable-next-line @next/next/no-img-element -- blob: object-URL attachment preview; next/image cannot optimize object URLs
       <img
         src={file.url}
         alt=""
@@ -141,6 +142,7 @@ function AttachmentThumb({ file }: { file: AttachedFile }) {
   }
   if (!failed) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element -- tiny 16px file-type icon; a next/image wrapper would break the inline thumb layout
       <img
         src={iconSrcFor(file.ext)}
         alt=""
@@ -152,6 +154,7 @@ function AttachmentThumb({ file }: { file: AttachedFile }) {
   }
   if (!fallbackFailed && file.ext !== "file") {
     return (
+      // eslint-disable-next-line @next/next/no-img-element -- tiny fallback file icon; a next/image wrapper would break the inline thumb layout
       <img
         src="/file-icons/file.webp"
         alt=""
@@ -481,10 +484,18 @@ export default function PromptBar({
         ? COMMANDS.filter((c) => c.name.slice(1).startsWith(query))
         : [];
 
-  useEffect(() => {
+  // A new menu or query restarts the highlight at the top, unhovered.
+  // Adjusted during render — not synced in an effect — so the reset lands
+  // on the same pass that produces the new rows.
+  const [prevMenuQuery, setPrevMenuQuery] = useState<{
+    menu: typeof menu;
+    query: string;
+  }>({ menu, query });
+  if (prevMenuQuery.menu !== menu || prevMenuQuery.query !== query) {
+    setPrevMenuQuery({ menu, query });
     setActive(0);
     setEngaged(false);
-  }, [menu, query]);
+  }
 
   /* a single highlight glides to the active row instead of each row
    * toggling its own background — matches the gliding pill in the nav */
@@ -493,13 +504,19 @@ export default function PromptBar({
     if (target) setRowBox({ top: target.offsetTop, height: target.offsetHeight });
   }, [menu, query, active, connected, rows.length]);
 
-  /* autoplay: apply the current step, then advance after its hold */
-  useEffect(() => {
-    if (!auto) return;
+  /* autoplay: the step applies on the pass that selects it, and the effect
+   * only advances the clock after its hold — same timing, no sync set. */
+  const [appliedAutoStep, setAppliedAutoStep] = useState(-1);
+  if (auto && appliedAutoStep !== autoStep) {
+    setAppliedAutoStep(autoStep);
     const step = AUTO_STEPS[autoStep % AUTO_STEPS.length];
     setDraft(step.draft);
     if (step.active !== undefined) setActive(step.active);
     if (step.connect !== undefined) setConnected(step.connect);
+  }
+  useEffect(() => {
+    if (!auto) return;
+    const step = AUTO_STEPS[autoStep % AUTO_STEPS.length];
     const t = setTimeout(() => setAutoStep((s) => s + 1), step.hold);
     return () => clearTimeout(t);
   }, [auto, autoStep]);
@@ -532,10 +549,10 @@ export default function PromptBar({
 
     const minHeight = 28;
     const maxHeight = 100;
-    input.style.height = "0px";
+    input.style.setProperty("height", "0px");
     const contentHeight = input.scrollHeight;
-    input.style.height = `${Math.min(Math.max(contentHeight, minHeight), maxHeight)}px`;
-    input.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+    input.style.setProperty("height", `${Math.min(Math.max(contentHeight, minHeight), maxHeight)}px`);
+    input.style.setProperty("overflow-y", contentHeight > maxHeight ? "auto" : "hidden");
   }, [draft, expanded]);
 
   /* clicking anywhere outside the composer closes the plus menu */

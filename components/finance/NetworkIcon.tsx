@@ -270,10 +270,8 @@ export function NetworkIcon({
 
   const resolved = resolveUploadedNetwork(canonical);
   const uid = useId();
-  const svg = useMemo(
-    () => (resolved ? isolateSvgIds(resolved.svg, uid) : null),
-    [resolved, uid],
-  );
+  const resolvedSvg = resolved?.svg;
+  const svg = resolvedSvg ? isolateSvgIds(resolvedSvg, uid) : null;
 
   if (resolved && svg) {
     return (
@@ -296,6 +294,7 @@ export function NetworkIcon({
         style={{ width: size, height: size }}
         title={label}
       >
+        {/* eslint-disable-next-line @next/next/no-img-element -- long-tail static SVG from public/networks; next/image skips SVG optimization */}
         <img
           src={`/networks/${canonical}.svg`}
           alt=""

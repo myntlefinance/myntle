@@ -168,8 +168,9 @@ export default function ApprovalCard({
   const [animate, setAnimate] = useState(false);
   // Until the first question is measured, render only the active one so the
   // initial (and SSR) height is Q1's height — not all questions stacked, which
-  // would flash to full height and then shrink on mount.
-  const [ready, setReady] = useState(false);
+  // would flash to full height and then shrink on mount. A measured height
+  // means the first sync has run.
+  const ready = viewportH !== undefined;
 
   const last = qi === questions.length - 1;
   const selected = answers[qi] ?? [];
@@ -188,7 +189,6 @@ export default function ApprovalCard({
     const withAnim = measured.current;
     measured.current = true;
     sync(withAnim);
-    setReady(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qi, answers, custom, open, sent]);
 

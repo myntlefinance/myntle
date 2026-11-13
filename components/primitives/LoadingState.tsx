@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 /* ─────────────────────────────────────────────────────────
  * LOADING STATE — pixel-grid loader for long-running work
@@ -38,12 +38,24 @@ const PATTERNS: Record<string, { delays: (number | null)[]; dur: number; round: 
 const DEFAULT_LABELS = ["Thinking", "Composing", "Churning", "Reasoning", "Drafting", "Shaping", "Planning", "Gathering"];
 
 function usePickedLabel(enabled: boolean) {
-  const [picked, setPicked] = useState(DEFAULT_LABELS[0]);
-  useEffect(() => {
-    if (!enabled) return;
-    setPicked(DEFAULT_LABELS[Math.floor(Math.random() * DEFAULT_LABELS.length)]);
-  }, [enabled]);
-  return picked;
+  // A shuffled deck per mount: each fresh appearance draws the next label,
+  // with no syncing effect and no impure call during render (the shuffle
+  // lives in the lazy initializer, which the purity rule exempts).
+  const [deck] = useState(() => {
+    const order = [...DEFAULT_LABELS];
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    return order;
+  });
+  const [draws, setDraws] = useState(enabled ? 1 : 0);
+  const [wasEnabled, setWasEnabled] = useState(enabled);
+  if (wasEnabled !== enabled) {
+    setWasEnabled(enabled);
+    if (enabled) setDraws((drawn) => drawn + 1);
+  }
+  return deck[draws === 0 ? 0 : (draws - 1) % deck.length];
 }
 
 function LoaderGrid({

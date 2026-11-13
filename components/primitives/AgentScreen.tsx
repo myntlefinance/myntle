@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useMounted } from "@/lib/use-mounted";
 import { Button } from "@/components/atoms/Button";
 
 /* ─────────────────────────────────────────────────────────
@@ -192,10 +193,8 @@ export default function AgentScreen({
   const [open, setOpen] = useState(false);
   const [recording, setRecording] = useState(false);
   const [secs, setSecs] = useState(0);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useMounted();
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
-
-  useEffect(() => setMounted(true), []);
 
   // tick while recording — survives collapse (state lives here, not the overlay)
   useEffect(() => {

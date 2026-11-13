@@ -1224,6 +1224,7 @@ export default function SentenceTradeCard({
 
       setTxState("submitted");
       locallyWatchedRef.current = true;
+      // eslint-disable-next-line react-hooks/purity -- send-time clock: this runs in the approve click-handler after the deposit lands, stamping the watch window start. Never evaluated during render.
       watchStartRef.current = Date.now();
       onApprove?.({
         transactionId: body.transactionId,
@@ -3136,7 +3137,7 @@ function HoverChip({
   open,
   chip,
   register,
-  focusOpened,
+  focusOpened: focusOpenedRef,
   onEnter,
   onLeave,
   onFocusChip,
@@ -3168,15 +3169,15 @@ function HoverChip({
       onFocus={() => {
         // A click trails its own focus-open and must not toggle straight
         // back shut; keyboard clicks carry no detail count and still toggle.
-        focusOpened.current = true;
+        focusOpenedRef.current = true;
         onFocusChip(id);
       }}
       onClick={(e) => {
-        if (e.detail !== 0 && focusOpened.current) {
-          focusOpened.current = false;
+        if (e.detail !== 0 && focusOpenedRef.current) {
+          focusOpenedRef.current = false;
           return;
         }
-        focusOpened.current = false;
+        focusOpenedRef.current = false;
         onToggle(id, open);
       }}
       onKeyDown={(e) => {
@@ -3213,13 +3214,22 @@ function Popup({
     { x: number; top?: number; bottom?: number; origin: string } | null
   >(null);
 
+  // The anchor is external DOM, not render input: mirror it into a ref so
+  // the positioning below reads as an external-system sync (the same reason
+  // the caller mirrors the open chip's element into state above).
+  const anchorRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    anchorRef.current = anchor;
+  }, [anchor]);
+
   // Position from the anchor's box, then follow it: a scroll or resize
   // that moves the chip closes the card, since the fixed popup would be
   // left behind the row it belongs to. Measuring, positioning, and
   // subscribing live in one effect so the position never paints unplaced.
   useEffect(() => {
-    if (!anchor) return;
-    const r = anchor.getBoundingClientRect();
+    const el = anchorRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
     const w = 248;
     const x = Math.min(
       Math.max(8, r.left + r.width / 2 - w / 2),
@@ -3228,7 +3238,7 @@ function Popup({
     // Prefer above whenever the card fits there; fall below only when it
     // does not. If neither side fits, keep the line-aware fallback: first
     // and middle lines above, last line below.
-    const root = anchor.closest("[data-sentence]");
+    const root = el.closest("[data-sentence]");
     const tops = root ? sentenceLineTops(root) : [];
     const index = locateLineIndex(tops, (r.top + r.bottom) / 2);
     const linePreference =
@@ -3252,7 +3262,7 @@ function Popup({
     const startX = r.left;
     const startY = r.top;
     const onScroll = () => {
-      const current = anchor.getBoundingClientRect();
+      const current = el.getBoundingClientRect();
       if (
         Math.abs(current.left - startX) > 2 ||
         Math.abs(current.top - startY) > 2

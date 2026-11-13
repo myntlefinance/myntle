@@ -52,11 +52,9 @@ export function WalletMark({
   const detectedChain = detectTechData(address)?.chain;
   const resolvedChain = chain ?? detectedChain;
   const chainIcon = resolvedChain ? CHAIN_ICONS[resolvedChain] : undefined;
-  const [iconFailed, setIconFailed] = useState(false);
-  useEffect(() => {
-    setIconFailed(false);
-  }, [walletIcon, address]);
-  const providerIcon = walletIcon && !iconFailed ? walletIcon : undefined;
+  const [failedIcon, setFailedIcon] = useState<string | null>(null);
+  const providerIcon =
+    walletIcon && failedIcon !== walletIcon ? walletIcon : undefined;
   const icon = providerIcon ?? chainIcon;
   if (!icon) return null;
   return (
@@ -65,7 +63,7 @@ export function WalletMark({
       src={icon}
       alt=""
       aria-hidden="true"
-      onError={providerIcon ? () => setIconFailed(true) : undefined}
+      onError={providerIcon ? () => setFailedIcon(walletIcon ?? null) : undefined}
       className="shrink-0 rounded-full object-contain"
       style={{ width: size, height: size }}
     />

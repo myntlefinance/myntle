@@ -63,6 +63,7 @@ function SourceChip({ source }: { source?: StreamingSource }) {
         transition-colors duration-150 hover:bg-hover hover:text-ink"
       style={{ animation: "pop-in 250ms cubic-bezier(0.23,1,0.32,1) both" }}
     >
+      {/* eslint-disable-next-line @next/next/no-img-element -- inline data-URI SVG demo avatar; next/image cannot optimize data URIs */}
       <img src={sourceImage(source)} alt="" className="source-avatar size-3 rounded-[3px]" />
       <span>{source.domain}</span>
     </a>
@@ -179,6 +180,7 @@ export default function StreamingText({
         >
           <span className="flex -space-x-1">
             {sources.map((source) => (
+              // eslint-disable-next-line @next/next/no-img-element -- inline data-URI SVG demo avatar; next/image cannot optimize data URIs
               <img
                 key={source.domain}
                 src={sourceImage(source)}
@@ -209,6 +211,7 @@ export default function StreamingText({
                 rel="noreferrer"
                 className="flex items-center gap-2 rounded-[6px] px-1.5 py-1 text-[12px] text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
               >
+                {/* eslint-disable-next-line @next/next/no-img-element -- inline data-URI SVG demo avatar; next/image cannot optimize data URIs */}
                 <img src={sourceImage(source)} alt="" className="source-avatar size-4 rounded-[4px]" />
                 <span className="animated-underline">{source.name}</span>
                 <span className="ml-auto font-mono text-[10.5px] text-ink-3">{source.domain}</span>

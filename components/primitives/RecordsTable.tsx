@@ -497,15 +497,20 @@ export default function RecordsTable({ rows = INITIAL_ROWS, fill = false }: { ro
     });
   }, [rows, sort]);
 
-  /* stagger: one row resolves every beat */
+  /* stagger: one row resolves every beat. The beat also retires the run:
+   * the timeout applies the next count or clears it, so the effect body
+   * itself never sets state. */
   useEffect(() => {
     if (!calc) return;
-    if (calc.resolved > visibleRows.length) {
-      if (calc.col === AI_LABEL) setAiDone(true);
-      setCalc(null);
-      return;
-    }
-    const t = setTimeout(() => setCalc((current) => (current ? { ...current, resolved: current.resolved + 1 } : current)), 110);
+    const t = setTimeout(() => {
+      const resolved = calc.resolved + 1;
+      if (resolved > visibleRows.length) {
+        if (calc.col === AI_LABEL) setAiDone(true);
+        setCalc(null);
+      } else {
+        setCalc({ ...calc, resolved });
+      }
+    }, 110);
     return () => clearTimeout(t);
   }, [calc, visibleRows.length]);
 
@@ -598,7 +603,8 @@ export default function RecordsTable({ rows = INITIAL_ROWS, fill = false }: { ro
   };
   const toggleRow = (id: string) => setSelected((current) => {
     const next = new Set(current);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
     return next;
   });
   const toggleAll = () => setSelected((current) => {
@@ -902,7 +908,8 @@ export default function RecordsTable({ rows = INITIAL_ROWS, fill = false }: { ro
               aria-pressed={pinnedColumns.has(prop.col)}
               onClick={() => setPinnedColumns((current) => {
                 const next = new Set(current);
-                next.has(prop.col) ? next.delete(prop.col) : next.add(prop.col);
+                if (next.has(prop.col)) next.delete(prop.col);
+                else next.add(prop.col);
                 return next;
               })}
               className="relative z-10 -mx-1.5 flex h-8 items-center gap-2.5 rounded-[8px] px-1.5 text-left text-[13px] leading-none text-ink transition-transform duration-150 active:scale-[0.96]"

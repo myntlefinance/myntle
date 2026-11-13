@@ -11,6 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
+import { useMounted } from "@/lib/use-mounted";
 import {
   activateWarmState,
   globalIsWarm,
@@ -80,7 +81,6 @@ function Popup({
         : { x, top: r.bottom + 8, origin },
     );
 
-    const close = () => onClose();
     const startX = r.left;
     const startY = r.top;
     const onScroll = () => {
@@ -161,7 +161,9 @@ export function ChipHover({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [open, setOpen] = useState(false);
   const [instant, setInstant] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  // Portal target only exists in the browser; the first render (and the
+  // server) shows no popup so hydration always matches.
+  const mounted = useMounted();
   const [popupEl, setPopupEl] = useState<HTMLDivElement | null>(null);
   // A click that follows its own focus-open must not toggle straight shut:
   // mousedown focuses (opens), mouseup clicks. The flag eats exactly that
@@ -173,7 +175,6 @@ export function ChipHover({
   useViewportIntent(anchorRef, () => onIntent?.(), Boolean(onIntent));
 
   useEffect(() => {
-    setMounted(true);
     return () => {
       if (timer.current) clearTimeout(timer.current);
       releaseHoverCard(cardId);
