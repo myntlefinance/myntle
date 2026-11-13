@@ -345,11 +345,7 @@ export function NearSetupDialog({
               : "Checking"}
         </span>
       </Button>
-    ) : needsIdentity ? (
-      <Button type="button" variant="accent" size="sm" onClick={closeWithoutSetup}>
-        Close
-      </Button>
-    ) : phase === "error" && confirmOnly ? (
+    ) : needsIdentity ? null : phase === "error" && confirmOnly ? (
       <Button
         type="button"
         variant="accent"
