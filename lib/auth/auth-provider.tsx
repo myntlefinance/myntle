@@ -179,6 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const refresh = useCallback(async (): Promise<SessionStatus> => {
+    const wasSignedIn = statusRef.current === "signed-in";
     const mine = sequence.current + 1;
     sequence.current = mine;
     const reply = await readSession();
@@ -187,6 +188,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       reply.status,
       reply.status === "signed-in" ? reply.identity : null,
     );
+    // The client router cache holds rendered screens, transcripts included.
+    // When the session ends without the explicit sign-out path (an expired
+    // cookie, a rejected request), the cache has to go before another
+    // account can sign in on this browser. `signOut` reloads itself; this
+    // covers the expiry path.
+    if (wasSignedIn && reply.status === "signed-out") {
+      window.location.assign("/");
+    }
     return reply.status;
   }, [apply]);
 
@@ -272,6 +281,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     apply("signed-out", null);
     window.dispatchEvent(new CustomEvent(SIGN_OUT_EVENT));
     await teardown;
+    // The client router cache holds rendered screens, chat transcripts
+    // included. `router.refresh()` only clears the current route, and no other
+    // API drops the rest, so a full load is the only public way to make sure
+    // the next account on this browser cannot reach the previous one's
+    // screens with the back button. The logout above has already settled, so
+    // the cookie a reload reads is gone.
+    window.location.assign("/");
   }, [apply, wallet]);
 
   const actualAccount = wallet.account;

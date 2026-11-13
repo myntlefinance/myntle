@@ -39,6 +39,10 @@ export default async function ChatPage({
           title: thread.title,
           hasMore: thread.hasMore,
           oldestSeq: thread.oldestSeq,
+          // The payload can be reused from the client cache. The read time
+          // travels with the messages so the view can tell a fresh seed from
+          // one rendered minutes ago and revalidate the old one.
+          seededAt: Date.now(),
           activeRunId: thread.activeRunId,
           activeRunStartedAt: thread.activeRunStartedAt,
           activeRunFinishedAt: thread.activeRunFinishedAt,

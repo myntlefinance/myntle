@@ -77,6 +77,11 @@ export type InitialThread = {
   title: string | null;
   hasMore: boolean;
   oldestSeq?: number;
+  /**
+   * When the server read this thread. A route payload can sit in the client
+   * cache, so `Date.now()` at mount is not the age of the data: this is.
+   */
+  seededAt?: number;
   /** The durable run that owns the turn, when a turn is in flight. */
   activeRunId?: string | null;
   activeRunStartedAt?: string | null;
@@ -736,7 +741,10 @@ export default function ChatView({
   // quick switch away and back does not refetch what the page already read.
   useEffect(() => {
     if (initialConversationId && initialThread?.messages.length) {
-      markThreadRead(initialConversationId);
+      // The seed's own timestamp, not the mount time: a route payload served
+      // from the client cache can be minutes old, and marking it read now
+      // would suppress the background revalidation it needs.
+      markThreadRead(initialConversationId, initialThread.seededAt);
     }
   }, [initialConversationId, initialThread]);
 

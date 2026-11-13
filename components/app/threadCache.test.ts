@@ -17,6 +17,7 @@ import {
   hasTrashedCache,
   loadThreadMessages,
   loadTrashedMessages,
+  markThreadRead,
   messageCache,
   prefetchThread,
   prefetchTrashedThread,
@@ -247,5 +248,15 @@ describe("newestTranscript", () => {
     expect(newestTranscript(undefined, list("a"))?.length).toBe(1);
     expect(newestTranscript(list("a"), undefined)?.length).toBe(1);
     expect(newestTranscript(undefined, undefined)).toEqual([]);
+  });
+});
+
+describe("markThreadRead", () => {
+  it("measures freshness from when the seed was read, not when it mounted", () => {
+    markThreadRead("stale-seed", Date.now() - 60_000);
+    expect(threadReadRecently("stale-seed")).toBe(false);
+
+    markThreadRead("fresh-seed");
+    expect(threadReadRecently("fresh-seed")).toBe(true);
   });
 });

@@ -384,9 +384,9 @@ export async function fetchTrashed(limit = 100): Promise<TrashedItem[]> {
   return trashedInflightPromise;
 }
 
-/** Remember that this tab just read the thread from the server. */
-export function markThreadRead(slug: string) {
-  threadReadAt.set(slug, Date.now());
+/** Remember when this tab last read the thread from the server. */
+export function markThreadRead(slug: string, at = Date.now()) {
+  threadReadAt.set(slug, at);
 }
 
 /** True when this tab read the thread recently enough to skip a duplicate. */
