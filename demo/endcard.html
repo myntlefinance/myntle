@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Myntle end card</title>
+    <style>
+      @font-face {
+        font-family: "Inter";
+        src: url("../assets/fonts/Inter-SemiBold.ttf") format("truetype");
+        font-weight: 600;
+        font-style: normal;
+      }
+      html,
+      body {
+        margin: 0;
+        background: #17181a;
+      }
+      .stage {
+        width: 1920px;
+        height: 1080px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 44px;
+        background: #17181a;
+        color: #f2f3f4;
+        font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+      }
+      .mark {
+        width: 132px;
+        height: 132px;
+        display: block;
+      }
+      .name {
+        font-size: 72px;
+        font-weight: 600;
+        letter-spacing: -0.032em;
+        line-height: 1;
+      }
+      .url {
+        font-size: 26px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: #9a9da3;
+        margin-top: -18px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage" id="endcard">
+      <img class="mark" src="../public/myntle-logo.svg" alt="" />
+      <div class="name">Myntle</div>
+      <div class="url">myntle.xyz</div>
+    </div>
+  </body>
+</html>
