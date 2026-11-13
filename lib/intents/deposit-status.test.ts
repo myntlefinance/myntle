@@ -72,6 +72,33 @@ describe("depositCardStateForRecord", () => {
       "waiting",
     );
   });
+
+  it("treats a registered funding hash as a sent deposit, not a waiting one", () => {
+    // The row is written at mint and only moves to confirming once 1Click
+    // sees the transfer, so the sender's own hash is the stronger fact.
+    expect(depositCardStateForRecord("submitted", VALID, NOW, true)).toBe(
+      "processing",
+    );
+    expect(depositCardStateForRecord("pending", VALID, NOW, true)).toBe(
+      "processing",
+    );
+    // A hash registered inside the funding window survives the clock: the
+    // transfer is already broadcast and the workflow has a grace window.
+    expect(depositCardStateForRecord("pending", PAST, NOW, true)).toBe(
+      "processing",
+    );
+    // The hash never overrules a terminal settlement.
+    expect(depositCardStateForRecord("settled", PAST, NOW, true)).toBe(
+      "settled",
+    );
+    expect(depositCardStateForRecord("failed", VALID, NOW, true)).toBe(
+      "failed",
+    );
+    // A reconciled record is not processing: the workflow gave up checking.
+    expect(
+      depositCardStateForRecord("needs_reconciliation", VALID, NOW, true),
+    ).toBe("waiting");
+  });
 });
 
 describe("depositTransitionForStatus", () => {

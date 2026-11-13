@@ -134,11 +134,20 @@ export function isRefreshableDepositRecord(state: string): boolean {
  * polling window is a bound on checks, not a settlement. While the address
  * is still inside its funding window the deposit can still arrive, so the
  * card keeps waiting until the stored expiry says otherwise.
+ *
+ * `depositSent` is the sender's own funding hash, registered after a wallet
+ * transfer. The transaction row is written when the address is minted and
+ * only moves to `confirming` once 1Click has seen the transfer, so a record
+ * that still says `submitted` after a send does not mean "waiting for funds".
+ * Painting it as waiting is what made a funded deposit drop back to its
+ * address and offer a second transfer, so the registered hash outranks the
+ * stale record state until the settlement reports something terminal.
  */
 export function depositCardStateForRecord(
   state: string,
   expiresAt: string | null | undefined,
   now: number,
+  depositSent = false,
 ): DepositCardState {
   switch (state) {
     case "settled":
@@ -155,6 +164,7 @@ export function depositCardStateForRecord(
     case "confirming":
       return "processing";
     case "needs_reconciliation":
+      return depositExpired(expiresAt, now) ? "expired" : "waiting";
     case "submitted":
     case "pending":
     case "authorized":
@@ -162,6 +172,7 @@ export function depositCardStateForRecord(
     case "draft":
     case "awaiting_approval":
     default:
+      if (depositSent) return "processing";
       return depositExpired(expiresAt, now) ? "expired" : "waiting";
   }
 }

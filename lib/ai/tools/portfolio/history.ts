@@ -43,27 +43,31 @@ export function createTransactionHistoryTool(context?: ToolContext) {
         .describe("How many of the newest trades to list."),
     }),
     execute: async ({ state, limit }) => {
-      const chain = context?.activeChain;
-      const address = context?.activeAddress;
-      if (
-        (chain !== "evm" && chain !== "solana" && chain !== "near") ||
-        !address
-      ) {
+      // The session id is authoritative and also covers a passkey account,
+      // which has no connected wallet to look up. The wallet read is the
+      // fallback for a caller that carries only the connected address.
+      let userId = context?.userId ?? null;
+      if (!userId) {
+        const chain = context?.activeChain;
+        const address = context?.activeAddress;
+        if (
+          (chain === "evm" || chain === "solana" || chain === "near") &&
+          address
+        ) {
+          const { findUserIdByWallet } = await import("@/lib/db/wallets");
+          userId = await findUserIdByWallet(chain, address);
+        }
+      }
+      if (!userId) {
         return {
           trades: [],
-          note: "No wallet is connected, so there is no history to show.",
+          note: "No signed-in account is attached to this conversation, so there is no history to show.",
         };
       }
 
-      const { findUserIdByWallet } = await import("@/lib/db/wallets");
       const { listUserTransactions } = await import(
         "@/lib/db/transactions"
       );
-      const userId = await findUserIdByWallet(chain, address);
-      if (!userId) {
-        return { trades: [], note: "This wallet has no trades yet." };
-      }
-
       const { items } = await listUserTransactions(userId, {
         limit,
         state: state ?? null,

@@ -72,48 +72,52 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: DEPOSIT_ERROR }, { status: 400 });
   }
 
-  // The card names the chat it belongs to. Resolve it here so the record is
-  // never linked to someone else's conversation. An unknown chat costs the
-  // link, never the deposit.
-  const conversationId = body.conversationId
-    ? await conversationIdForUser(session.userId, body.conversationId).catch(
-        () => null,
-      )
-    : null;
+  // The chat link, the refusal record, and the asset catalogue are three
+  // independent reads. Starting them together keeps the mint waiting on the
+  // slowest rather than on their sum; the quote below still accounts for most
+  // of the wall clock, and that is 1Click's own address generation.
+  const startedAt = Date.now();
+  const [conversationId, decided, catalogue] = await Promise.all([
+    body.conversationId
+      ? conversationIdForUser(session.userId, body.conversationId).catch(
+          () => null,
+        )
+      : Promise.resolve(null),
+    body.approvalId
+      ? getToolApproval(session.userId, body.approvalId).catch(() => null)
+      : Promise.resolve(null),
+    getAssets()
+      .then((assets) => ({ assets }))
+      .catch(() => null),
+  ]);
 
   // A proposal refused in another tab, or on another device, stays refused.
   // Answered before an address is minted.
-  if (body.approvalId) {
-    const decided = await getToolApproval(
-      session.userId,
-      body.approvalId,
-    ).catch(() => null);
-    if (decided?.decision === "denied") {
-      return NextResponse.json(
-        {
-          error: "denied",
-          message: DEPOSIT_REJECTED,
-        },
-        { status: 409 },
-      );
-    }
+  if (decided?.decision === "denied") {
+    return NextResponse.json(
+      {
+        error: "denied",
+        message: DEPOSIT_REJECTED,
+      },
+      { status: 409 },
+    );
   }
 
   // The catalogue is the authority on which assets can be priced. An id that
   // is not in it is a malformed request, not a quote to attempt.
-  let asset: Asset | undefined;
-  try {
-    const assets = await getAssets();
-    asset = assets.find((entry) => entry.assetId === body.assetId);
-  } catch {
+  if (!catalogue) {
     console.error("[intents/deposit] asset catalogue unavailable");
     return NextResponse.json({ error: DEPOSIT_UNAVAILABLE }, { status: 502 });
   }
+  const asset: Asset | undefined = catalogue.assets.find(
+    (entry) => entry.assetId === body.assetId,
+  );
   if (!asset) {
     console.error("[intents/deposit] unknown asset");
     return NextResponse.json({ error: DEPOSIT_ERROR }, { status: 400 });
   }
 
+  const quoteStartedAt = Date.now();
   let execution: Awaited<ReturnType<typeof createExecutionQuote>>;
   try {
     execution = await createExecutionQuote({
@@ -132,6 +136,7 @@ export async function POST(req: Request) {
     console.error("[intents/deposit] execution quote failed");
     return NextResponse.json({ error: DEPOSIT_UNAVAILABLE }, { status: 502 });
   }
+  const quoteMs = Date.now() - quoteStartedAt;
 
   let wetQuoteId: string;
   let approvalId: string;
@@ -279,6 +284,16 @@ export async function POST(req: Request) {
       },
     ]);
     await setTransactionRunId(transactionId, run.runId);
+
+    // The address is minted by 1Click; everything after it is our record.
+    // Log only a genuinely slow mint, with the split that explains it, so a
+    // later report of "slow" names the stage instead of guessing.
+    const totalMs = Date.now() - startedAt;
+    if (totalMs > 4_000) {
+      console.warn(
+        `[intents/deposit] slow mint (${totalMs}ms total, ${quoteMs}ms quote)`,
+      );
+    }
 
     return NextResponse.json({
       transactionId,
