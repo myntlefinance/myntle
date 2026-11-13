@@ -1,7 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
 import { AppShellSkeleton } from "@/components/app/AppShellSkeleton";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ prefetch: vi.fn() }),
+}));
 
 describe("AppShellSkeleton", () => {
   it("renders the real shell geometry as a measured sample", () => {

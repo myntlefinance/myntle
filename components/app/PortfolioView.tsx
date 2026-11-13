@@ -46,6 +46,7 @@ import {
   type ThreadItem,
   type TrashedItem,
 } from "@/components/app/threadCache";
+import { useRoutePrefetch } from "@/components/app/routePrefetch";
 import { TITLE_MAX_CHARS } from "@/lib/ai/title";
 import { MAX_WATCHLIST_ENTRIES } from "@/lib/wallet/addresses";
 import { accountScope } from "@/lib/auth/session-identity";
@@ -412,6 +413,16 @@ export default function PortfolioView({
   initialTab?: PortfolioTab;
 }) {
   const router = useRouter();
+  const prefetchRoute = useRoutePrefetch();
+  // A chat row is a route here, not a local switch, so resting on one warms
+  // both the transcript and the payload that mounts ChatView.
+  const hoverThread = useCallback(
+    (id: string) => {
+      prefetchThread(id);
+      prefetchRoute(`/chat/${encodeURIComponent(id)}`);
+    },
+    [prefetchRoute],
+  );
   const queryClient = useQueryClient();
   const { data: threads = [] } = useThreads();
   const { data: trashed = [] } = useTrashed();
@@ -776,7 +787,7 @@ export default function PortfolioView({
         recents={threads.map((t) => ({ id: t.id, label: t.label ?? "New chat" }))}
         onPick={(id) => router.push(`/chat/${encodeURIComponent(id)}`)}
         onNewChat={() => router.push("/")}
-        onHoverThread={prefetchThread}
+        onHoverThread={hoverThread}
         onRenameChat={renameThread}
         onDeleteChat={deleteThread}
         onOpenPortfolio={() => router.push("/portfolio")}

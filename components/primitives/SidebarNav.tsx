@@ -24,6 +24,7 @@ import {
 } from "@tabler/icons-react";
 import { focusComposer } from "@/lib/composer";
 import { useHoverIntent } from "@/components/app/useHoverIntent";
+import { useRoutePrefetch } from "@/components/app/routePrefetch";
 
 /* ─────────────────────────────────────────────────────────
  * SIDEBAR NAV
@@ -163,17 +164,21 @@ function RailButton({
   active = false,
   count,
   onClick,
+  onHover,
 }: {
   icon: ReactNode;
   label: string;
   active?: boolean;
   count?: string;
   onClick?: () => void;
+  /** the pointer rested on a row that owns a route: warm its payload */
+  onHover?: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      onPointerEnter={onHover}
       aria-current={active ? "page" : undefined}
       className={`sidebar-row relative mx-2 flex h-8 items-center rounded-[8px] px-2 text-left
         transition-[width,transform] duration-150 hover:bg-hover-2 active:scale-[0.98]
@@ -246,6 +251,7 @@ export default function SidebarNav({
     [onHoverThread],
   );
   const hoverIntent = useHoverIntent(hoverThread);
+  const prefetchRoute = useRoutePrefetch();
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [chatsOpen, setChatsOpen] = useState(true);
@@ -689,6 +695,7 @@ export default function SidebarNav({
               onNewChat?.();
               focusComposer({ clearDraft: true });
             }}
+            onHover={() => prefetchRoute("/")}
           />
           {NAV_ITEMS.map((item) => (
             <RailButton
@@ -706,6 +713,7 @@ export default function SidebarNav({
               label="Portfolio"
               active={portfolioActive}
               onClick={() => onOpenPortfolio?.()}
+              onHover={() => prefetchRoute("/portfolio")}
             />
           )}
           {showHistory && (
@@ -714,6 +722,7 @@ export default function SidebarNav({
               label="History"
               active={historyActive}
               onClick={() => onOpenHistory?.()}
+              onHover={() => prefetchRoute("/history")}
             />
           )}
         </div>
@@ -1039,6 +1048,7 @@ export default function SidebarNav({
               active={trashActive}
               count={trashCount > 0 ? String(trashCount) : undefined}
               onClick={() => onOpenTrash?.()}
+              onHover={() => prefetchRoute("/trash")}
             />
           </div>
         )}

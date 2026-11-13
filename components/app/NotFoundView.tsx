@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useCallback } from "react";
 import {
   IconChevronLeft,
   IconError404,
@@ -12,6 +13,7 @@ import { Button } from "@/components/atoms/Button";
 import { AccountControl } from "@/components/app/AccountControl";
 import { useThreads, useTrashed } from "@/components/app/threadQueries";
 import { prefetchThread } from "@/components/app/threadCache";
+import { useRoutePrefetch } from "@/components/app/routePrefetch";
 import { useAuth } from "@/lib/auth/auth-provider";
 
 /**
@@ -25,6 +27,15 @@ import { useAuth } from "@/lib/auth/auth-provider";
  */
 export function NotFoundView() {
   const router = useRouter();
+  const prefetchRoute = useRoutePrefetch();
+  // Rows are routes here: warm the transcript and the payload together.
+  const hoverThread = useCallback(
+    (id: string) => {
+      prefetchThread(id);
+      prefetchRoute(`/chat/${encodeURIComponent(id)}`);
+    },
+    [prefetchRoute],
+  );
   const { status } = useAuth();
   const signedIn = status === "signed-in";
   const { data: threads = [] } = useThreads(signedIn);
@@ -41,7 +52,7 @@ export function NotFoundView() {
         }))}
         onPick={(id) => router.push(`/chat/${encodeURIComponent(id)}`)}
         onNewChat={() => router.push("/")}
-        onHoverThread={prefetchThread}
+        onHoverThread={hoverThread}
         onOpenPortfolio={() => router.push("/portfolio")}
         onOpenHistory={() => router.push("/history")}
         onOpenTrash={() => router.push("/trash")}

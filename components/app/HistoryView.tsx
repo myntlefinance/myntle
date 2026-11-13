@@ -32,6 +32,7 @@ import {
   type ThreadItem,
   type TrashedItem,
 } from "@/components/app/threadCache";
+import { useRoutePrefetch } from "@/components/app/routePrefetch";
 import { TITLE_MAX_CHARS } from "@/lib/ai/title";
 import { useHistory } from "./historyQueries";
 import { SAMPLE_HISTORY_ROWS } from "./historyCache";
@@ -50,6 +51,15 @@ import {
 
 export default function HistoryView() {
   const router = useRouter();
+  const prefetchRoute = useRoutePrefetch();
+  // Rows are routes here: warm the transcript and the payload together.
+  const hoverThread = useCallback(
+    (id: string) => {
+      prefetchThread(id);
+      prefetchRoute(`/chat/${encodeURIComponent(id)}`);
+    },
+    [prefetchRoute],
+  );
   const queryClient = useQueryClient();
   const { data: threads = [] } = useThreads();
   const { data: trashed = [] } = useTrashed();
@@ -227,7 +237,7 @@ export default function HistoryView() {
         recents={threads.map((t) => ({ id: t.id, label: t.label ?? "New chat" }))}
         onPick={(id) => router.push(`/chat/${encodeURIComponent(id)}`)}
         onNewChat={() => router.push("/")}
-        onHoverThread={prefetchThread}
+        onHoverThread={hoverThread}
         onRenameChat={renameThread}
         onDeleteChat={deleteThread}
         onOpenTrash={() => router.push("/trash")}

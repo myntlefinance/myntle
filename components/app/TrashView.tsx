@@ -40,6 +40,7 @@ import {
   type ThreadItem,
   type TrashedItem,
 } from "@/components/app/threadCache";
+import { useRoutePrefetch } from "@/components/app/routePrefetch";
 import { TITLE_MAX_CHARS } from "@/lib/ai/title";
 import { useHoverIntent } from "@/components/app/useHoverIntent";
 import { useAuth } from "@/lib/auth/auth-provider";
@@ -418,6 +419,15 @@ type DialogState =
 
 export default function TrashView() {
   const router = useRouter();
+  const prefetchRoute = useRoutePrefetch();
+  // Rows are routes here: warm the transcript and the payload together.
+  const hoverThread = useCallback(
+    (id: string) => {
+      prefetchThread(id);
+      prefetchRoute(`/chat/${encodeURIComponent(id)}`);
+    },
+    [prefetchRoute],
+  );
   const { status } = useAuth();
 
   useEffect(() => {
@@ -714,7 +724,7 @@ export default function TrashView() {
         recents={threads.map((t) => ({ id: t.id, label: t.label ?? "New chat" }))}
         onPick={(id) => router.push(`/chat/${encodeURIComponent(id)}`)}
         onNewChat={() => router.push("/")}
-        onHoverThread={prefetchThread}
+        onHoverThread={hoverThread}
         onRenameChat={renameThread}
         onDeleteChat={deleteThread}
         trashCount={items.length}
