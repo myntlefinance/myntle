@@ -1,6 +1,5 @@
 "use client";
 
-import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
 import { SolanaSignMessage } from "@solana/wallet-standard";
 import { useCallback, useEffect, useState } from "react";

@@ -1,6 +1,5 @@
 import { tool } from "ai";
 import { z } from "zod";
-import type { ToolContext } from "../context";
 import type { Capability } from "../capability";
 import { fetchPagesContent, MAX_PARALLEL_PAGES } from "@/lib/news/tinyfish";
 
@@ -19,7 +18,7 @@ const httpsUrl = z
   .max(500)
   .regex(/^https:\/\//, "Only https URLs are fetched.");
 
-export function createPageContentTool(_context?: ToolContext) {
+export function createPageContentTool() {
   return tool({
     description:
       "Read the full text of up to eight pages found by get_google_news, get_reddit_posts, or get_x_posts. " +

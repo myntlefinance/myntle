@@ -154,11 +154,6 @@ export function useWalletState() {
     writeSevered(next);
   }, []);
 
-  const adapters = useMemo(
-    () => ({ evm, solana, near }),
-    [evm, solana, near],
-  );
-
   const account = useMemo<ConnectedWallet | null>(() => {
     if (severed) return null;
     if (evm.account) return evm.account;

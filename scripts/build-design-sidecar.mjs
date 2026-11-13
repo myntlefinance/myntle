@@ -50,8 +50,7 @@ function tonalRamp(oklch) {
     /oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)/,
   );
   if (!m) return null;
-  const [, lRaw, cRaw, h] = m;
-  const l = Number(lRaw);
+  const [, , cRaw, h] = m;
   const c = Number(cRaw);
   const hue = Number(h);
 

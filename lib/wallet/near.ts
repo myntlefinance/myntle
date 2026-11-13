@@ -38,8 +38,6 @@ export function useNearWalletAdapter() {
   const account = useMemo<ConnectedWallet | null>(() => {
     if (!signedAccountId || signedAccountId === revoked) return null;
 
-    const implicit = /^[0-9a-f]{64}$/.test(signedAccountId);
-
     return {
       kind: "near",
       standard: "nep413",

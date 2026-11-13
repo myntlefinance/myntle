@@ -3,7 +3,6 @@ import {
   isDesktop,
   isEditableElement,
   focusComposer,
-  FOCUS_COMPOSER_EVENT,
   typeToFocusComposer,
 } from "./composer";
 

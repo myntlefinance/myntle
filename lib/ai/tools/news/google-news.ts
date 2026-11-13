@@ -1,6 +1,5 @@
 import { tool } from "ai";
 import { z } from "zod";
-import type { ToolContext } from "../context";
 import type { Capability } from "../capability";
 import { searchGoogleNews } from "@/lib/news/fetcher";
 import { storeSearch, getBlock } from "@/lib/news/block-cache";
@@ -14,7 +13,7 @@ export const GET_GOOGLE_NEWS_CAPABILITY: Capability = {
   promptTerms: ["get_google_news", "searchId", "block"],
 };
 
-export function createGoogleNewsTool(_context?: ToolContext) {
+export function createGoogleNewsTool() {
   return tool({
     description:
       "Search Google News for recent public news about a crypto token, " +

@@ -1,6 +1,5 @@
 import { tool } from "ai";
 import { z } from "zod";
-import type { ToolContext } from "../context";
 import type { Capability } from "../capability";
 
 export const PREPARE_DEPOSIT_CAPABILITY: Capability = {
@@ -41,7 +40,7 @@ export const prepareDepositInputSchema = z.object({
     ),
 });
 
-export function createPrepareDepositTool(_context?: ToolContext) {
+export function createPrepareDepositTool() {
   return tool({
     description:
       "Propose a deposit into the account so the interface can show the exact one-time " +

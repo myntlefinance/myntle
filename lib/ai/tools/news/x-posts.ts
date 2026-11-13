@@ -1,6 +1,5 @@
 import { tool } from "ai";
 import { z } from "zod";
-import type { ToolContext } from "../context";
 import type { Capability } from "../capability";
 import { searchXPage } from "@/lib/news/twitterapi";
 import { storeSearch, getBlock } from "@/lib/news/block-cache";
@@ -16,7 +15,7 @@ export const GET_X_POSTS_CAPABILITY: Capability = {
 
 const QueryTypeEnum = z.enum(["Latest", "Top"]).default("Latest");
 
-export function createXPostsTool(_context?: ToolContext) {
+export function createXPostsTool() {
   return tool({
     description:
       "Search X for public posts about a crypto token, protocol, or event. " +

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type {
-  BalanceFilterOptions,
   BalancesPort,
   BalancesResult,
   TokenBalance,
@@ -32,7 +31,6 @@ describe("balances port shape", () => {
       async getBalances(
         chain: string,
         address: string,
-        _options?: BalanceFilterOptions,
       ): Promise<BalancesResult> {
         return { address, chain, balances: [], totalValueUsd: 0 };
       },

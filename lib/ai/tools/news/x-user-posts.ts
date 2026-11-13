@@ -1,6 +1,5 @@
 import { tool } from "ai";
 import { z } from "zod";
-import type { ToolContext } from "../context";
 import type { Capability } from "../capability";
 import { searchXUserPage } from "@/lib/news/twitterapi";
 import { storeSearch, getBlock } from "@/lib/news/block-cache";
@@ -14,7 +13,7 @@ export const GET_X_USER_POSTS_CAPABILITY: Capability = {
   promptTerms: ["get_x_user_posts", "searchId", "block"],
 };
 
-export function createXUserPostsTool(_context?: ToolContext) {
+export function createXUserPostsTool() {
   return tool({
     description:
       "Fetch an X account's latest posts by username or user ID, newest first. " +

@@ -46,14 +46,6 @@ function readEnv(name: string): string {
   return process.env[name]?.trim() ?? "";
 }
 
-function requireValue(name: string): string {
-  const value = readEnv(name);
-  if (!value) {
-    throw new WebAuthnConfigError(`${name} is not set.`);
-  }
-  return value;
-}
-
 function parseOrigins(value: string): string[] {
   const entries = value
     .split(",")

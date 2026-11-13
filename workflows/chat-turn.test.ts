@@ -16,9 +16,17 @@ const {
   nearAI: vi.fn(),
   createTools: vi.fn(() => ({})),
   saveNewUIMessages: vi.fn(
-    async (_conversationId: string, _messages: UIMessage[]) => {},
+    async (_conversationId: string, _messages: UIMessage[]) => {
+      void _conversationId;
+      void _messages;
+    },
   ),
-  saveUIMessage: vi.fn(async (_conversationId: string, _message: UIMessage) => {}),
+  saveUIMessage: vi.fn(
+    async (_conversationId: string, _message: UIMessage) => {
+      void _conversationId;
+      void _message;
+    },
+  ),
   buildSystemPrompt: vi.fn(() => "instructions"),
   sanitizeHistoricalToolData: vi.fn((messages: UIMessage[]) => messages),
   convertToModelMessages: vi.fn(),

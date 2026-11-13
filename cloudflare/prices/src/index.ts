@@ -78,7 +78,7 @@ function readAssetIds(raw: string | null): string[] | null {
   return ids.sort();
 }
 
-export default {
+const handler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const origin = pickAllowedOrigin(request, parseAllowlist(env.APP_ORIGINS));
     const cors = corsHeaders(origin);
@@ -243,3 +243,5 @@ export default {
     }
   },
 };
+
+export default handler;

@@ -1,6 +1,5 @@
 import { tool } from "ai";
 import { z } from "zod";
-import type { ToolContext } from "../context";
 import type { Capability } from "../capability";
 import { searchRedditPosts } from "@/lib/news/fetcher";
 import { storeSearch, getBlock } from "@/lib/news/block-cache";
@@ -21,7 +20,7 @@ const SortEnum = z.enum(["hot", "new", "top", "relevance"]).default("hot");
 // blocking news results. Safe: the chat route runs with maxDuration = 300.
 const REDDIT_TIMEOUT_MS = 45000;
 
-export function createRedditPostsTool(_context?: ToolContext) {
+export function createRedditPostsTool() {
   return tool({
     description:
       "Search Reddit for public social discussion about a crypto token, " +

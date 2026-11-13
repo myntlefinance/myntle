@@ -4,7 +4,7 @@ import type { EvmRpcPort, SolanaRpcPort } from "./rpc";
 describe("rpc port shapes", () => {
   it("reads ENS addresses without exposing a client", async () => {
     const stub: EvmRpcPort = {
-      async getEnsAddress(_name: string): Promise<`0x${string}` | null> {
+      async getEnsAddress(): Promise<`0x${string}` | null> {
         return "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
       },
     };
