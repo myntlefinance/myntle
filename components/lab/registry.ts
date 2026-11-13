@@ -63,7 +63,7 @@ export const LAB: LabEntry[] = [
     id: "limit-order-card",
     title: "Limit order execution",
     caption:
-      "A resting GTC order with partial fills and async cancel. Needs a partner key in production, so it stays lab-only for now.",
+      "A resting GTC order with partial fills and async cancel. The shipped version is the sentence card's limit-order action; this prototype records the original shape.",
     file: "LimitOrderCard.tsx",
     variants: ["Open", "Partially filled", "Filled"],
     layout: "stack",
