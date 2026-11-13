@@ -285,7 +285,8 @@ export function NearSetupDialog({
 
   const grantReady =
     state?.grant?.status === "final" || state?.grant?.status === "registered";
-  const canRegister = Boolean(state?.publicKey) && (state?.hasGas === true || grantReady);
+  const canRegister =
+    Boolean(state?.publicKey) && state?.hasGas === true;
   const busy =
     phase === "checking" ||
     phase === "sending" ||
@@ -294,8 +295,8 @@ export function NearSetupDialog({
 
   const amount = state?.amountNear ?? "0.0015";
   const grantFailed = state?.grant?.status === "failed";
+  const grantSpent = grantReady && state?.hasGas !== true;
   const needsIdentity = Boolean(state?.needsKey || state?.badKey);
-  const needsGas = grantFailed && state?.hasGas !== true;
 
   const title =
     phase === "done"
@@ -311,11 +312,13 @@ export function NearSetupDialog({
           ? "This wallet key no longer belongs to the account. Reconnect and sign in again."
           : grantFailed && state?.hasGas !== true
             ? "NEAR Intents needs to register this wallet's key once before your super account can open. The network fee could not be sent, so add a little NEAR to this account and try again."
-            : grantReady
-              ? "NEAR Intents needs to register this wallet's key once before your super account can open. Approve one registration to finish."
-              : state?.hasGas
-                ? "NEAR Intents needs to register this wallet's key once before your super account can open. This is a network transaction, and only the fee is spent."
-                : `NEAR Intents needs to register this wallet's key once before your super account can open. We send ${amount} NEAR to cover the network fee, then you approve one registration.`;
+            : grantSpent
+              ? "The network fee was sent earlier, but this account no longer has enough NEAR. Add a little NEAR and try again."
+              : grantReady
+                ? "NEAR Intents needs to register this wallet's key once before your super account can open. Approve one registration to finish."
+                : state?.hasGas
+                  ? "NEAR Intents needs to register this wallet's key once before your super account can open. This is a network transaction, and only the fee is spent."
+                  : `NEAR Intents needs to register this wallet's key once before your super account can open. We send ${amount} NEAR to cover the network fee, then you approve one registration.`;
 
   const status =
     phase === "checking"
@@ -326,7 +329,7 @@ export function NearSetupDialog({
           ? { spinner: true, text: "Approve the registration in your wallet…" }
           : phase === "confirming"
             ? { spinner: true, text: "Confirming the registration…" }
-            : grantReady && phase !== "done" && !error
+            : grantReady && !grantSpent && phase !== "done" && !error
               ? { spinner: false, text: `We sent ${amount} NEAR for the network fee.` }
               : null;
 
@@ -355,16 +358,7 @@ export function NearSetupDialog({
       >
         Check again
       </Button>
-    ) : needsGas ? (
-      <Button
-        type="button"
-        variant="accent"
-        size="sm"
-        onClick={() => void runRef.current()}
-      >
-        Try again
-      </Button>
-    ) : phase === "error" && !canRegister ? (
+    ) : !canRegister ? (
       <Button
         type="button"
         variant="accent"
@@ -379,7 +373,6 @@ export function NearSetupDialog({
         variant="accent"
         size="sm"
         onClick={() => void handleRegister()}
-        disabled={!canRegister}
       >
         Register key
       </Button>
