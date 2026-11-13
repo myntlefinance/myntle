@@ -17,6 +17,12 @@ export type Session = {
   passkeyId: string | null;
   /** The NEAR Intents account the signer controls. */
   intentsAccountId: string;
+  /**
+   * The public key that signed the NEAR challenge. A named NEAR account needs
+   * it to register with `intents.near`; the setup routes never accept an
+   * account or key the sign-in did not prove.
+   */
+  publicKey: string | null;
   chain: AuthChain;
   address: string;
   createdAt: number;
@@ -32,6 +38,7 @@ export type SessionRow = {
   intents_account_id?: string | null;
   chain: string;
   address: string;
+  public_key?: string | null;
   created_at: string;
   expires_at: string;
   revoked_at?: string | null;
@@ -90,6 +97,7 @@ export function sessionFromRow(row: SessionRow, now = Date.now()): Session | nul
       row.address,
       row.intents_account_id,
     ),
+    publicKey: row.public_key?.trim() || null,
     chain,
     address: row.address,
     createdAt,
@@ -158,6 +166,7 @@ async function findOrCreateUserAndWallet(
 export async function createSession(
   chain: AuthChain,
   address: string,
+  publicKey?: string | null,
 ): Promise<{ id: string; expiresAt: number }> {
   const sb = getSupabaseAdmin();
   const { userId, walletId } = await findOrCreateUserAndWallet(chain, address);
@@ -166,14 +175,30 @@ export async function createSession(
   const now = Date.now();
   const expiresAt = now + SESSION_TTL_MS;
 
-  const { error } = await sb.from("sessions").insert({
+  const row = {
     id,
     user_id: userId,
     wallet_id: walletId,
     chain,
     address: normalizeAddress(chain, address),
+    public_key: publicKey?.trim() || null,
     expires_at: new Date(expiresAt).toISOString(),
-  });
+  };
+
+  let { error } = await sb.from("sessions").insert(row);
+  if (error && missingSessionColumn(error)) {
+    // `012_near_setup.sql` has not been applied yet. Sign-in still works;
+    // the NEAR setup check will ask for the key from the live wallet.
+    const retry = await sb.from("sessions").insert({
+      id: row.id,
+      user_id: row.user_id,
+      wallet_id: row.wallet_id,
+      chain: row.chain,
+      address: row.address,
+      expires_at: row.expires_at,
+    });
+    error = retry.error;
+  }
   if (error) throw new Error("The sign-in could not complete.");
 
   return { id, expiresAt };
@@ -222,6 +247,10 @@ export async function createPasskeySession(args: {
 }
 
 const SESSION_COLUMNS =
+  "user_id, wallet_id, passkey_id, account_kind, intents_account_id, public_key, chain, address, created_at, expires_at, revoked_at, last_seen_at";
+
+/** Columns before `012_near_setup.sql` added the signer key. */
+const SESSION_COLUMNS_V4 =
   "user_id, wallet_id, passkey_id, account_kind, intents_account_id, chain, address, created_at, expires_at, revoked_at, last_seen_at";
 
 const LEGACY_SESSION_COLUMNS =
@@ -231,14 +260,16 @@ const LEGACY_SESSION_COLUMNS =
 export const SESSION_TOUCH_MS = 15 * 60_000;
 
 /**
- * True when the query failed because `004_passkeys.sql` has not been
- * applied yet. PostgREST reports a missing column as 42703 or PGRST204.
+ * True when the query failed because a later migration has not been
+ * applied yet — `004_passkeys.sql`, or `012_near_setup.sql` for the
+ * signer key. PostgREST reports a missing column as 42703 or PGRST204.
  *
  * The fallback exists so deploying this code cannot sign every wallet user
- * out before the migration runs. The passkey routes stay disabled until the
- * migration lands, but the wallet path keeps working.
+ * out before the migration runs. The passkey routes stay disabled until
+ * their migration lands, the NEAR setup check asks the live wallet for the
+ * key instead of the session, and the wallet path keeps working.
  */
-function missingPasskeyColumns(error: { code?: string } | null): boolean {
+function missingSessionColumn(error: { code?: string } | null): boolean {
   return error?.code === "42703" || error?.code === "PGRST204";
 }
 
@@ -252,24 +283,39 @@ export async function getSession(id: string): Promise<Session | null> {
   let data = first.data as SessionRow | null;
   let error = first.error;
 
-  if (error && missingPasskeyColumns(error)) {
-    const legacy = await sb
+  if (error && missingSessionColumn(error)) {
+    // Try the passkey-era columns without the NEAR signer key. This covers a
+    // deployment where 004 is applied but 012 is not.
+    const v4 = await sb
       .from("sessions")
-      .select(LEGACY_SESSION_COLUMNS)
+      .select(SESSION_COLUMNS_V4)
       .eq("id", id)
       .single();
-    data = legacy.data
-      ? ({
-          ...(legacy.data as Omit<
-            SessionRow,
-            "passkey_id" | "account_kind" | "intents_account_id"
-          >),
-          account_kind: "wallet",
-          passkey_id: null,
-          intents_account_id: null,
-        } as SessionRow)
+    data = v4.data
+      ? ({ ...(v4.data as Omit<SessionRow, "public_key">), public_key: null } as SessionRow)
       : null;
-    error = legacy.error;
+    error = v4.error;
+
+    if (error && missingSessionColumn(error)) {
+      const legacy = await sb
+        .from("sessions")
+        .select(LEGACY_SESSION_COLUMNS)
+        .eq("id", id)
+        .single();
+      data = legacy.data
+        ? ({
+            ...(legacy.data as Omit<
+              SessionRow,
+              "passkey_id" | "account_kind" | "intents_account_id" | "public_key"
+            >),
+            account_kind: "wallet",
+            passkey_id: null,
+            intents_account_id: null,
+            public_key: null,
+          } as SessionRow)
+        : null;
+      error = legacy.error;
+    }
   }
 
   if (error || !data) return null;

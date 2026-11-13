@@ -67,6 +67,7 @@ describe("sessionFromRow", () => {
       walletId: "wallet-1",
       passkeyId: null,
       intentsAccountId: "0x3259abcdef12345678901073abcdef1234567890",
+      publicKey: null,
       chain: "evm",
       address: "0x3259ABCDEF12345678901073ABCDEF1234567890",
       createdAt: NOW - 60_000,

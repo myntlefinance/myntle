@@ -83,7 +83,11 @@ export async function POST(req: Request) {
     );
   }
 
-  const { id, expiresAt } = await createSession(chain, address);
+  const { id, expiresAt } = await createSession(
+    chain,
+    address,
+    chain === "near" ? publicKey : undefined,
+  );
   const res = NextResponse.json({ ok: true });
   res.cookies.set(SESSION_COOKIE, id, {
     httpOnly: true,
