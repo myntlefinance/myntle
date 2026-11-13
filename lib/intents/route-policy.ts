@@ -493,6 +493,11 @@ export type StoredIntentRefs = {
    */
   destination: string | null;
   intentHash: string | null;
+  /** The card this intent answers, and the tool name it belongs to. */
+  toolApprovalId: string | null;
+  toolName: string | null;
+  conversationId: string | null;
+  dryQuoteId: string | null;
 };
 
 export type StoredIntentRefsResult =
@@ -571,6 +576,30 @@ export function readIntentRefs(refs: unknown): StoredIntentRefsResult {
       assetId,
       destination,
       intentHash: intentHash || null,
+      toolApprovalId: readString(stored.toolApprovalId) || null,
+      toolName: readString(stored.toolName) || null,
+      conversationId: readString(stored.conversationId) || null,
+      dryQuoteId: readString(stored.dryQuoteId) || null,
     },
   };
+}
+
+export type StoredWorkflowRef =
+  | { kind: "swap" }
+  | { kind: "limit_order"; orderId: string }
+  | { kind: "malformed" };
+
+/**
+ * Which durable workflow a submitted transaction starts.
+ *
+ * A row written before limit orders has no `kind` and keeps the swap
+ * lifecycle byte for byte. A limit-order row names its 1Click order id; a row
+ * that says it is a limit order but carries no id is refused rather than
+ * polled as a swap, because the swap status endpoint would never know it.
+ */
+export function readWorkflowRef(refs: unknown): StoredWorkflowRef {
+  const stored = asRecord(refs);
+  if (!stored || stored.kind !== "limit_order") return { kind: "swap" };
+  const orderId = readString(stored.orderId);
+  return orderId ? { kind: "limit_order", orderId } : { kind: "malformed" };
 }

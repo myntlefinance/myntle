@@ -23,9 +23,9 @@ describe("PasskeyOptions", () => {
     );
 
     expect(html).toContain("New user");
-    expect(html).toContain("Create a passkey account.");
+    expect(html).toContain("Create a new account.");
     expect(html).toContain("Existing user");
-    expect(html).toContain("Use a passkey you already have.");
+    expect(html).toContain("Use a passkey you already have");
   });
 
   it("disables both choices while the browser prompt is open", () => {

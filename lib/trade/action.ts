@@ -13,6 +13,8 @@ export const TRADE_ACTIONS = [
   "bridge",
   "withdraw",
   "trade",
+  "limit",
+  "earn",
 ] as const;
 
 export type TradeAction = (typeof TRADE_ACTIONS)[number];
@@ -35,6 +37,10 @@ export function actionTitle(action: TradeAction): string {
       return "Withdraw";
     case "trade":
       return "Trade";
+    case "limit":
+      return "Limit order";
+    case "earn":
+      return "Earn";
     case "swap":
       return "Swap";
   }

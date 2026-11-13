@@ -23,6 +23,7 @@ import {
   flattenGroups,
 } from "@/components/finance/HoldingsTable";
 import { WatchedTab } from "@/components/app/WatchedTab";
+import EarnVaults from "@/components/finance/EarnVaults";
 import type { WatchedCardEntry } from "@/components/finance/WatchedCards";
 import { TrackDialog } from "@/components/app/TrackDialog";
 import { useAuth } from "@/lib/auth/auth-provider";
@@ -434,6 +435,7 @@ function PortfolioBody({
           }}
         </Skeleton>
       ) : null}
+        {!isWatch ? <EarnVaults /> : null}
       </div>
     </div>
   );

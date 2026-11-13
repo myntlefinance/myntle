@@ -412,6 +412,10 @@ describe("stored intent refs", () => {
         assetId: ASSET_ID,
         destination: null,
         intentHash: null,
+        toolApprovalId: "aitxt-123",
+        toolName: null,
+        conversationId: CONVERSATION_ID,
+        dryQuoteId: QUOTE_ID,
       },
     });
   });

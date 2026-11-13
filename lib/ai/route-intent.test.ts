@@ -59,6 +59,27 @@ describe("routeIntent", () => {
     expect(
       Object.keys(createTools(ctx, { domains: balance.toolDomains })),
     ).not.toContain("get_quote");
+    // ...but it does register the status read, because "what happened to my
+    // transaction" is a portfolio question and the tool is the answer.
+    expect(
+      Object.keys(createTools(ctx, { domains: balance.toolDomains })),
+    ).toContain("get_transaction_status");
+  });
+
+  it("keeps the settlement read for a follow-up that names no action", () => {
+    for (const text of [
+      "What happened?",
+      "Did it go through?",
+      "Is it refunded?",
+      "why did it fail?",
+    ]) {
+      const intent = routeIntent(text);
+      expect(intent.toolDomains).toContain("trading");
+      expect(intent.toolDomains).toContain("portfolio");
+      expect(
+        Object.keys(createTools(ctx, { domains: intent.toolDomains })),
+      ).toContain("get_transaction_status");
+    }
   });
 
   it("never scopes out trading+intents for money intents", () => {

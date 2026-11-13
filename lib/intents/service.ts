@@ -11,7 +11,7 @@ import { settlementLinks } from "@/lib/intents/explorer";
 const BASE = process.env.NEXT_PUBLIC_ONE_CLICK_BASE_URL ?? "https://1click.chaindefuser.com";
 
 /** Partner auth for 1Click. Server-side only; never expose the key to the browser. */
-function oneClickHeaders(extra: Record<string, string> = {}): Record<string, string> {
+export function oneClickHeaders(extra: Record<string, string> = {}): Record<string, string> {
   const key = process.env.ONE_CLICK_API_KEY;
   return {
     "Content-Type": "application/json",
@@ -65,6 +65,7 @@ export type Quote = {
 export type SwapStatus = {
   state:
     | "pending"
+    | "confirming"
     | "processing"
     | "settled"
     | "refunded"
@@ -72,7 +73,15 @@ export type SwapStatus = {
     | "incomplete_deposit";
   /** The raw 1Click status, for callers that must tell PENDING from KNOWN. */
   status: string;
+  /** The exact input and output 1Click settled, when it reported them. */
+  amountIn?: string;
   amountOut?: string;
+  amountOutUsd?: string;
+  depositedAmount?: string;
+  refundedAmount?: string;
+  refundReason?: string;
+  /** When 1Click last changed the state. */
+  updatedAt?: string;
   depositAddress: string;
   explorerUrls: string[];
 };
@@ -208,6 +217,59 @@ function balanceTypesFor(mode: QuoteMode | undefined): QuoteBalanceTypes {
   return types;
 }
 
+/**
+ * A quote the service refused for a reason the reader can act on.
+ *
+ * The upstream body is never surfaced: it can echo request fields and it is
+ * not written for a person. The classification is deliberately small, and
+ * every caller that shows a sentence uses these three cases.
+ */
+export type QuoteFailureReason = "no-liquidity" | "minimum" | "unavailable";
+
+export class QuoteError extends Error {
+  readonly reason: QuoteFailureReason;
+
+  constructor(reason: QuoteFailureReason, message: string) {
+    super(message);
+    this.name = "QuoteError";
+    this.reason = reason;
+  }
+}
+
+/** Classify a failed quote without copying its body into the response. */
+function quoteFailure(status: number, bodyText: string): QuoteError {
+  let upstreamMessage = "";
+  try {
+    const parsed = JSON.parse(bodyText) as { message?: unknown };
+    if (typeof parsed.message === "string") upstreamMessage = parsed.message;
+  } catch {
+    // The status is enough when the body is not JSON.
+  }
+
+  if (/no liquidity available/i.test(upstreamMessage)) {
+    return new QuoteError(
+      "no-liquidity",
+      "No executable quote is available for this amount right now.",
+    );
+  }
+
+  const minimum =
+    upstreamMessage.match(/minimum swap amount is \$?([\d,.]+)/i) ??
+    upstreamMessage.match(/try at least ([\d,.]+)/i);
+  if (minimum) {
+    return new QuoteError(
+      "minimum",
+      `The minimum for this route is ${minimum[1]}.`,
+    );
+  }
+
+  console.error(`[intents] quote failed (HTTP ${status})`);
+  return new QuoteError(
+    "unavailable",
+    "The quote service is unavailable right now.",
+  );
+}
+
 async function requestQuote(params: {
   fromAssetId: string;
   toAssetId: string;
@@ -258,8 +320,7 @@ async function requestQuote(params: {
   });
 
   if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`The quote could not be priced: ${detail.slice(0, 200)}`);
+    throw quoteFailure(res.status, await res.text());
   }
 
   const body = (await res.json()) as {
@@ -589,7 +650,7 @@ const TERMINAL: Record<string, SwapStatus["state"]> = {
   REFUNDED: "refunded",
   INCOMPLETE_DEPOSIT: "incomplete_deposit",
   PENDING_DEPOSIT: "pending",
-  KNOWN_DEPOSIT_TX: "pending",
+  KNOWN_DEPOSIT_TX: "confirming",
   PROCESSING: "processing",
 };
 
@@ -608,16 +669,32 @@ export async function getStatus(
   const res = await fetch(`${BASE}/v0/status?${query.toString()}`, {
     headers: oneClickHeaders({ "Content-Type": "application/json" }),
   });
+  if (res.status === 404) {
+    throw new Error("1Click has no record of this deposit address");
+  }
   if (!res.ok) throw new Error("The trade status is unavailable");
 
   const body = (await res.json()) as {
-    status: string;
+    status?: unknown;
+    updatedAt?: unknown;
     swapDetails?: {
+      amountInFormatted?: string;
       amountOutFormatted?: string;
+      amountOutUsd?: string;
+      depositedAmountFormatted?: string;
+      refundedAmountFormatted?: string;
+      refundReason?: string;
       originChainTxHashes?: Array<{ hash?: string; explorerUrl?: string }>;
       destinationChainTxHashes?: Array<{ hash?: string; explorerUrl?: string }>;
     };
   };
+
+  if (typeof body.status !== "string" || body.status.length === 0) {
+    throw new Error("The trade status is unavailable");
+  }
+  // The API documents uppercase values. Normalising only the case keeps a
+  // future variant from being read as pending while the raw value travels.
+  const status = body.status.trim().toUpperCase();
 
   const details = body.swapDetails ?? {};
   const originHashes = details.originChainTxHashes ?? [];
@@ -635,9 +712,25 @@ export async function getStatus(
     : [null, null];
 
   return {
-    state: TERMINAL[body.status] ?? "pending",
-    status: body.status,
-    amountOut: details.amountOutFormatted,
+    state: TERMINAL[status] ?? "pending",
+    status,
+    ...(details.amountInFormatted
+      ? { amountIn: details.amountInFormatted }
+      : {}),
+    ...(details.amountOutFormatted
+      ? { amountOut: details.amountOutFormatted }
+      : {}),
+    ...(details.amountOutUsd ? { amountOutUsd: details.amountOutUsd } : {}),
+    ...(details.depositedAmountFormatted
+      ? { depositedAmount: details.depositedAmountFormatted }
+      : {}),
+    ...(details.refundedAmountFormatted
+      ? { refundedAmount: details.refundedAmountFormatted }
+      : {}),
+    ...(details.refundReason ? { refundReason: details.refundReason } : {}),
+    ...(typeof body.updatedAt === "string"
+      ? { updatedAt: body.updatedAt }
+      : {}),
     depositAddress,
     explorerUrls: settlementLinks([
       { chain: originChain, hashes: originHashes },

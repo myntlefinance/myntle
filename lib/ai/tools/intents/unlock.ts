@@ -24,10 +24,10 @@ export function createRequestSuperUnlockTool() {
   return tool({
     description:
       "Ask the user to unlock their super account. Call this when the user " +
-      "wants private holdings, a deposit to their super account, limit " +
-      "orders, perps, yield, or private history, and their super account " +
-      "is locked. Do not call anything balance-backed afterwards — stop " +
-      "after this call and wait for the user.",
+      "wants private holdings, a deposit to their super account, perps, or " +
+      "private history, and their super account is locked. Do not call " +
+      "anything balance-backed afterwards — stop after this call and wait. " +
+      "A limit order, a yield quote, and a trade do not need the unlock.",
     inputSchema: z.object({
       wanted: z
         .string()

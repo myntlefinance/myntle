@@ -292,16 +292,61 @@ export function createQuoteTool(context?: ToolContext) {
       const mode: QuoteMode = accountFunded ? "confidential-intents" : "chain";
 
       const { quote } = await import("@/lib/intents/service");
-      const q = await quote({
-        fromAssetId,
-        toAssetId,
-        amount,
-        recipient: targetRecipient,
-        refundTo: targetRefundTo,
-        slippageBps,
-        confidentiality: QUOTE_CONFIDENTIALITY,
-        mode,
-      });
+      // A receipt token is a yield position, not a different execution
+      // route. The metadata only lets the card say what the output earns;
+      // the quote and the approval remain the same signed intent.
+      const { findEarnVaultByReceipt } = await import("@/lib/earn/catalogue");
+      const { readEarnApy } = await import("@/lib/earn/apy");
+      const earnVault = findEarnVaultByReceipt(toAssetId);
+
+      let q: Awaited<ReturnType<typeof quote>>;
+      try {
+        q = await quote({
+          fromAssetId,
+          toAssetId,
+          amount,
+          recipient: targetRecipient,
+          refundTo: targetRefundTo,
+          slippageBps,
+          confidentiality: QUOTE_CONFIDENTIALITY,
+          mode,
+        });
+      } catch (error) {
+        const reason =
+          typeof (error as { reason?: unknown }).reason === "string"
+            ? ((error as { reason?: string }).reason ?? "unavailable")
+            : "unavailable";
+        // A vault's solver minimum is much larger than an ordinary swap's.
+        // Name the amount the catalogue last observed instead of telling the
+        // reader the whole route is down.
+        if (earnVault && (reason === "no-liquidity" || reason === "minimum")) {
+          const minimum = earnVault.minimumPaymentFormatted;
+          return {
+            status: "unavailable" as const,
+            reason,
+            message: minimum
+              ? `That deposit is below the minimum this vault can accept right now. Try at least ${minimum} ${earnVault.paymentSymbol}.`
+              : "That deposit is below the minimum this vault can accept right now. Try a larger amount.",
+          };
+        }
+        return {
+          status: "unavailable" as const,
+          reason,
+          message:
+            reason === "minimum" && error instanceof Error
+              ? error.message
+              : "No executable quote is available for that amount right now. Try a larger amount.",
+        };
+      }
+
+      const earn = earnVault
+        ? {
+            vaultId: earnVault.id,
+            name: earnVault.name,
+            protocol: earnVault.protocol,
+            apy: await readEarnApy(earnVault),
+          }
+        : null;
 
       // The dry preview is the server's record of what was priced. The
       // approval card carries its id, and the intent routes treat the stored
@@ -341,6 +386,7 @@ export function createQuoteTool(context?: ToolContext) {
               amountOut: q.amountOut,
               minAmountOutRaw: q.minAmountOutRaw,
               expiresAt: q.expiresAt,
+              ...(earn ? { earn } : {}),
             },
             expiresAt: q.expiresAt,
           });
@@ -365,6 +411,8 @@ export function createQuoteTool(context?: ToolContext) {
         feeBps: q.feeBps,
         amountOutUsd: q.amountOutUsd,
         expiresAt: q.expiresAt,
+        accountKind,
+        ...(earn ? { earn } : {}),
       };
     },
   });

@@ -41,6 +41,7 @@ describe("tool capabilities", () => {
 
     expect(acting.map((c) => c.tool)).toEqual([
       "prepare_swap",
+      "prepare_limit_order",
       "prepare_deposit",
       "prepare_withdrawal",
     ]);

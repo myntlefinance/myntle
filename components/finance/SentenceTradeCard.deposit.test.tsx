@@ -84,6 +84,7 @@ vi.mock("@/components/atoms/Button", async () => {
 });
 
 import SentenceTradeCard, {
+  advanceCardState,
   approveThroughAdapter,
   cardStateAfterDeny,
   CARD_WATCH_BEAT_MS,
@@ -269,7 +270,7 @@ describe("the deposit Start state", () => {
 
     await approveThroughAdapter(input);
 
-    expect(calls.states).toEqual(["signing", "waiting"]);
+    expect(calls.states).toEqual(["preparing", "waiting"]);
     expect(calls.deposits).toEqual([DEPOSIT]);
     expect(calls.detailsOpened).toBe(1);
     expect(calls.minted).toEqual([
@@ -339,6 +340,43 @@ describe("the deposit Start state", () => {
     expect(html).toContain("Click Start to begin the deposit process.");
     expect(button("Start")).toBeTruthy();
     expect(button("Details")?.disabled).toBe(true);
+  });
+});
+
+describe("the deposit record's live states", () => {
+  it("never walks a live card backwards to an earlier record state", () => {
+    // The row is written at mint; a transfer sent a moment ago can still read
+    // as submitted. Processing must survive that stale read.
+    expect(advanceCardState("processing", "waiting")).toBe("processing");
+    expect(advanceCardState("waiting", "processing")).toBe("processing");
+    expect(advanceCardState("preparing", "awaiting")).toBe("preparing");
+  });
+
+  it("lets a terminal settlement paint over a live card", () => {
+    expect(advanceCardState("waiting", "settled")).toBe("settled");
+    expect(advanceCardState("processing", "expired")).toBe("expired");
+    expect(advanceCardState("settled", "processing")).toBe("settled");
+  });
+
+  it("never shows an explorer link beside Waiting", () => {
+    const html = render(
+      waitingCard({ initialExplorerUrls: ["https://explorer.example/tx/1"] }),
+    );
+
+    expect(html).toContain("Waiting");
+    expect(html).not.toContain("View on explorer");
+  });
+
+  it("shows the link once the transfer is detected", () => {
+    const html = render(
+      waitingCard({
+        state: "processing",
+        initialExplorerUrls: ["https://explorer.example/tx/1"],
+      }),
+    );
+
+    expect(html).toContain("Deposit detected. Processing…");
+    expect(html).toContain("View on explorer");
   });
 });
 

@@ -22,6 +22,7 @@ export const TOOL_APPROVAL_NAMES = [
   "prepare_swap",
   "prepare_deposit",
   "prepare_withdrawal",
+  "prepare_limit_order",
 ] as const;
 
 export type ToolApprovalName = (typeof TOOL_APPROVAL_NAMES)[number];
@@ -86,19 +87,35 @@ export async function recordToolApproval(args: {
 }): Promise<ToolApprovalRecord | null> {
   const sb = getSupabaseAdmin();
   const requestedAt = args.requestedAt ? Date.parse(args.requestedAt) : NaN;
-  const { error } = await sb.from("tool_approvals").insert({
-    user_id: args.userId,
-    conversation_id: args.conversationId ?? null,
-    tool_approval_id: args.toolApprovalId,
-    tool_name: args.toolName,
-    decision: args.decision,
-    quote_id: args.quoteId ?? null,
-    // A card birth the browser cannot parse is stored as absent rather than
-    // failing the decision: the decision is the record, the clock is context.
-    requested_at: Number.isFinite(requestedAt)
-      ? new Date(requestedAt).toISOString()
-      : null,
-  });
+  const insert = (toolName: ToolApprovalName) =>
+    sb.from("tool_approvals").insert({
+      user_id: args.userId,
+      conversation_id: args.conversationId ?? null,
+      tool_approval_id: args.toolApprovalId,
+      tool_name: toolName,
+      decision: args.decision,
+      quote_id: args.quoteId ?? null,
+      // A card birth the browser cannot parse is stored as absent rather than
+      // failing the decision: the decision is the record, the clock is context.
+      requested_at: Number.isFinite(requestedAt)
+        ? new Date(requestedAt).toISOString()
+        : null,
+    });
+
+  let { error } = await insert(args.toolName);
+  // A database that predates migration 013 still has the three-name check
+  // constraint. The decision matters more than the audit label, so the row
+  // lands under the closest supported name and the migration corrects the
+  // vocabulary later. Without this a limit-order card could not be decided
+  // on a deployment that has not run the new migration.
+  if (
+    error &&
+    (error as { code?: string }).code === "23514" &&
+    args.toolName === "prepare_limit_order"
+  ) {
+    const retry = await insert("prepare_swap");
+    error = retry.error;
+  }
   // 23505 is the unique (user_id, tool_approval_id) constraint doing its job:
   // this proposal already has a decision, and the first one stands.
   if (error && (error as { code?: string }).code !== "23505") {

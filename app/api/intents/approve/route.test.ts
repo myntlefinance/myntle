@@ -309,6 +309,9 @@ describe("/api/intents/approve", () => {
       intentPayload: PAYLOAD,
     });
     expect(startMock).not.toHaveBeenCalled();
+    // The decision belongs to the submit route. A cancelled passkey prompt
+    // must leave this card retryable, so approving the payload is not enough.
+    expect(recordToolApprovalMock).not.toHaveBeenCalled();
   });
 
   it("starts the settlement reader immediately for an external deposit", async () => {

@@ -28,7 +28,11 @@ export type ApprovalDecisions = Record<string, "approved" | "denied">;
  * figure — the server reconstructs the terms from `quoteId`.
  */
 export type ApprovalDecisionContext = {
-  toolName: "prepare_swap" | "prepare_deposit" | "prepare_withdrawal";
+  toolName:
+    | "prepare_swap"
+    | "prepare_deposit"
+    | "prepare_withdrawal"
+    | "prepare_limit_order";
   quoteId?: string;
   requestedAt?: string;
 };
@@ -45,6 +49,17 @@ export type SettlementSnapshot = {
   amountOut?: string | null;
   /** The deposit address's token, chain, raw amount, and deadline. */
   deposit?: DepositMetadata | null;
+  /** The sender's registered funding hash, when the transfer was broadcast. */
+  depositTxHash?: string | null;
+  /** The resting order's own progress, when the record is a limit order. */
+  limit?: {
+    orderId: string;
+    fillStatus: string;
+    payoutStatus: string;
+    filled?: string;
+    filledPercent?: number;
+    deadline?: string;
+  } | null;
 };
 
 /** Terminal database states painted directly; anything else keeps polling. */
@@ -90,6 +105,14 @@ export type ApprovalInfo = {
    * Absent on messages stored before the tool named the route.
    */
   route?: "account" | "wallet";
+  /** Which signer priced the quote. The server binds the exact account. */
+  accountKind?: "wallet" | "passkey";
+  /** The vault and its live APY when the output is a yield receipt. */
+  earn?: {
+    name: string;
+    protocol: string;
+    apy: number | null;
+  } | null;
   recipient: string;
   refundTo?: string;
   expiresAt?: string;
@@ -273,6 +296,24 @@ export function collectApprovals(
     // exact address match is sufficient with no chain check.
     const fromSymbol = assetName(fromAssetId, symbols);
     const toSymbol = assetName(toAssetId, symbols);
+    const earnRecord =
+      quoted?.earn && typeof quoted.earn === "object"
+        ? (quoted.earn as Record<string, unknown>)
+        : null;
+    const earn =
+      earnRecord &&
+      typeof earnRecord.name === "string" &&
+      typeof earnRecord.protocol === "string"
+        ? {
+            name: earnRecord.name,
+            protocol: earnRecord.protocol,
+            apy:
+              typeof earnRecord.apy === "number" &&
+              Number.isFinite(earnRecord.apy)
+                ? earnRecord.apy
+                : null,
+          }
+        : null;
     const toSelf =
       !!activeAddress &&
       !!recipient &&
@@ -301,6 +342,11 @@ export function collectApprovals(
       minAmountOut: rawMin ? formatAmount(rawMin) : undefined,
       minAmountOutRaw: str(quoted?.minAmountOutRaw) ?? undefined,
       route,
+      accountKind:
+        quoted?.accountKind === "passkey" || quoted?.accountKind === "wallet"
+          ? quoted.accountKind
+          : undefined,
+      earn,
       recipient,
       refundTo,
       expiresAt: str(quoted?.expiresAt) ?? undefined,
@@ -346,7 +392,8 @@ export function collectApprovalIds(messages: UIMessage[]): string[] {
       if (
         name !== "prepare_swap" &&
         name !== "prepare_deposit" &&
-        name !== "prepare_withdrawal"
+        name !== "prepare_withdrawal" &&
+        name !== "prepare_limit_order"
       ) {
         continue;
       }
@@ -367,7 +414,8 @@ export function collectApprovalAssetIds(parts: UIMessage["parts"]): string[] {
       name !== "prepare_swap" &&
       name !== "prepare_deposit" &&
       name !== "get_withdrawal_quote" &&
-      name !== "prepare_withdrawal"
+      name !== "prepare_withdrawal" &&
+      name !== "get_limit_order_quote"
     ) {
       continue;
     }
@@ -375,6 +423,14 @@ export function collectApprovalAssetIds(parts: UIMessage["parts"]): string[] {
     if (name === "prepare_deposit") {
       const asset = str(input.assetId);
       if (asset) ids.add(asset);
+      continue;
+    }
+    if (name === "get_limit_order_quote") {
+      const out = outputOf(p);
+      const base = str(out.baseAssetId);
+      const quote = str(out.quoteAssetId);
+      if (base) ids.add(base);
+      if (quote) ids.add(quote);
       continue;
     }
     const from = str(input.fromAssetId);

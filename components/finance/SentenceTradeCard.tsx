@@ -83,10 +83,14 @@ const useIsomorphicLayoutEffect =
 
 export type SentenceCardState =
   | "awaiting"
+  | "preparing"
   | "signing"
   | "submitting"
   | "submitted"
   | "waiting"
+  | "open"
+  | "partial"
+  | "cancelling"
   | "processing"
   | "settled"
   | "refunded"
@@ -97,10 +101,14 @@ export type SentenceCardState =
 
 const TONE: Record<SentenceCardState, "neutral" | "accent" | "green" | "red" | "orange" | "yellow"> = {
   awaiting: "orange",
+  preparing: "accent",
   signing: "accent",
   submitting: "accent",
   submitted: "accent",
   waiting: "yellow",
+  open: "accent",
+  partial: "accent",
+  cancelling: "accent",
   processing: "accent",
   settled: "green",
   refunded: "neutral",
@@ -110,12 +118,39 @@ const TONE: Record<SentenceCardState, "neutral" | "accent" | "green" | "red" | "
   failed: "red",
 };
 
+/**
+ * The extra figures a limit order shows beside the shared card.
+ *
+ * `quantity` and `price` are the user's terms; `total` is the quote-side
+ * amount at that price. The card never recomputes them from the model's text.
+ */
+export type LimitOrderCardInfo = {
+  side: "BUY" | "SELL";
+  price: string;
+  total: string;
+  funding: "account" | "wallet";
+  filled?: string;
+  filledPercent?: number;
+  deadline?: string;
+};
+
+/** The yield metadata a quote carries when its output is a vault receipt. */
+export type EarnCardInfo = {
+  name: string;
+  protocol: string;
+  apy: number | null;
+};
+
 const LABEL: Record<SentenceCardState, string> = {
   awaiting: "Pending Approval",
+  preparing: "Preparing",
   signing: "Signing",
   submitting: "Submitting",
   submitted: "Submitted",
   waiting: "Waiting",
+  open: "Open",
+  partial: "Partially filled",
+  cancelling: "Cancelling",
   processing: "Processing",
   settled: "Executed",
   refunded: "Refunded",
@@ -182,6 +217,9 @@ export default function SentenceTradeCard({
   swapInput,
   conversationId,
   runApproval,
+  limit,
+  earn,
+  onCancel,
   approveLabel = "Approve",
   sender,
   destinationChain,
@@ -259,6 +297,12 @@ export default function SentenceTradeCard({
    * swap keeps the `/api/approve` branch below.
    */
   runApproval?: SentenceApproval;
+  /** The limit price, total, and fill progress, when this is a resting order. */
+  limit?: LimitOrderCardInfo;
+  /** The vault and APY, when this quote deposits into a yield receipt. */
+  earn?: EarnCardInfo;
+  /** Cancels a resting limit order. Only an open or partial order offers it. */
+  onCancel?: () => void | Promise<void>;
   /** Decision button label. A deposit says what it does. */
   approveLabel?: string;
   /**
@@ -276,7 +320,7 @@ export default function SentenceTradeCard({
    * A blocked card names the fix instead of painting "Pending Approval"
    * over controls that are not there.
    */
-  blocked?: "sign-in" | "quote" | "inactive" | null;
+  blocked?: "sign-in" | "quote" | "inactive" | "account" | null;
   /**
    * The record has not answered for this card yet. No decision control is
    * drawn: a button here would offer to answer a proposal that may already
@@ -289,7 +333,11 @@ export default function SentenceTradeCard({
    * may watch its record, and only for a bounded window.
    */
   active?: boolean;
-  onApprove?: (tx?: { transactionId: string; depositAddress: string }) => void;
+  onApprove?: (tx?: {
+    transactionId: string;
+    depositAddress: string;
+    orderId?: string;
+  }) => void;
   /**
    * The host records the refusal. It may be a server write, so the card waits
    * for it and keeps the decision available if it did not land. The host
@@ -448,6 +496,7 @@ export default function SentenceTradeCard({
   const [transferring, setTransferring] = useState(false);
   const [fundOpen, setFundOpen] = useState(false);
   const [denying, setDenying] = useState(false);
+  const [cancelPending, setCancelPending] = useState(false);
   // Quoted figures are local so a moved price can refresh the card in
   // place; props win whenever the turn produces a new quote. The approval
   // target moves with them: a price-moved response saves a revised preview
@@ -466,41 +515,66 @@ export default function SentenceTradeCard({
   });
   // The host message restates the decision, never the settlement: once the
   // card holds a live or terminal state (processing, waiting, remembered, or
-  // polled), props must not drag it back to Approved.
-  useEffect(() => {
-    setTxState((current) =>
-      current === "processing" ||
-      current === "waiting" ||
-      current === "settled" ||
-      current === "refunded" ||
-      current === "incomplete" ||
-      current === "expired" ||
-      current === "denied" ||
-      current === "failed"
-        ? current
-        : state,
-    );
-  }, [state]);
-  useEffect(() => {
+  // polled), props must not drag it back to Approved. A later prop that moves
+  // the card forward still lands, which is how a terminal settlement snapshot
+  // reaches a card that was already waiting. Adjusted during render against
+  // the last committed state, so no effect cascades a second pass.
+  const [prevCardState, setPrevCardState] = useState(state);
+  if (prevCardState !== state) {
+    setPrevCardState(state);
+    setTxState((current) => advanceCardState(current, state));
+  }
+  // The turn's quote, snapshotted after each commit. Props win whenever the
+  // turn produces a new quote, so every figure the card holds re-derives
+  // here on the same pass instead of in chained effects: the model proposes,
+  // and this lookup of the stored quote plus account decides.
+  const [prevQuote, setPrevQuote] = useState(() => ({
+    transactionId,
+    depositAddress,
+    depositMemo,
+    depositMeta,
+    fee,
+    amountOut,
+    amountOutUsd,
+    minAmountOut,
+    minAmountOutRaw,
+    expiresAt,
+    quoteId: swapInput?.quoteId,
+    requestedAt,
+  }));
+  if (
+    prevQuote.transactionId !== transactionId ||
+    prevQuote.depositAddress !== depositAddress ||
+    prevQuote.depositMemo !== depositMemo ||
+    prevQuote.depositMeta !== depositMeta ||
+    prevQuote.fee !== fee ||
+    prevQuote.amountOut !== amountOut ||
+    prevQuote.amountOutUsd !== amountOutUsd ||
+    prevQuote.minAmountOut !== minAmountOut ||
+    prevQuote.minAmountOutRaw !== minAmountOutRaw ||
+    prevQuote.expiresAt !== expiresAt ||
+    prevQuote.quoteId !== swapInput?.quoteId ||
+    prevQuote.requestedAt !== requestedAt
+  ) {
+    setPrevQuote({
+      transactionId,
+      depositAddress,
+      depositMemo,
+      depositMeta,
+      fee,
+      amountOut,
+      amountOutUsd,
+      minAmountOut,
+      minAmountOutRaw,
+      expiresAt,
+      quoteId: swapInput?.quoteId,
+      requestedAt,
+    });
     if (transactionId) setTxId(transactionId);
-  }, [transactionId]);
-  useEffect(() => {
     if (depositAddress) setDeposit(depositAddress);
-  }, [depositAddress]);
-  useEffect(() => setMemo(depositMemo ?? null), [depositMemo]);
-  useEffect(() => {
-    if (!depositMeta) return;
-    setMeta(depositMeta);
-    if (depositMeta.expiresAt) {
-      setFigures((current) =>
-        current.expiresAt
-          ? current
-          : { ...current, expiresAt: depositMeta.expiresAt ?? undefined },
-      );
-    }
-  }, [depositMeta]);
-  useEffect(() => setFeeLabel(fee), [fee]);
-  useEffect(() => {
+    setMemo(depositMemo ?? null);
+    if (depositMeta) setMeta(depositMeta);
+    setFeeLabel(fee);
     setFigures({
       amountOut,
       amountOutUsd,
@@ -510,16 +584,7 @@ export default function SentenceTradeCard({
       quoteId: swapInput?.quoteId,
       requestedAt,
     });
-  }, [
-    amountOut,
-    amountOutUsd,
-    minAmountOut,
-    minAmountOutRaw,
-    expiresAt,
-    depositMeta,
-    swapInput?.quoteId,
-    requestedAt,
-  ]);
+  }
 
   // The approval window belongs to the figures on screen. A revised quote
   // carries its own birth, so the reader gets the full window to decide on
@@ -565,7 +630,9 @@ export default function SentenceTradeCard({
   // labelled Waiting. The wallet path respects both its request window and
   // the quote's own deadline, whichever is earlier.
   const expired = intents
-    ? (txState === "awaiting" || txState === "waiting") &&
+    ? (action === "limit"
+        ? txState === "awaiting"
+        : txState === "awaiting" || txState === "waiting") &&
       Number.isFinite(deadline) &&
       deadline <= clock
     : txState === "awaiting" &&
@@ -610,6 +677,15 @@ export default function SentenceTradeCard({
         )
       : null;
   const depositMessage = depositPhase ? depositStatusMessage(depositPhase) : null;
+  // An explorer link is evidence of a transfer. It belongs beside the phase
+  // that names that transfer, never beside Waiting, where the card is still
+  // asking for funds and the link would contradict its own status.
+  const depositTransferSeen =
+    depositPhase === "detected" ||
+    depositPhase === "settled" ||
+    depositPhase === "refunded" ||
+    depositPhase === "incomplete" ||
+    depositPhase === "failed";
   // The funding panel closes for good once the address can no longer be
   // funded: a refused proposal, a terminal record, a deposit already detected
   // or settled, or a mint in flight that has already abandoned the old
@@ -618,13 +694,16 @@ export default function SentenceTradeCard({
   // refused one has no address to show at all.
   const addressClosed =
     viewState === "denied" ||
+    (action === "limit" && viewState !== "waiting") ||
     (depositPhase !== null &&
       depositPhase !== "awaiting" &&
       depositPhase !== "waiting") ||
     (intents &&
       action === "deposit" &&
       !!deposit &&
-      (viewState === "signing" || viewState === "submitting"));
+      (viewState === "preparing" ||
+        viewState === "signing" ||
+        viewState === "submitting"));
   const depositTerminal = depositPhase
     ? needsFreshDepositAddress(depositPhase)
     : false;
@@ -635,6 +714,7 @@ export default function SentenceTradeCard({
   const showTransfer =
     transferReady &&
     !addressClosed &&
+    viewState !== "preparing" &&
     viewState !== "signing" &&
     viewState !== "submitting";
   const depositReady =
@@ -643,11 +723,10 @@ export default function SentenceTradeCard({
     viewState === "waiting" &&
     !isTerminalCardState(txState);
   // The dialog is only valid while the card still accepts a deposit. A
-  // cutoff, settlement, failure, or status recheck closes it rather than
-  // leaving a live Send control over a terminal record.
-  useEffect(() => {
-    if (!showTransfer) setFundOpen(false);
-  }, [showTransfer]);
+  // cutoff, settlement, failure, or status recheck closes it on the pass that
+  // sees the transfer go invalid, rather than leaving a live Send control
+  // over a terminal record.
+  if (!showTransfer && fundOpen) setFundOpen(false);
 
   const applyExplorerUrls = useCallback((urls: unknown) => {
     if (!Array.isArray(urls)) return;
@@ -666,18 +745,24 @@ export default function SentenceTradeCard({
   const prevLiveRef = useRef(false);
 
   // The settlements request is separate from the message, so a card can
-  // mount before its record's links arrive. Adopt them when they do instead
-  // of keeping the empty seed it was born with.
-  useEffect(() => {
-    if (!initialExplorerUrls || initialExplorerUrls.length === 0) return;
-    setExplorerUrls(initialExplorerUrls.slice(0, 2));
-  }, [initialExplorerUrls]);
+  // mount before its record's links arrive. Adopt them on the pass that sees
+  // them instead of keeping the empty seed it was born with.
+  const [prevInitialUrls, setPrevInitialUrls] = useState(initialExplorerUrls);
+  if (prevInitialUrls !== initialExplorerUrls) {
+    setPrevInitialUrls(initialExplorerUrls);
+    if (initialExplorerUrls && initialExplorerUrls.length > 0) {
+      setExplorerUrls(initialExplorerUrls.slice(0, 2));
+    }
+  }
 
   // The settled output travels with the same late snapshot. It is the
   // record's own figure, never the quote's expected one.
-  useEffect(() => {
+  const [prevInitialReceived, setPrevInitialReceived] =
+    useState(initialReceived);
+  if (prevInitialReceived !== initialReceived) {
+    setPrevInitialReceived(initialReceived);
     if (initialReceived) setReceived(initialReceived);
-  }, [initialReceived]);
+  }
 
   // A settled card whose record was written before links were built gets one
   // authoritative read. The route repairs the record and returns the link;
@@ -766,11 +851,20 @@ export default function SentenceTradeCard({
       if (!insideWindow()) return;
       inFlight = true;
       try {
-        const res = await fetch(`/api/tx/${encodeURIComponent(txId)}`);
+        // A resting order is refreshed from its own endpoint; the workflow
+        // owns the fast window, and this one read keeps a reopened card
+        // honest after that window has passed.
+        const res = await fetch(
+          `/api/tx/${encodeURIComponent(txId)}${
+            action === "limit" ? "?refresh=1" : ""
+          }`,
+        );
         if (!res.ok) return;
         const body = (await res.json()) as {
           state?: string;
           deposit?: DepositMetadata | null;
+          depositTxHash?: string | null;
+          refs?: { fillStatus?: unknown } | null;
           outcome?: { amountOut?: unknown; explorerUrls?: unknown };
         };
         if (cancelled || !body.state) return;
@@ -790,8 +884,9 @@ export default function SentenceTradeCard({
             body.state,
             body.deposit?.expiresAt ?? figures.expiresAt,
             Date.now(),
+            !!body.depositTxHash,
           );
-          setTxState(next);
+          setTxState((current) => advanceCardState(current, next));
           if (
             next === "settled" ||
             next === "refunded" ||
@@ -833,7 +928,15 @@ export default function SentenceTradeCard({
           setTxState("failed");
           setSubmitError(failureMessage(body.state, action, intents));
         } else {
-          setTxState(polledState(body.state, action, intents));
+          const next = polledState(
+            body.state,
+            action,
+            intents,
+            typeof body.refs?.fillStatus === "string"
+              ? body.refs.fillStatus
+              : undefined,
+          );
+          setTxState((current) => advanceCardState(current, next));
         }
         applyExplorerUrls(body.outcome?.explorerUrls);
       } catch {
@@ -1132,6 +1235,26 @@ export default function SentenceTradeCard({
     }
   };
 
+  /**
+   * Cancels a resting limit order.
+   *
+   * The server owns the cancellation; the card only reports what it said.
+   * A filled or terminal order never offers this, because the decision is
+   * already behind it.
+   */
+  const handleCancel = async () => {
+    if (!onCancel || cancelPending) return;
+    setCancelPending(true);
+    setSubmitError(null);
+    try {
+      await onCancel();
+    } catch {
+      setSubmitError("The order could not be cancelled. Please try again.");
+    } finally {
+      setCancelPending(false);
+    }
+  };
+
   async function signTrade(message: string): Promise<{
     signature: string;
     publicKey?: string;
@@ -1282,6 +1405,7 @@ export default function SentenceTradeCard({
   };
 
   const busy =
+    txState === "preparing" ||
     txState === "signing" ||
     txState === "submitting" ||
     txState === "submitted" ||
@@ -1330,6 +1454,10 @@ export default function SentenceTradeCard({
   const [openId, setOpenId] = useState<string | null>(null);
   const [instant, setInstant] = useState(false);
   const anchors = useRef(new Map<string, HTMLElement>());
+  // The popup reads its anchor during render. A ref read there is flagged,
+  // so mirror the open chip's element into state: the effect syncs on open,
+  // and the register callback syncs when the open chip (re)mounts.
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusOpened = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -1415,7 +1543,11 @@ export default function SentenceTradeCard({
   const registerAnchor = useCallback((id: string, el: HTMLElement | null) => {
     if (el) anchors.current.set(id, el);
     else anchors.current.delete(id);
-  }, []);
+    if (id === openId) setAnchorEl(el);
+  }, [openId]);
+  useEffect(() => {
+    setAnchorEl(openId ? (anchors.current.get(openId) ?? null) : null);
+  }, [openId]);
   const hoverPopup = useCallback(
     (hovering: boolean) => {
       if (closeTimer.current) {
@@ -1574,6 +1706,49 @@ export default function SentenceTradeCard({
           </>
         ) : null}
       </>
+    ) : action === "limit" ? (
+      <>
+        {limit?.side === "BUY" ? "Buy" : "Sell"}{" "}
+        <Amount>{amountIn}</Amount>{" "}
+        {hover(
+          "token-from",
+          <TokenChip symbol={fromSymbol} badge={fromChain} />,
+        )}{" "}
+        at <Amount>{limit?.price ?? figures.amountOut}</Amount>{" "}
+        {hover(
+          "token-to",
+          <TokenChip symbol={toSymbol} badge={toChain} />,
+        )}{" "}
+        each, for about <Amount>{figures.amountOut}</Amount>{" "}
+        {hover(
+          "token-to",
+          <TokenChip symbol={toSymbol} badge={toChain} />,
+        )}{" "}
+        {limit?.funding === "account" ? "in your" : "from your"}{" "}
+        {hover(
+          "venue",
+          <VenueChip
+            label={limit?.funding === "account" ? "Near Account" : "wallet"}
+          />,
+        )}
+      </>
+    ) : action === "earn" ? (
+      <>
+        Earn <Amount>{amountIn}</Amount>{" "}
+        {hover(
+          "token-from",
+          <TokenChip symbol={fromSymbol} badge={fromChain} />,
+        )}{" "}
+        in {earn?.name ?? toSymbol}
+        {earn?.apy !== null && earn?.apy !== undefined
+          ? ` at ${earn.apy.toFixed(2)}% APY`
+          : ""}{" "}
+        {intents ? "in your" : "from your"}{" "}
+        {hover(
+          "venue",
+          <VenueChip label={intents ? "Near Account" : "wallet"} />,
+        )}
+      </>
     ) : (
       <>
         {verb} <Amount>{amountIn}</Amount>{" "}
@@ -1688,7 +1863,7 @@ export default function SentenceTradeCard({
         action === "deposit" &&
         ((!deposit && viewState === "awaiting") ||
           depositMessage ||
-          explorerUrls.length > 0) ? (
+          (explorerUrls.length > 0 && depositTransferSeen)) ? (
           <div className="pt-1.5">
             {!deposit && viewState === "awaiting" && !decisionPending ? (
               <p className="text-xs text-ink-3">
@@ -1720,7 +1895,7 @@ export default function SentenceTradeCard({
                 ) : null}
               </p>
             ) : null}
-            {explorerUrls.length > 0 ? (
+            {explorerUrls.length > 0 && depositTransferSeen ? (
               <div className="flex flex-col items-start gap-0.5 pt-1">
                 {explorerUrls.map((url) => (
                   <a
@@ -1740,7 +1915,7 @@ export default function SentenceTradeCard({
       </div>
       {popup && openId ? (
         <Popup
-          anchor={anchors.current.get(openId) ?? null}
+          anchor={anchorEl}
           label={popup.label}
           height={popup.height}
           instant={instant}
@@ -1973,7 +2148,42 @@ export default function SentenceTradeCard({
                     })()}
                   </>
                 )}
-                {rate ? (
+                {limit ? (
+                  <>
+                    <DetailRow label="Side">
+                      {limit.side === "BUY"
+                        ? `Buy ${fromSymbol} with ${toSymbol}`
+                        : `Sell ${fromSymbol} for ${toSymbol}`}
+                    </DetailRow>
+                    <DetailRow label="Limit price">
+                      {limit.price} {toSymbol} per {fromSymbol}
+                    </DetailRow>
+                    <DetailRow label="Order total">
+                      {limit.total} {toSymbol}
+                    </DetailRow>
+                    {limit.filledPercent !== undefined ? (
+                      <DetailRow label="Filled">
+                        {limit.filledPercent.toFixed(0)}%
+                        {limit.filled ? ` (${limit.filled})` : ""}
+                      </DetailRow>
+                    ) : null}
+                    {limit.deadline ? (
+                      <DetailRow label="Expires">
+                        {new Date(limit.deadline).toLocaleDateString()}
+                      </DetailRow>
+                    ) : null}
+                  </>
+                ) : null}
+                {earn ? (
+                  <>
+                    <DetailRow label="Vault">{earn.name}</DetailRow>
+                    <DetailRow label="Protocol">{earn.protocol}</DetailRow>
+                    <DetailRow label="APY">
+                      {earn.apy !== null ? `${earn.apy.toFixed(2)}%` : "Not reported"}
+                    </DetailRow>
+                  </>
+                ) : null}
+                {rate && !earn ? (
                   <DetailRow label="Rate">
                     1 {fromSymbol} ≈ {rate} {toSymbol}
                   </DetailRow>
@@ -2046,7 +2256,7 @@ export default function SentenceTradeCard({
         className="primitive-card-footer flex items-center justify-between gap-3 bg-surface"
         style={{ paddingTop: 6, paddingBottom: 6 }}
       >
-        <span className="-ml-0.5 flex shrink-0 items-center">
+        <span className="-ml-0.5 flex shrink-0 items-center gap-1">
           <Button
             variant="secondary"
             size="sm"
@@ -2057,6 +2267,17 @@ export default function SentenceTradeCard({
           >
             Details
           </Button>
+          {onCancel && (viewState === "open" || viewState === "partial") ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void handleCancel()}
+              disabled={cancelPending}
+              className="px-2.5 text-xs"
+            >
+              {cancelPending ? "Cancelling" : "Cancel"}
+            </Button>
+          ) : null}
         </span>
 
         <span
@@ -2081,6 +2302,20 @@ export default function SentenceTradeCard({
               </Button>
             ) : (
               <StatusPill tone="neutral">Sign in to approve</StatusPill>
+            )
+          ) : awaiting && blocked === "account" ? (
+            onPrompt ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  onPrompt("Give me a fresh quote for this account.")
+                }
+              >
+                New quote
+              </Button>
+            ) : (
+              <StatusPill tone="neutral">Another account</StatusPill>
             )
           ) : awaiting && blocked === "quote" ? (
             onPrompt ? (
@@ -2271,6 +2506,51 @@ export function isTerminalCardState(state: SentenceCardState): boolean {
 }
 
 /**
+ * The order a live card may move through, so a record read can never paint
+ * over a later fact with an earlier one.
+ *
+ * The record is written by an asynchronous workflow and lags the browser by
+ * up to one poll beat. A deposit whose transfer was just sent still reads
+ * `submitted` (the address was minted) until 1Click sees the funds, and that
+ * maps to the waiting state. Without this guard the card dropped from
+ * Processing back to its address and invited a second transfer over funds
+ * already in flight. A terminal record always wins, because it is the
+ * settlement and the card never argues with it.
+ */
+export function advanceCardState(
+  current: SentenceCardState,
+  next: SentenceCardState,
+): SentenceCardState {
+  if (isTerminalCardState(current)) return current;
+  if (isTerminalCardState(next)) return next;
+  // A resting order does not go back to "waiting for the deposit" just
+  // because the record lags one beat.
+  if (current === "open" && next === "waiting") return current;
+  if (current === "partial" && (next === "open" || next === "waiting")) {
+    return current;
+  }
+  const rank: Record<SentenceCardState, number> = {
+    awaiting: 0,
+    preparing: 1,
+    signing: 1,
+    submitting: 2,
+    submitted: 3,
+    waiting: 4,
+    open: 4,
+    partial: 5,
+    cancelling: 5,
+    processing: 5,
+    settled: 6,
+    refunded: 6,
+    incomplete: 6,
+    denied: 6,
+    expired: 6,
+    failed: 6,
+  };
+  return rank[next] >= rank[current] ? next : current;
+}
+
+/**
  * The active card's bounded watch window: two minutes from the first live
  * read, at most one record read per beat. Historical cards never start it.
  */
@@ -2283,10 +2563,20 @@ export function isLiveCardState(
   state: SentenceCardState,
   opts: { intents: boolean; action: TradeAction },
 ): boolean {
-  if (state === "submitting" || state === "submitted" || state === "processing") {
+  if (
+    state === "submitting" ||
+    state === "submitted" ||
+    state === "open" ||
+    state === "partial" ||
+    state === "cancelling" ||
+    state === "processing"
+  ) {
     return true;
   }
-  return opts.intents && opts.action === "deposit" && state === "waiting";
+  return (
+    (opts.intents && opts.action === "deposit" && state === "waiting") ||
+    (opts.action === "limit" && state === "waiting")
+  );
 }
 
 /** True when a freshly mounted active card may open its watch window. */
@@ -2392,8 +2682,22 @@ export function polledState(
   recordState: string,
   action: TradeAction,
   intents: boolean,
+  fillStatus?: string,
 ): SentenceCardState {
   if (recordState === "expired") return "expired";
+  // A limit order has four live states of its own: waiting for the deposit,
+  // resting open, partially filled, and the shared terminal states. The fill
+  // status separates a cancel in flight from a partial fill.
+  if (action === "limit") {
+    if (recordState === "submitted") return "waiting";
+    if (recordState === "pending") return "open";
+    if (recordState === "processing" || recordState === "confirming") {
+      if (fillStatus === "PENDING_CANCEL") return "cancelling";
+      if (fillStatus === "PARTIALLY_FILLED") return "partial";
+      return "processing";
+    }
+    return "open";
+  }
   if (recordState === "processing" || (intents && recordState === "confirming")) {
     return "processing";
   }
@@ -2517,8 +2821,16 @@ export type SentenceApprovalWiring = {
   setDestination: (destination: string) => void;
   openDetails: () => void;
   /** The address was just minted in this card, so no revisit check is due. */
-  onMinted?: (tx: { transactionId: string; depositAddress: string }) => void;
-  onApprove?: (tx?: { transactionId: string; depositAddress: string }) => void;
+  onMinted?: (tx: {
+    transactionId: string;
+    depositAddress: string;
+    orderId?: string;
+  }) => void;
+  onApprove?: (tx?: {
+    transactionId: string;
+    depositAddress: string;
+    orderId?: string;
+  }) => void;
 };
 
 /**
@@ -2542,7 +2854,10 @@ export async function approveThroughAdapter(
   if (input.inFlight.current) return;
   input.inFlight.current = true;
   input.setError(null);
-  input.setState("signing");
+  // A deposit has no signature: the server mints the address. Painting
+  // "Signing" over that wait asked the reader for a wallet prompt that was
+  // never going to appear, so the deposit takes the preparing word instead.
+  input.setState(input.action === "deposit" ? "preparing" : "signing");
   try {
     const result = await input.runApproval({ onPhase: input.setState });
     if (!result.ok) {
@@ -2574,10 +2889,34 @@ export async function approveThroughAdapter(
       input.onMinted?.({
         transactionId: result.transactionId,
         depositAddress: result.depositAddress,
+        ...(result.orderId ? { orderId: result.orderId } : {}),
       });
       input.onApprove?.({
         transactionId: result.transactionId,
         depositAddress: result.depositAddress,
+        ...(result.orderId ? { orderId: result.orderId } : {}),
+      });
+      return;
+    }
+
+    // A wallet-funded limit order mints an address exactly like a deposit.
+    // The card opens its funding panel and waits for the transfer; the record
+    // poll then moves the card from waiting to open.
+    if (result.deposit) {
+      input.setDeposit(result.depositAddress);
+      input.setMemo(result.depositMemo ?? null);
+      input.setDepositMeta?.(result.deposit);
+      input.openDetails();
+      input.setState("waiting");
+      input.onMinted?.({
+        transactionId: result.transactionId,
+        depositAddress: result.depositAddress,
+        ...(result.orderId ? { orderId: result.orderId } : {}),
+      });
+      input.onApprove?.({
+        transactionId: result.transactionId,
+        depositAddress: result.depositAddress,
+        ...(result.orderId ? { orderId: result.orderId } : {}),
       });
       return;
     }
@@ -2590,6 +2929,7 @@ export async function approveThroughAdapter(
     input.onApprove?.({
       transactionId: result.transactionId,
       depositAddress: result.depositAddress,
+      ...(result.orderId ? { orderId: result.orderId } : {}),
     });
   } catch {
     input.setState("awaiting");
@@ -2721,6 +3061,7 @@ function BrandMark({ src, size = 18 }: { src: string; size?: number }) {
     return <IconWallet size={size} stroke={2} className="text-ink-2" />;
   }
   return (
+    // eslint-disable-next-line @next/next/no-img-element -- canvas-measured brand mark needs raw img currentSrc; a next/image wrapper would break ink measurement
     <img
       src={src}
       alt=""
@@ -2872,6 +3213,10 @@ function Popup({
     { x: number; top?: number; bottom?: number; origin: string } | null
   >(null);
 
+  // Position from the anchor's box, then follow it: a scroll or resize
+  // that moves the chip closes the card, since the fixed popup would be
+  // left behind the row it belongs to. Measuring, positioning, and
+  // subscribing live in one effect so the position never paints unplaced.
   useEffect(() => {
     if (!anchor) return;
     const r = anchor.getBoundingClientRect();
@@ -2903,12 +3248,9 @@ function Popup({
         ? { x, bottom: window.innerHeight - r.top + 8, origin }
         : { x, top: r.bottom + 8, origin },
     );
-  }, [anchor, height]);
 
-  useEffect(() => {
-    if (!anchor) return;
-    const startX = anchor.getBoundingClientRect().left;
-    const startY = anchor.getBoundingClientRect().top;
+    const startX = r.left;
+    const startY = r.top;
     const onScroll = () => {
       const current = anchor.getBoundingClientRect();
       if (
@@ -2925,7 +3267,7 @@ function Popup({
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onResize);
     };
-  }, [anchor, onClose]);
+  }, [anchor, height, onClose]);
 
   if (!box) return null;
   return createPortal(

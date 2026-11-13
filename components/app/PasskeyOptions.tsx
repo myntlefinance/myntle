@@ -98,7 +98,8 @@ export function PasskeyOptions({
               New user
             </span>
             <span className="mt-0.5 block text-[12.5px] leading-relaxed text-ink-2">
-              Create a passkey account.
+              Create a new account. It starts empty and is separate from any
+              wallet or passkey you already use.
             </span>
           </span>
           {flow.submitting && flow.mode === "create" ? (
@@ -131,7 +132,7 @@ export function PasskeyOptions({
               Existing user
             </span>
             <span className="mt-0.5 block text-[12.5px] leading-relaxed text-ink-2">
-              Use a passkey you already have.
+              Use a passkey you already have and return to its funds.
             </span>
           </span>
           {flow.submitting && flow.mode === "signin" ? (

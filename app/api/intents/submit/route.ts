@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
 import { swapLifecycle } from "@/workflows/swap-lifecycle";
+import { limitOrderLifecycle } from "@/workflows/limit-order-lifecycle";
 import { requireSession, type Session } from "@/lib/auth/session";
 import { checkRateLimit, clientIp } from "@/lib/auth/rate-limit";
 import { getWebAuthnConfig } from "@/lib/auth/webauthn-config";
@@ -16,6 +17,11 @@ import {
   setTransactionState,
   updateTransactionRefs,
 } from "@/lib/db/transactions";
+import {
+  TOOL_APPROVAL_NAMES,
+  recordToolApproval,
+  type ToolApprovalName,
+} from "@/lib/db/tool-approvals";
 import { submitIntent } from "@/lib/intents/service";
 import { normalizeEvmAddress } from "@/lib/intents/destination";
 import {
@@ -27,6 +33,7 @@ import {
   isSameSubmittedIntent,
   mapVerificationFailure,
   readIntentRefs,
+  readWorkflowRef,
   submitBodySchema,
   GENERIC_VERIFICATION_ERROR,
   type SubmitBody,
@@ -89,13 +96,81 @@ async function loadPasskeyPublicKey(
   }
 }
 
+/**
+ * Records the card's decision once the signed intent is actually submitted.
+ *
+ * The approve route deliberately does not write this row: a cancelled passkey
+ * prompt or a failed submit must leave the card retryable. The refs carry the
+ * card id and the tool name, so this write is the first moment the decision
+ * is true.
+ */
+async function recordSignedDecision(input: {
+  userId: string;
+  refs: {
+    toolApprovalId: string | null;
+    toolName: string | null;
+    conversationId: string | null;
+    dryQuoteId: string | null;
+    mode: string;
+  };
+  orderId: string | null;
+}): Promise<void> {
+  const cardId = input.refs.toolApprovalId;
+  if (!cardId) return;
+  const storedName = input.refs.toolName;
+  const fallback: ToolApprovalName = input.orderId
+    ? "prepare_limit_order"
+    : input.refs.mode === "confidential-withdrawal"
+      ? "prepare_withdrawal"
+      : "prepare_swap";
+  const toolName =
+    storedName &&
+    (TOOL_APPROVAL_NAMES as readonly string[]).includes(storedName)
+      ? (storedName as ToolApprovalName)
+      : fallback;
+  try {
+    await recordToolApproval({
+      userId: input.userId,
+      toolApprovalId: cardId,
+      toolName,
+      decision: "approved",
+      conversationId: input.refs.conversationId,
+      quoteId: input.refs.dryQuoteId,
+    });
+  } catch {
+    // The intent is already submitted; a lost decision row costs the card's
+    // paint, never the money. The transaction is the stronger record.
+    console.error("[intents/submit] decision record failed");
+  }
+}
+
 async function startSettlement(input: {
   transactionId: string;
   depositAddress: string;
   expectedOut?: string;
   mode?: string | null;
+  /** Present only for a limit-order record; selects its own workflow. */
+  orderId?: string | null;
 }): Promise<string> {
-  const run = await start(swapLifecycle, [input]);
+  // A limit order is polled through `GET /v0/orders/{id}`, not the deposit
+  // status endpoint, so it starts its own lifecycle. Everything else keeps
+  // the swap run's exact input object.
+  if (input.orderId) {
+    const orderRun = await start(limitOrderLifecycle, [
+      { transactionId: input.transactionId, orderId: input.orderId },
+    ]);
+    await setTransactionRunId(input.transactionId, orderRun.runId);
+    return orderRun.runId;
+  }
+
+  const run = await start(swapLifecycle, [
+    {
+      transactionId: input.transactionId,
+      depositAddress: input.depositAddress,
+      expectedOut: input.expectedOut,
+      mode: input.mode,
+    },
+  ]);
   await setTransactionRunId(input.transactionId, run.runId);
   return run.runId;
 }
@@ -157,6 +232,21 @@ export async function POST(req: Request) {
   }
   const refs = stored.refs;
 
+  // The record names which lifecycle owns it. A limit-order row carries its
+  // 1Click order id; a row from before this feature has no kind and keeps the
+  // swap workflow. A limit-order row with no id is refused rather than polled
+  // against an endpoint that cannot see it.
+  const workflowRef = readWorkflowRef(tx.refs);
+  if (workflowRef.kind === "malformed") {
+    console.error("[intents/submit] limit order refs malformed", {
+      transactionId: tx.id,
+      reason: "order-id-missing",
+    });
+    return NextResponse.json({ error: "An error occurred." }, { status: 400 });
+  }
+  const limitOrderId =
+    workflowRef.kind === "limit_order" ? workflowRef.orderId : null;
+
   // The refs were written from the session that approved the transaction. If
   // they name another account, the session is stale or the row is not ours
   // even though the user id matched.
@@ -203,6 +293,13 @@ export async function POST(req: Request) {
   });
 
   if (decision.kind === "idempotent" && storedIntentHash) {
+    // A crash between the submit and the decision write leaves the card
+    // undecided. Repair it here; the first decision still wins.
+    await recordSignedDecision({
+      userId: session.userId,
+      refs,
+      orderId: limitOrderId,
+    });
     // A crash between the submit and the workflow start leaves the row
     // submitted with no run id. Starting it here makes a retry complete the
     // record instead of silently returning an unpolled trade.
@@ -214,6 +311,7 @@ export async function POST(req: Request) {
           depositAddress: tx.deposit_address ?? refs.intentDepositAddress,
           expectedOut: tx.expected_out ?? undefined,
           mode: refs.mode,
+          orderId: limitOrderId,
         });
       } catch {
         console.error("[intents/submit] workflow restart failed", {
@@ -389,6 +487,11 @@ export async function POST(req: Request) {
       "submitted",
       "The signed intent was submitted for settlement.",
     );
+    await recordSignedDecision({
+      userId: session.userId,
+      refs,
+      orderId: limitOrderId,
+    });
   } catch {
     console.error("[intents/submit] record update failed", {
       transactionId: tx.id,
@@ -403,6 +506,7 @@ export async function POST(req: Request) {
       depositAddress: tx.deposit_address ?? refs.intentDepositAddress,
       expectedOut: tx.expected_out ?? undefined,
       mode: refs.mode,
+      orderId: limitOrderId,
     });
   } catch {
     // The row is `submitted` and keeps the hash. A repeated submit now takes

@@ -19,9 +19,11 @@ import SentenceTradeCard, {
 } from "@/components/finance/SentenceTradeCard";
 import {
   depositApproval,
+  limitOrderApproval,
   swapApproval,
   withdrawalApproval,
 } from "@/components/finance/sentence-approval";
+import { collectLimitOrders } from "@/components/app/limitOrders";
 import { formatRawAmount } from "@/lib/intents/approval";
 import { depositCardStateForRecord } from "@/lib/intents/deposit-status";
 import { signIntentForSession } from "@/lib/intents/session-signer";
@@ -65,6 +67,21 @@ import {
   toolNameOf,
   type ToolPart,
 } from "@/components/app/toolParts";
+
+/** The card state a stored limit-order record paints on a reload. */
+function limitOrderCardState(
+  state: string,
+  fillStatus?: string,
+): SentenceCardState | null {
+  if (state === "submitted") return "waiting";
+  if (state === "pending") return "open";
+  if (state === "processing") {
+    if (fillStatus === "PENDING_CANCEL") return "cancelling";
+    if (fillStatus === "PARTIALLY_FILLED") return "partial";
+    return "processing";
+  }
+  return settlementCardState(state);
+}
 
 /**
  * The assistant's live reply.
@@ -290,6 +307,16 @@ export const LiveResponse = memo(function LiveResponseInner({
   // keeps `/api/approve` for a swap.
   const { identity, canSign, connected } = useAuth();
   const passkeyIdentity = identity?.kind === "passkey" ? identity : null;
+  // A card belongs to the account that priced it. A transcript can be opened
+  // after a session switch, and the server refuses a quote for another
+  // account; the card says so before it offers a signer the wrong path.
+  const belongsToSession = (quote: {
+    accountKind?: "wallet" | "passkey";
+  }): boolean => {
+    if (!identity) return true;
+    if (quote.accountKind && quote.accountKind !== identity.kind) return false;
+    return true;
+  };
   // One signer per session, built once: the cards receive the function, not
   // the identity, so no card has to know how a session signs.
   const intentSigner = useMemo(
@@ -341,6 +368,15 @@ export const LiveResponse = memo(function LiveResponseInner({
   const withdrawalById = new Map(
     withdrawals.map((withdrawal) => [withdrawal.approvalId, withdrawal]),
   );
+  const limitOrders = collectLimitOrders(
+    message,
+    symbols,
+    assetMeta,
+    decisions,
+  );
+  const limitOrderById = new Map(
+    limitOrders.map((order) => [order.approvalId, order]),
+  );
   const balanceViews = collectBalanceViews(message.parts);
   const balanceByCallId = new Map(balanceViews.map((b) => [b.callId, b]));
   const approvalById = new Map(approvals.map((a) => [a.approvalId, a]));
@@ -359,6 +395,7 @@ export const LiveResponse = memo(function LiveResponseInner({
   const approvalOrder = new Map<string, number>();
   const depositOrder = new Map<string, number>();
   const withdrawalOrder = new Map<string, number>();
+  const limitOrderOrder = new Map<string, number>();
   const unlockOrder = new Map<string, number>();
   const depositById = new Map<
     string,
@@ -406,6 +443,12 @@ export const LiveResponse = memo(function LiveResponseInner({
         withdrawalOrder.set(id, index);
       }
     }
+    if (toolNameOf(p) === "prepare_limit_order") {
+      const id = approvalIdOf(p);
+      if (id && limitOrderById.has(id) && !limitOrderOrder.has(id)) {
+        limitOrderOrder.set(id, index);
+      }
+    }
     if (
       (toolNameOf(p) === "request_super_unlock" ||
         toolNameOf(p) === "get_super_balances") &&
@@ -422,6 +465,7 @@ export const LiveResponse = memo(function LiveResponseInner({
     | { kind: "approval"; approvalId: string; order: number }
     | { kind: "deposit"; approvalId: string; order: number }
     | { kind: "withdraw"; approvalId: string; order: number }
+    | { kind: "limit"; approvalId: string; order: number }
     | { kind: "unlock"; callId: string; order: number };
 
   const timeline: TimelineNode[] = [];
@@ -439,6 +483,9 @@ export const LiveResponse = memo(function LiveResponseInner({
   }
   for (const [approvalId, order] of withdrawalOrder) {
     timeline.push({ kind: "withdraw", approvalId, order });
+  }
+  for (const [approvalId, order] of limitOrderOrder) {
+    timeline.push({ kind: "limit", approvalId, order });
   }
   for (const [callId, order] of unlockOrder) {
     timeline.push({ kind: "unlock", callId, order });
@@ -532,16 +579,19 @@ export const LiveResponse = memo(function LiveResponseInner({
     const deny = () => onApproval?.(a.approvalId, false, context);
     // A waiting card is only useful if the user can act. Name the blocker so
     // the footer offers the fix instead of a dead "Pending Approval" pill.
-    const blocked: "sign-in" | "quote" | "inactive" | null =
+    const sameAccount = belongsToSession(a);
+    const blocked: "sign-in" | "quote" | "inactive" | "account" | null =
       a.status !== "awaiting" || cardPending(a.approvalId)
         ? null
         : !interactive
           ? "inactive"
-          : !canSign
-            ? "sign-in"
-            : !a.swapInput?.quoteId
-              ? "quote"
-              : null;
+          : !sameAccount
+            ? "account"
+            : !canSign
+              ? "sign-in"
+              : !a.swapInput?.quoteId
+                ? "quote"
+                : null;
     return (
       <ApprovalVisibility
         key={a.approvalId}
@@ -551,8 +601,11 @@ export const LiveResponse = memo(function LiveResponseInner({
       >
         <SentenceTradeCard
           // An account trade is one signed intent, which the route submits
-          // as a swap. A wallet chain quote keeps the action it was given.
-          action={accountTrade ? "swap" : a.action}
+          // as a swap. A yield deposit keeps its own label so the card names
+          // the vault and APY; a wallet chain quote keeps the action it had.
+          action={
+            a.action === "earn" ? "earn" : accountTrade ? "swap" : a.action
+          }
           approvalId={a.approvalId}
           conversationId={conversationId}
           decisionPending={cardPending(a.approvalId)}
@@ -565,10 +618,11 @@ export const LiveResponse = memo(function LiveResponseInner({
           amountInUsd={a.amountInUsd}
           amountOut={a.amountOut}
           amountOutUsd={a.amountOutUsd}
-          minAmountOut={a.minAmountOut}
+          minAmountOut={a.action === "earn" ? undefined : a.minAmountOut}
           minAmountOutRaw={a.minAmountOutRaw}
           fromPriceUsd={a.fromPriceUsd}
           toPriceUsd={a.toPriceUsd}
+          earn={a.earn ?? undefined}
           recipient={a.recipient}
           refundTo={a.refundTo}
           expiresAt={a.expiresAt}
@@ -591,6 +645,7 @@ export const LiveResponse = memo(function LiveResponseInner({
           }
           disabled={
             !interactive ||
+            !sameAccount ||
             !canSign ||
             cardPending(a.approvalId) ||
             a.status !== "awaiting" ||
@@ -621,7 +676,7 @@ export const LiveResponse = memo(function LiveResponseInner({
     // A timed-out workflow is not a failed deposit: the address keeps its
     // own deadline, and the card ages it out only if that deadline passed.
     const recordState = snap
-      ? depositCardStateForRecord(snap.state, null, 0)
+      ? depositCardStateForRecord(snap.state, null, 0, !!snap.depositTxHash)
       : null;
     // The decision record outranks the snapshot, exactly as it does for a
     // swap: a deposit approved on another device must not offer Start again
@@ -816,6 +871,120 @@ export const LiveResponse = memo(function LiveResponseInner({
     );
   }
 
+  function renderLimitOrder(approvalId: string) {
+    const order = limitOrderById.get(approvalId);
+    if (!order) return null;
+    const snap = settlements?.[approvalId] ?? null;
+    const snapState = snap
+      ? limitOrderCardState(snap.state, snap.limit?.fillStatus)
+      : null;
+    const state: SentenceCardState =
+      order.status === "denied"
+        ? "denied"
+        : (snapState ??
+          (order.status === "approved"
+            ? order.funding === "wallet"
+              ? "waiting"
+              : "processing"
+            : "awaiting"));
+    const limitSnap = snap?.limit ?? null;
+    const orderId = limitSnap?.orderId ?? order.orderId;
+    const sameAccount = belongsToSession(order);
+    const blocked: "sign-in" | "quote" | "inactive" | "account" | null =
+      order.status !== "awaiting" || cardPending(approvalId)
+        ? null
+        : !interactive
+          ? "inactive"
+          : !sameAccount
+            ? "account"
+            : !canSign
+              ? "sign-in"
+              : !order.quoteId
+                ? "quote"
+                : null;
+    const context: ApprovalDecisionContext = {
+      toolName: "prepare_limit_order",
+      quoteId: order.quoteId,
+      requestedAt: order.requestedAt,
+    };
+    const approve = (tx?: {
+      transactionId: string;
+      depositAddress: string;
+      orderId?: string;
+    }) => {
+      if (tx) rememberApprovalTx(approvalId, tx);
+      onApproval?.(approvalId, true, context);
+    };
+    const deny = () => onApproval?.(approvalId, false, context);
+    return (
+      <ApprovalVisibility
+        key={approvalId}
+        approvalId={approvalId}
+        onVisible={onApprovalVisible}
+        className="mt-2.5"
+      >
+        <SentenceTradeCard
+          action="limit"
+          approvalId={approvalId}
+          conversationId={conversationId}
+          decisionPending={cardPending(approvalId)}
+          active={interactive && !superseded}
+          fromSymbol={order.baseSymbol}
+          fromChain={order.baseChain}
+          toSymbol={order.quoteSymbol}
+          toChain={order.quoteChain}
+          amountIn={order.quantity}
+          amountOut={order.total}
+          recipient={identity?.intentsAccountId ?? ""}
+          expiresAt={order.expiresAt}
+          requestedAt={order.requestedAt}
+          state={state}
+          transactionId={snap?.transactionId ?? order.transactionId}
+          depositAddress={snap?.depositAddress ?? order.depositAddress}
+          initialExplorerUrls={snap?.explorerUrls}
+          limit={{
+            side: order.side,
+            price: order.price,
+            total: order.total,
+            funding: order.funding,
+            filled: limitSnap?.filled ?? order.filled,
+            filledPercent: limitSnap?.filledPercent ?? order.filledPercent,
+            deadline: limitSnap?.deadline ?? order.deadline ?? order.expiresAt,
+          }}
+          runApproval={limitOrderApproval({
+            quoteId: order.quoteId ?? "",
+            approvalId,
+            conversationId,
+            sign: intentSigner,
+          })}
+          onCancel={
+            orderId
+              ? async () => {
+                  const res = await fetch(
+                    `/api/orders/${encodeURIComponent(orderId)}/cancel`,
+                    { method: "POST", credentials: "same-origin" },
+                  );
+                  if (!res.ok) throw new Error("cancel-failed");
+                }
+              : undefined
+          }
+          disabled={
+            !interactive ||
+            !sameAccount ||
+            !canSign ||
+            cardPending(approvalId) ||
+            order.status !== "awaiting" ||
+            !order.quoteId
+          }
+          blocked={blocked}
+          onSignIn={openApprovalSession}
+          onApprove={approve}
+          onDeny={deny}
+        />
+      </ApprovalVisibility>
+    );
+  }
+
   // The deterministic unlock prompt: fixed wording from the tool, one
   // button opening the dialog. The model only decided this was needed.
   function renderUnlock(callId: string) {
@@ -843,7 +1012,12 @@ export const LiveResponse = memo(function LiveResponseInner({
           copySegments.push({ kind: "text", text: block.text });
         }
       }
-    } else if (node.kind === "unlock" || node.kind === "deposit" || node.kind === "withdraw") {
+    } else if (
+      node.kind === "unlock" ||
+      node.kind === "deposit" ||
+      node.kind === "withdraw" ||
+      node.kind === "limit"
+    ) {
       // None of these cards carries a settlement to copy; prose already says it.
       continue;
     } else if (node.kind === "balance") {
@@ -921,6 +1095,7 @@ export const LiveResponse = memo(function LiveResponseInner({
           if (node.kind === "approval") return renderApproval(node.approvalId);
           if (node.kind === "deposit") return renderDeposit(node.approvalId);
           if (node.kind === "withdraw") return renderWithdrawal(node.approvalId);
+          if (node.kind === "limit") return renderLimitOrder(node.approvalId);
           if (node.kind === "unlock") return renderUnlock(node.callId);
           return (
             <ActivityStatus
@@ -1077,8 +1252,24 @@ function describeToolStep(
     case "resolve_ens_name":
     case "resolve_sns_name":
       return nameRow(part);
-    case "get_quote":
+    case "get_quote": {
+      const out = outputOf(part);
+      if (out.status === "unavailable") {
+        const reason = str(out.reason);
+        return {
+          icon: "chart",
+          label: "No quote",
+          chip:
+            reason === "no-liquidity" || reason === "minimum"
+              ? "amount too small"
+              : "unavailable",
+          mono: false,
+          detailMono: true,
+          detail: [],
+        };
+      }
       return quoteRow(part, symbols, "Quoted a price", "chart");
+    }
     case "prepare_swap": {
       if (state === "approval-requested") {
         const swap = quoteRow(part, symbols, "Proposed a trade", "swap");
@@ -1092,6 +1283,23 @@ function describeToolStep(
         return swap;
       }
       return quoteRow(part, symbols, "Proposed a trade", "swap");
+    }
+    case "prepare_limit_order": {
+      const pending: ToolStep = {
+        icon: "limit",
+        label: "Proposed a limit order",
+        chip: "awaiting approval",
+        mono: false,
+        detailMono: true,
+        detail: [],
+      };
+      if (state === "approval-responded" && approvalDecision(part) === false) {
+        return { ...pending, chip: "rejected" };
+      }
+      if (state === "approval-responded") {
+        return { ...pending, chip: "approved" };
+      }
+      return pending;
     }
     case "prepare_deposit": {
       const input = inputOf(part);
@@ -1189,6 +1397,12 @@ function iconFor(name: string): string {
       return "price";
     case "prepare_withdrawal":
       return "withdraw";
+    case "get_limit_order_quote":
+    case "prepare_limit_order":
+    case "get_limit_orders":
+      return "limit";
+    case "get_earn_options":
+      return "earn";
     case "get_transaction_status":
       return "activity";
     case "get_transaction_history":
@@ -1243,6 +1457,22 @@ const TOOL_NAMES: Record<string, { live: string; done: string }> = {
   prepare_withdrawal: {
     live: "Preparing the withdrawal",
     done: "Prepared the withdrawal",
+  },
+  get_limit_order_quote: {
+    live: "Pricing a limit order",
+    done: "Priced a limit order",
+  },
+  prepare_limit_order: {
+    live: "Preparing the limit order",
+    done: "Prepared the limit order",
+  },
+  get_limit_orders: {
+    live: "Reading limit orders",
+    done: "Read limit orders",
+  },
+  get_earn_options: {
+    live: "Reading yield vaults",
+    done: "Read yield vaults",
   },
   get_transaction_status: {
     live: "Checking the transaction",
@@ -1324,6 +1554,14 @@ function labelFor(name: string, part: ToolPart): string {
       return "Priced a withdrawal";
     case "prepare_withdrawal":
       return "Proposed a withdrawal";
+    case "get_limit_order_quote":
+      return "Priced a limit order";
+    case "prepare_limit_order":
+      return "Proposed a limit order";
+    case "get_limit_orders":
+      return "Listed limit orders";
+    case "get_earn_options":
+      return "Listed yield vaults";
     case "get_transaction_status":
       return "Checked a trade";
     case "get_transaction_history":
@@ -1625,8 +1863,18 @@ function statusRow(part: ToolPart): ToolStep {
   const input = inputOf(part);
   const output = outputOf(part);
   const address = str(input.depositAddress);
-  const state = str(output.state);
-  const amountOut = str(output.amountOut);
+  // Newer turns return a list and put the newest trade at the top; older
+  // stored turns carry the flat fields alone. Read both so a reload of an old
+  // conversation still names the state it checked.
+  const first =
+    Array.isArray(output.transactions) &&
+    output.transactions.length > 0 &&
+    typeof output.transactions[0] === "object" &&
+    output.transactions[0] !== null
+      ? (output.transactions[0] as Record<string, unknown>)
+      : null;
+  const state = str(output.state) ?? str(first?.state);
+  const amountOut = str(output.amountOut) ?? str(first?.amountOut);
   const detail: ToolDetailLine[] = [];
   if (state) {
     detail.push({

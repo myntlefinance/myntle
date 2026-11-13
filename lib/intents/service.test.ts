@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createExecutionQuote,
   generateIntent,
+  getStatus,
   quote,
   submitIntent,
 } from "./service";
@@ -474,5 +475,94 @@ describe("intent failures", () => {
     expect(logged).toContain("401");
     expect(logged).not.toContain(PARTNER_KEY);
     expect(logged).not.toContain(SIGNED_DATA.signature);
+  });
+});
+
+describe("getStatus", () => {
+  const STATUS_BODY = {
+    correlationId: "corr-1",
+    status: "SUCCESS",
+    updatedAt: "2026-11-13T10:41:00.000Z",
+    swapDetails: {
+      amountInFormatted: "5",
+      amountOutFormatted: "0.044957",
+      amountOutUsd: "4.99",
+      depositedAmountFormatted: "5",
+      refundedAmountFormatted: "0",
+      originChainTxHashes: [{ hash: "near-hash" }],
+      destinationChainTxHashes: [],
+    },
+  };
+
+  it("reads the authoritative amounts, memo, and partner-scoped status", async () => {
+    const { requests } = installFetch(() => jsonResponse(STATUS_BODY, 200));
+
+    const status = await getStatus("deposit-1", "memo-1", {
+      originAssetId: TO,
+      destinationAssetId: TO,
+    });
+
+    const call = requests.find((r) => r.url.includes("/v0/status"));
+    expect(call?.url).toContain("depositAddress=deposit-1");
+    expect(call?.url).toContain("depositMemo=memo-1");
+    expect(
+      (call?.init?.headers as Record<string, string> | undefined)?.[
+        "X-API-Key"
+      ],
+    ).toBe(PARTNER_KEY);
+
+    expect(status).toMatchObject({
+      state: "settled",
+      status: "SUCCESS",
+      amountIn: "5",
+      amountOut: "0.044957",
+      amountOutUsd: "4.99",
+      depositedAmount: "5",
+      refundedAmount: "0",
+      updatedAt: "2026-11-13T10:41:00.000Z",
+      depositAddress: "deposit-1",
+    });
+    // The API leaves the URL empty; the chain in the catalogue builds it.
+    expect(status.explorerUrls).toEqual(["https://nearblocks.io/txns/near-hash"]);
+  });
+
+  it("treats a detected deposit as confirming, not as waiting", async () => {
+    installFetch(
+      () =>
+        jsonResponse(
+          { ...STATUS_BODY, status: "KNOWN_DEPOSIT_TX" },
+          200,
+        ),
+      [],
+    );
+
+    await expect(getStatus("deposit-1")).resolves.toMatchObject({
+      state: "confirming",
+      status: "KNOWN_DEPOSIT_TX",
+    });
+  });
+
+  it("keeps an unrecognised status visible instead of hiding it behind pending", async () => {
+    installFetch(
+      () =>
+        jsonResponse({ ...STATUS_BODY, status: "SOMETHING_NEW" }, 200),
+      [],
+    );
+
+    await expect(getStatus("deposit-1")).resolves.toMatchObject({
+      state: "pending",
+      status: "SOMETHING_NEW",
+    });
+  });
+
+  it("says the address is unknown rather than reporting an empty result", async () => {
+    installFetch(
+      () => jsonResponse({ message: "Deposit address not found" }, 404),
+      [],
+    );
+
+    await expect(getStatus("deposit-1")).rejects.toThrow(
+      "1Click has no record of this deposit address",
+    );
   });
 });

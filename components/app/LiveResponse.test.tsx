@@ -138,6 +138,49 @@ function swapMessage(
   } as unknown as UIMessage;
 }
 
+function limitOrderMessage(): UIMessage {
+  return {
+    id: "msg-limit",
+    role: "assistant",
+    parts: [
+      {
+        type: "tool-get_limit_order_quote",
+        state: "output-available",
+        input: {
+          baseAssetId: TO,
+          quoteAssetId: FROM,
+          side: "SELL",
+          quantity: "1000000000000000000000000",
+          price: "5",
+        },
+        output: {
+          quoteId: QUOTE_ID,
+          side: "SELL",
+          baseAssetId: TO,
+          quoteAssetId: FROM,
+          inputAssetId: TO,
+          outputAssetId: FROM,
+          inputAmount: "1000000000000000000000000",
+          outputAmount: "5000000",
+          quantityFormatted: "1",
+          totalFormatted: "5",
+          price: "5",
+          funding: "account",
+          route: "account",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      },
+      {
+        type: "tool-prepare_limit_order",
+        state: "approval-requested",
+        input: { quoteId: QUOTE_ID },
+        approval: { id: "aitxt-limit-1" },
+      },
+    ],
+    metadata: { createdAt: "2026-11-02T12:00:00.000Z" },
+  } as unknown as UIMessage;
+}
+
 function depositMessage(
   state: "approval-requested" | "output-available" = "approval-requested",
 ): UIMessage {
@@ -937,6 +980,26 @@ describe("LiveResponse money card", () => {
     ]);
   });
 
+  it("paints a registered funding hash as processing, not waiting", () => {
+    state.identity = passkeyIdentity;
+    renderWithSettlements(depositMessage("output-available"), {
+      "aitxt-deposit-1": {
+        state: "submitted",
+        transactionId: "tx-deposit-1",
+        depositAddress: DEPOSIT,
+        depositTxHash: "0xfunded",
+        deposit: {
+          address: DEPOSIT,
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      },
+    });
+
+    // The row is written at mint. A transfer that was broadcast a moment ago
+    // must not put the address back in front of the reader.
+    expect(lastCard().state).toBe("processing");
+  });
+
   it("keeps a timed-out workflow waiting while the deposit quote is valid", () => {
     state.identity = passkeyIdentity;
     renderWithSettlements(depositMessage("output-available"), {
@@ -1094,6 +1157,68 @@ describe("LiveResponse money card", () => {
     });
 
     expect(lastCard().state).toBe("expired");
+  });
+
+  it("blocks a card priced for another account instead of offering a signer", () => {
+    state.identity = walletIdentity;
+    const message = swapMessage("swap", "account");
+    const quote = message.parts[0] as unknown as {
+      output: Record<string, unknown>;
+    };
+    quote.output.accountKind = "passkey";
+    quote.output.intentsAccountId = RECIPIENT;
+
+    ReactDOMServer.renderToStaticMarkup(
+      <LiveResponse message={message} status="ready" interactive />,
+    );
+
+    expect(lastCard().blocked).toBe("account");
+    expect(lastCard().disabled).toBe(true);
+  });
+
+  it("keeps the earn label and vault metadata on an account quote", () => {
+    state.identity = walletIdentity;
+    const message = swapMessage("earn", "account");
+    const quote = message.parts[0] as unknown as {
+      output: Record<string, unknown>;
+    };
+    quote.output.earn = {
+      vaultId: "gtusdcp",
+      name: "USDC Prime",
+      protocol: "Morpho",
+      apy: 4.50508,
+    };
+
+    render(message);
+
+    const card = state.cards.find((entry) => entry.action === "earn");
+    expect(card).toBeTruthy();
+    expect(card?.earn).toMatchObject({
+      name: "USDC Prime",
+      protocol: "Morpho",
+      apy: 4.50508,
+    });
+  });
+
+  it("renders a limit order proposal as a limit card", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <LiveResponse
+        message={limitOrderMessage()}
+        status="ready"
+        interactive
+      />,
+    );
+
+    expect(html).toContain("sentence-");
+    const card = state.cards.find((entry) => entry.action === "limit");
+    expect(card).toBeTruthy();
+    expect(card?.limit).toMatchObject({
+      side: "SELL",
+      price: "5",
+      total: "5",
+      funding: "account",
+    });
+    expect(typeof card?.runApproval).toBe("function");
   });
 
   it("hands a live deposit card the composer for a fresh address", () => {

@@ -284,7 +284,7 @@ describe("passkey deposit on the sentence card", () => {
 
     await approveThroughAdapter(input);
 
-    expect(calls.states).toEqual(["signing", "waiting"]);
+    expect(calls.states).toEqual(["preparing", "waiting"]);
     expect(calls.txIds).toEqual(["tx-deposit-1"]);
     expect(calls.deposits).toEqual([DEPOSIT_ADDRESS]);
     expect(calls.memos).toEqual(["memo-1"]);
@@ -295,7 +295,7 @@ describe("passkey deposit on the sentence card", () => {
     ]);
   });
 
-  it("hands the signing and submitting phases to the card", async () => {
+  it("hands the signing and submitting phases to a signing journey", async () => {
     let phase: ((state: "signing" | "submitting") => void) | undefined;
     const runApproval: SentenceApproval = async (input) => {
       phase = input.onPhase;
@@ -303,16 +303,21 @@ describe("passkey deposit on the sentence card", () => {
       input.onPhase("submitting");
       return {
         ok: true,
-        transactionId: "tx-deposit-1",
+        transactionId: "tx-swap-1",
         depositAddress: DEPOSIT_ADDRESS,
       };
     };
-    const { input, calls } = record("deposit", runApproval);
+    const { input, calls } = record("swap", runApproval);
 
     await approveThroughAdapter(input);
 
     expect(phase).toBeTypeOf("function");
-    expect(calls.states).toEqual(["signing", "signing", "submitting", "waiting"]);
+    expect(calls.states).toEqual([
+      "signing",
+      "signing",
+      "submitting",
+      "processing",
+    ]);
   });
 
   it("does not request an address while the rendered state has expired", async () => {
@@ -750,6 +755,7 @@ describe("the wallet branch under the same card", () => {
     state.sendDeposit.mockResolvedValue({ txHash: "0xdeposit-hash" });
     const fetchSpy = vi.fn(
       async (input: RequestInfo | URL, _init?: RequestInit) => {
+        void _init;
         const url = String(input);
         if (url === "/api/approve") {
           return jsonResponse({

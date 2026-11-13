@@ -10,6 +10,7 @@ export const TOOL_APPROVALS = {
   prepare_swap: "user-approval",
   prepare_deposit: "user-approval",
   prepare_withdrawal: "user-approval",
+  prepare_limit_order: "user-approval",
 } as const;
 
 export type ToolApprovalName = keyof typeof TOOL_APPROVALS;

@@ -3,6 +3,7 @@ import { PasskeyError } from "@/lib/auth/passkey-client";
 import type { PasskeySignedIntent } from "@/lib/auth/passkey-signer";
 import {
   depositApproval,
+  limitOrderApproval,
   swapApproval,
   withdrawalApproval,
 } from "./sentence-approval";
@@ -333,5 +334,89 @@ describe("withdrawalApproval", () => {
       message: "The quote is no longer available. Ask for a fresh one.",
     });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* limit order                                                         */
+/* ------------------------------------------------------------------ */
+
+describe("limitOrderApproval", () => {
+  it("creates the order, signs its intent, and submits it", async () => {
+    const urls: string[] = [];
+    const fetchSpy = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        urls.push(url);
+        if (url === "/api/orders") {
+          expect(bodyOf(init)).toMatchObject({
+            quoteId: QUOTE_ID,
+            approvalId: "aitxt-limit-1",
+          });
+          return jsonResponse({
+            transactionId: TRANSACTION_ID,
+            depositAddress: "f".repeat(64),
+            order: { orderId: "order_1" },
+            intent: { standard: "webauthn", payload: PAYLOAD },
+            deposit: { address: "f".repeat(64) },
+          });
+        }
+        if (url === "/api/intents/submit") {
+          expect(bodyOf(init).signedData).toEqual(SIGNED);
+          return jsonResponse({ transactionId: TRANSACTION_ID });
+        }
+        throw new Error(`unexpected request ${url}`);
+      },
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const phases: string[] = [];
+    const result = await limitOrderApproval({
+      quoteId: QUOTE_ID,
+      approvalId: "aitxt-limit-1",
+      sign: async () => SIGNED,
+    })({ onPhase: (phase) => phases.push(phase) });
+
+    expect(result).toEqual({
+      ok: true,
+      transactionId: TRANSACTION_ID,
+      depositAddress: "f".repeat(64),
+      orderId: "order_1",
+    });
+    expect(urls).toEqual(["/api/orders", "/api/intents/submit"]);
+    expect(phases).toEqual(["signing", "submitting"]);
+  });
+
+  it("returns the deposit metadata for a wallet-funded order without signing", async () => {
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/orders") {
+        return jsonResponse({
+          transactionId: TRANSACTION_ID,
+          depositAddress: "f".repeat(64),
+          order: { orderId: "order_2" },
+          deposit: {
+            address: "f".repeat(64),
+            amountInRaw: "5000000",
+            symbol: "USDC",
+          },
+        });
+      }
+      throw new Error(`unexpected request ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const sign = vi.fn();
+
+    const result = await limitOrderApproval({
+      quoteId: QUOTE_ID,
+      sign,
+    })({ onPhase: () => {} });
+
+    expect(result).toMatchObject({
+      ok: true,
+      transactionId: TRANSACTION_ID,
+      orderId: "order_2",
+      deposit: { symbol: "USDC" },
+    });
+    expect(sign).not.toHaveBeenCalled();
   });
 });

@@ -15,6 +15,8 @@
 export type ApprovalTx = {
   transactionId: string;
   depositAddress: string;
+  /** Present for a limit order, so its Cancel control survives a reload. */
+  orderId?: string;
 };
 
 const TX_KEY = "myntle.approval-tx.v1";

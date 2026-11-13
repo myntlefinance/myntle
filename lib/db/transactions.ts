@@ -262,17 +262,26 @@ function noteMissingStatusColumn(): void {
  * The workflow owns this write. When the database predates migration 007 the
  * state still lands; only the stamp is left out, so a missing migration
  * degrades freshness metadata rather than freezing every deposit.
+ *
+ * `outcome` is optional and additive: a limit-order poll writes the statuses
+ * and the filled totals in the same update, while every existing caller keeps
+ * the exact patch it wrote before.
  */
 export async function setTransactionStatus(
   id: string,
   state: TxState,
   checkedAt: string,
+  outcome?: Record<string, unknown>,
 ): Promise<void> {
   const sb = getSupabaseAdmin();
   if (statusCheckedAtColumn !== false) {
     const { error } = await sb
       .from("transactions")
-      .update({ state, status_checked_at: checkedAt })
+      .update({
+        state,
+        status_checked_at: checkedAt,
+        ...(outcome ? { outcome } : {}),
+      })
       .eq("id", id);
     if (!error) {
       statusCheckedAtColumn = true;
@@ -281,8 +290,27 @@ export async function setTransactionStatus(
     if (!missingStatusCheckedAt(error)) return;
     noteMissingStatusColumn();
   }
-  await sb.from("transactions").update({ state }).eq("id", id);
+  await sb
+    .from("transactions")
+    .update({ state, ...(outcome ? { outcome } : {}) })
+    .eq("id", id);
 }
+
+/**
+ * Writes an outcome without moving the state.
+ *
+ * A limit order's fill and payout details can change while the transaction is
+ * still `processing`, so the caller needs a write that does not fake a state
+ * transition. Nothing else uses this yet.
+ */
+export async function setTransactionOutcome(
+  id: string,
+  outcome: Record<string, unknown>,
+): Promise<void> {
+  const sb = getSupabaseAdmin();
+  await sb.from("transactions").update({ outcome }).eq("id", id);
+}
+
 
 export async function setTransactionRunId(
   id: string,
@@ -335,6 +363,39 @@ export async function getTransaction(
   };
 }
 
+/**
+ * The part of a resting order that has filled, as a whole percent.
+ *
+ * A SELL fills against the base quantity with its input amount; a BUY fills
+ * against the same base quantity with its output amount. The sum is capped at
+ * 100 because a fee can make the reported fill slightly exceed the order.
+ */
+function limitOrderFilledPercent(
+  side: unknown,
+  quantity: unknown,
+  outcome: Record<string, unknown>,
+): number | null {
+  if (typeof quantity !== "string" || !/^[1-9]\d*$/.test(quantity)) {
+    return null;
+  }
+  const filled =
+    side === "SELL"
+      ? outcome.filledAmountIn
+      : side === "BUY"
+        ? outcome.filledAmountOut
+        : null;
+  if (typeof filled !== "string" || !/^\d+$/.test(filled)) return null;
+  try {
+    const total = BigInt(quantity);
+    const part = BigInt(filled);
+    if (total <= 0n) return null;
+    const percent = Number((part * 100n) / total);
+    return Math.max(0, Math.min(100, percent));
+  } catch {
+    return null;
+  }
+}
+
 export type ToolApprovalSettlement = {
   toolApprovalId: string;
   transactionId: string;
@@ -347,6 +408,17 @@ export type ToolApprovalSettlement = {
   amountOut: string | null;
   /** The one-time address, token, chain, raw amount, and deadline. */
   deposit: DepositMetadata | null;
+  /** The sender's registered funding hash, when the transfer was broadcast. */
+  depositTxHash?: string | null;
+  /** The resting order's own progress, when the record is a limit order. */
+  limit?: {
+    orderId: string;
+    fillStatus: string;
+    payoutStatus: string;
+    filled?: string;
+    filledPercent?: number;
+    deadline?: string;
+  } | null;
 };
 
 /**
@@ -405,6 +477,33 @@ export async function listToolApprovalSettlements(
         ?.explorerUrls;
       const amountOut = (row.outcome as { amountOut?: unknown } | null)
         ?.amountOut;
+      const refs = (row.refs ?? {}) as Record<string, unknown>;
+      const txHash = refs.txHash;
+      const orderOutcome = (row.outcome ?? {}) as Record<string, unknown>;
+      const filledPercent = limitOrderFilledPercent(
+        refs.side,
+        refs.quantity,
+        orderOutcome,
+      );
+      const limit =
+        refs.kind === "limit_order" && typeof refs.orderId === "string"
+          ? {
+              orderId: refs.orderId,
+              fillStatus:
+                typeof refs.fillStatus === "string" ? refs.fillStatus : "",
+              payoutStatus:
+                typeof refs.payoutStatus === "string" ? refs.payoutStatus : "",
+              ...(typeof refs.filled === "string"
+                ? { filled: refs.filled }
+                : {}),
+              ...(filledPercent !== null ? { filledPercent } : {}),
+              ...(typeof refs.orderDeadline === "string"
+                ? { deadline: refs.orderDeadline }
+                : typeof refs.deadline === "string"
+                  ? { deadline: refs.deadline }
+                  : {}),
+            }
+          : null;
       byId.set(row.tool_approval_id, {
         toolApprovalId: row.tool_approval_id,
         transactionId: row.id,
@@ -416,6 +515,9 @@ export async function listToolApprovalSettlements(
         statusCheckedAt: row.status_checked_at ?? null,
         amountOut: typeof amountOut === "string" ? amountOut : null,
         deposit: readDepositMetadata(row.refs, row.deposit_address),
+        depositTxHash:
+          typeof txHash === "string" && txHash.length > 0 ? txHash : null,
+        limit,
       });
     }
   }
@@ -460,6 +562,163 @@ export type HistoryItem = {
   conversationId: string | null;
   createdAt: string;
 };
+
+/**
+ * One of the signed-in account's trades, read for a live settlement check.
+ *
+ * The memo is included because a deposit address on a memo chain is ambiguous
+ * without it, and the status endpoint rejects the query when it is missing.
+ * The rest of `refs` stays out of the result: it can carry signed material.
+ */
+export type StatusRecord = {
+  id: string;
+  state: string;
+  depositAddress: string | null;
+  depositMemo: string | null;
+  /** The quote's funding deadline, when the record stored one. */
+  expiresAt: string | null;
+  originAsset: string | null;
+  destinationAsset: string | null;
+  amountIn: string | null;
+  expectedOut: string | null;
+  amountOut: string | null;
+  explorerUrls: string[];
+  createdAt: string;
+  /**
+   * The record kind, when the refs name one. A limit order is checked against
+   * `GET /v0/orders/{id}` instead of the swap status endpoint.
+   */
+  kind?: string;
+  orderId?: string | null;
+};
+
+/**
+ * The records a status read may check: one named transaction, one named
+ * deposit address, or the newest trades when the user named neither.
+ *
+ * Every selector is scoped by `user_id`, so an address the account does not
+ * own reads as no record rather than as a public lookup.
+ */
+export async function findStatusRecords(
+  userId: string,
+  selector: { id?: string; depositAddress?: string; limit?: number },
+): Promise<StatusRecord[]> {
+  const limit = Math.min(Math.max(selector.limit ?? 3, 1), 5);
+  const sb = getSupabaseAdmin();
+  let query = sb
+    .from("transactions")
+    .select(
+      "id, state, deposit_address, refs, origin_asset, destination_asset, amount_in, expected_out, outcome, created_at",
+    )
+    .eq("user_id", userId);
+
+  if (selector.id) {
+    query = query.eq("id", selector.id).limit(1);
+  } else if (selector.depositAddress) {
+    query = query.eq("deposit_address", selector.depositAddress).limit(1);
+  } else {
+    query = query.order("created_at", { ascending: false }).limit(limit);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error("The transaction record could not be read.");
+
+  return ((data ?? []) as Array<{
+    id: string;
+    state: string;
+    deposit_address: string | null;
+    refs: Record<string, unknown> | null;
+    origin_asset: string | null;
+    destination_asset: string | null;
+    amount_in: string | null;
+    expected_out: string | null;
+    outcome: Record<string, unknown> | null;
+    created_at: string;
+  }>).map((row) => {
+    const refs = row.refs ?? {};
+    const outcome = row.outcome ?? {};
+    const urls = outcome.explorerUrls;
+    return {
+      id: row.id,
+      state: row.state,
+      depositAddress: row.deposit_address,
+      depositMemo:
+        typeof refs.depositMemo === "string" && refs.depositMemo.length > 0
+          ? refs.depositMemo
+          : null,
+      expiresAt:
+        typeof refs.expiresAt === "string"
+          ? refs.expiresAt
+          : typeof refs.deadline === "string"
+            ? refs.deadline
+            : null,
+      originAsset: row.origin_asset,
+      destinationAsset: row.destination_asset,
+      amountIn: row.amount_in,
+      expectedOut: row.expected_out,
+      amountOut:
+        typeof outcome.amountOut === "string" ? outcome.amountOut : null,
+      explorerUrls: Array.isArray(urls)
+        ? urls.filter((u): u is string => typeof u === "string").slice(0, 2)
+        : [],
+      createdAt: row.created_at,
+      ...(typeof refs.kind === "string" ? { kind: refs.kind } : {}),
+      ...(typeof refs.orderId === "string" && refs.orderId.length > 0
+        ? { orderId: refs.orderId }
+        : {}),
+    } satisfies StatusRecord;
+  });
+}
+
+export type LimitOrderTransaction = {
+  id: string;
+  state: string;
+  refs: Record<string, unknown>;
+  outcome: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * The account's limit orders, newest first.
+ *
+ * The refs carry the order identity and the display fields the create route
+ * stored; no signed payload is read out. A single list read is deliberate: a
+ * card refresh asks 1Click once, and this tool never makes a network call per
+ * order.
+ */
+export async function listLimitOrderTransactions(
+  userId: string,
+  limit = 10,
+): Promise<LimitOrderTransaction[]> {
+  const size = Math.min(Math.max(Math.trunc(limit), 1), 50);
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from("transactions")
+    .select("id, state, refs, outcome, created_at, updated_at")
+    .eq("user_id", userId)
+    // PostgREST reads the JSON path in the column position; the kind is
+    // written by the create route and never by the browser.
+    .filter("refs->>kind", "eq", "limit_order")
+    .order("created_at", { ascending: false })
+    .limit(size);
+  if (error) throw new Error("The limit orders could not be read.");
+  return ((data ?? []) as Array<{
+    id: string;
+    state: string;
+    refs: Record<string, unknown> | null;
+    outcome: Record<string, unknown> | null;
+    created_at: string;
+    updated_at: string;
+  }>).map((row) => ({
+    id: row.id,
+    state: row.state,
+    refs: row.refs ?? {},
+    outcome: row.outcome ?? {},
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+}
 
 export type HistoryCursor = { createdAt: string; id: string };
 

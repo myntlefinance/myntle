@@ -50,6 +50,12 @@ The portfolio is the same account seen from another angle. It shows what the acc
 
 The approval is bound to the quote the server saved, not to anything the browser sends back. If the values are changed in devtools, the server refuses with "The trade changed since it was priced." If the quote has expired, it refuses that too, and the card has already expired on screen. After you sign, the trade moves through quoted, authorized, submitted, pending, and settled only as the settlement source confirms each step. When funds arrive but the trade is never filled, the screen says the money is coming back instead of painting a success for half of the story.
 
+### A price you set, and yield you can see
+
+A market swap is not the only way to use the account. Ask for a price you set and the assistant prices a limit order: the order rests until it fills, you cancel it, or its deadline passes. A partial fill is reported as it happens, and cancelling refunds the unfilled amount through the same order record.
+
+Ask what you can earn and the assistant lists the yield vaults available through NEAR Intents, with the protocol, the chain, the receipt token, and the current APY when the aggregator reports one. A deposit into a vault is the same one-signature approval as a swap; redeeming it is a quote back to the payment asset. Both work for a connected wallet and for a passkey account, because both sign the same intent.
+
 ### The assistant reads the market too
 
 A trade is not the only thing you can ask about. The same turn can search Google News, Reddit, and X, read the full text of a page it found, and resolve an ENS or SNS name. Those reads are fetched once per turn and served back in blocks rather than cut down to a display limit, so a long X thread stays whole and the model does not pay for the same search twice.
@@ -95,7 +101,7 @@ flowchart TB
   chat --> db
 ```
 
-The chat turn is a workflow run rather than a response-owned stream, so a reload or a dropped connection resumes the same answer instead of cancelling it. The toolset holds eighteen tools, scoped to the intent of each turn. Three of them can propose a movement of funds, and each one pauses for approval; the rest only read or ask you to unlock the Super account. No tool signs, and every trade passes through server validation before it can become a transaction.
+The chat turn is a workflow run rather than a response-owned stream, so a reload or a dropped connection resumes the same answer instead of cancelling it. The toolset holds twenty-two tools, scoped to the intent of each turn. Four of them can propose a movement of funds, and each one pauses for approval; the rest only read or ask you to unlock the Super account. No tool signs, and every trade passes through server validation before it can become a transaction.
 
 The approval routes validate the request against the connected account, and once the intent is signed and submitted, `swap-lifecycle` polls the settlement and records the outcome. The workflow holds no state of its own: everything is written to Postgres as it goes, a failed status poll is retried, and a settlement that failed on chain is final. The portfolio's price feed is a separate Cloudflare Worker that combines several sources behind one cache and a live stream; a trade quote always uses 1Click's own amount.
 
@@ -166,15 +172,19 @@ app/
   api/chat/[id]/stream/route.ts  replay from the client's cursor
   api/approve/route.ts           approval to the swap workflow
   api/intents/                   confidential quote, deposit, and submit
+  api/orders/                    limit orders, their refresh, and cancel
+  api/earn/                      the public yield catalogue and live APYs
   api/tx/[id]/route.ts           the transaction record
   (app)/page.tsx                 the chat screen
 workflows/
   chat-turn.ts                   model, tools, persistence
   swap-lifecycle.ts              submit, poll, reconcile
+  limit-order-lifecycle.ts       poll a resting order and write its fills
 lib/
   ai/                            provider, prompts, tool registry
   auth/                          passkeys, sessions, challenges
-  intents/                       quotes, approval checks, settlement
+  intents/                       quotes, approval checks, settlement, orders
+  earn/                          the yield vaults and their APY source
   wallet/                        EVM, Solana, and NEAR adapters
   news/                          Google News, Reddit, and X
   db/                            schema and queries

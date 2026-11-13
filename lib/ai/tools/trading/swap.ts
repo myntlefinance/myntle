@@ -1,6 +1,5 @@
 import { tool } from "ai";
 import { z } from "zod";
-import type { ToolContext } from "../context";
 import type { Capability } from "../capability";
 
 export const PREPARE_SWAP_CAPABILITY: Capability = {
@@ -12,7 +11,7 @@ export const PREPARE_SWAP_CAPABILITY: Capability = {
   promptTerms: ["prepare_swap"],
 };
 
-export function createPrepareSwapTool(_context?: ToolContext) {
+export function createPrepareSwapTool() {
   return tool({
     description:
       "Propose a trade for the user to approve. Returns the exact parameters that will " +
@@ -27,9 +26,11 @@ export function createPrepareSwapTool(_context?: ToolContext) {
       "detail, and swap for every other exchange.",
     inputSchema: z.object({
       action: z
-        .enum(["deposit", "swap", "bridge", "withdraw", "trade"])
+        .enum(["deposit", "swap", "bridge", "withdraw", "trade", "earn"])
         .default("swap")
-        .describe("What the user asked to do with their money"),
+        .describe(
+          "What the user asked to do with their money. Use earn when the output is a yield receipt token.",
+        ),
       fromAssetId: z.string().min(1).describe("Full asset id of the token being sold"),
       toAssetId: z.string().min(1).describe("Full asset id of the token being bought"),
       amount: z

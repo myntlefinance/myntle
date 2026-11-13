@@ -4,7 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useChat } from "@ai-sdk/react";
 import { WorkflowChatTransport } from "@ai-sdk/workflow/client";
-import type { UIMessage } from "ai";
+import type {
+  PrepareReconnectToStreamRequest,
+  PrepareSendMessagesRequest,
+  UIMessage,
+} from "ai";
 import Harness from "@/components/site/Harness";
 import { AccountControl } from "@/components/app/AccountControl";
 import { DEFAULT_MODEL } from "@/lib/ai/provider";
@@ -131,11 +135,15 @@ export default function ChatView({
   // connected-but-unsigned visitor queues prompts exactly like a
   // disconnected one; the gate offers the signature instead of a send.
   const accountRef = useRef(account);
-  accountRef.current = account;
+  useEffect(() => {
+    accountRef.current = account;
+  }, [account]);
   // A passkey session is signed in with no connected wallet, so the
   // transport reads its identity from a ref rather than from `account`.
   const identityRef = useRef(identity);
-  identityRef.current = identity;
+  useEffect(() => {
+    identityRef.current = identity;
+  }, [identity]);
   const router = useRouter();
   const [conversationId, setConversationId] = useState<string | null>(
     initialConversationId,
@@ -169,7 +177,9 @@ export default function ChatView({
     null,
   );
   const conversationIdRef = useRef<string | null>(conversationId);
-  conversationIdRef.current = conversationId;
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
   // Chats this tab has generated in, with when the turn started. Switching
   // back within the window reconnects to the durable run instead of showing
   // the partial cached at the moment of leaving.
@@ -181,7 +191,9 @@ export default function ChatView({
       : findThreadLabel(initialConversationId ?? null),
   );
   const titleRef = useRef<string | null>(title);
-  titleRef.current = title;
+  useEffect(() => {
+    titleRef.current = title;
+  }, [title]);
   const titleDirtyRef = useRef(false);
 
   const [gated, setGated] = useState<GatedExchange[]>([]);
@@ -244,57 +256,42 @@ export default function ChatView({
     ),
   );
 
-  const { messages, sendMessage, setMessages, status, clearError, regenerate, addToolApprovalResponse, stop, resumeStream } = useChat({
-    // A turn is a durable workflow run now. When the page loads with an
-    // unfinished run, the chat reconnects to its stream and replays from the
-    // first chunk, so a reload mid-answer comes back to the same answer
-    // instead of the snapshot that happened to be saved.
-    resume: resumeInterruptedTurn,
-    // Seed first paint from the newer of the server read and this tab's
-    // persisted copy, so a route payload the router cached before the last
-    // turn can never hide a message that is already on screen somewhere.
-    messages: initialSeed,
-    transport: new WorkflowChatTransport({
-      api: "/api/chat",
-      // The workflow transport does not take transport-level headers/body,
-      // so the per-turn ones are prepared here. A fresh access token is
-      // refreshed silently from the browser-held refresh token; the server
-      // seals it for the run. A passkey session is keyed by its account.
-      prepareSendMessagesRequest: async ({
-        messages: sentMessages,
-        body,
-        trigger,
-        messageId,
-      }) => ({
+  // The workflow transport does not take transport-level headers/body,
+  // so the per-turn ones are prepared here. A fresh access token is
+  // refreshed silently from the browser-held refresh token; the server
+  // seals it for the run. A passkey session is keyed by its account.
+  // The callbacks close over state (not refs) so the transport holds no
+  // ref reads at all; it is rebuilt when the values it sends change.
+  const prepareSendMessagesRequest =
+    useCallback<PrepareSendMessagesRequest<UIMessage>>(
+      async ({ messages: sentMessages, body, trigger, messageId }) => ({
         api: "/api/chat",
         headers: {
           "content-type": "application/json",
-          ...(await chatRequestHeaders({
-            identity: identityRef.current,
-            account: accountRef.current,
-          })),
+          ...(await chatRequestHeaders({ identity, account })),
         },
         body: {
           messages: sentMessages,
           model,
-          conversationId: conversationIdRef.current,
-          title: titleRef.current,
-          walletAddress: accountRef.current?.address,
-          walletChain: accountRef.current?.kind,
-          superUnlocked: chatSuperUnlocked({
-            identity: identityRef.current,
-            account: accountRef.current,
-          }),
+          conversationId,
+          title,
+          walletAddress: account?.address,
+          walletChain: account?.kind,
+          superUnlocked: chatSuperUnlocked({ identity, account }),
           trigger,
           messageId,
           ...(body ?? {}),
         },
       }),
-      // A run is looked up through the chat it belongs to, never through a
-      // run id the browser could invent. The chat page has the slug; a fresh
-      // composer adopts it from the response headers below.
-      prepareReconnectToStreamRequest: ({ api }) => {
-        const slug = conversationIdRef.current;
+      [model, conversationId, title, account, identity],
+    );
+  // A run is looked up through the chat it belongs to, never through a
+  // run id the browser could invent. The chat page has the slug; a fresh
+  // composer adopts it from the response headers below.
+  const prepareReconnectToStreamRequest =
+    useCallback<PrepareReconnectToStreamRequest>(
+      ({ api }) => {
+        const slug = conversationId;
         // A finished turn is replayed at a readable pace on the server. The
         // one case that should not animate is a reader who asked for less
         // motion.
@@ -305,49 +302,96 @@ export default function ChatView({
           ? { "x-chat-replay-pace": "off" }
           : undefined;
         if (!slug) return { api, headers };
-        return { api: `/api/chat/${encodeURIComponent(slug)}/stream`, headers };
+        return {
+          api: `/api/chat/${encodeURIComponent(slug)}/stream`,
+          headers,
+        };
       },
-      // The server names the chat before the first token. Adopting it now,
-      // rather than after the turn, is what makes a reload mid-answer land
-      // on the chat's own page with a run to resume.
-      onChatSendMessage: (response) => {
-        const slug = response.headers.get("x-conversation-slug");
-        if (!slug) return;
-        // Remember this tab's live turn so switching back reconnects to the
-        // run instead of showing the snapshot from the moment we left.
-        liveRunsRef.current.set(slug, Date.now());
-        if (conversationIdRef.current === slug) return;
-        conversationIdRef.current = slug;
-        // The thread loader must not fetch the half-saved history over the
-        // stream that is currently being written.
-        lastLoadedConvRef.current = slug;
-        setConversationId(slug);
-        // The conversation row and its first message now exist, so the
-        // sidebar can show this chat while the answer streams.
-        void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
-        try {
-          localStorage.setItem("myntle-conv", slug);
-        } catch {
-          // Ignore.
-        }
-        try {
-          window.history.replaceState(
-            null,
-            "",
-            `/chat/${encodeURIComponent(slug)}`,
-          );
-        } catch {
-          // Ignore.
-        }
-      },
-    }),
+      [conversationId],
+    );
+  // The slug the send response adopted, committed to the run-only refs in
+  // the effect below. Kept as state (not a ref write in the callback) so
+  // the transport never touches a ref.
+  const [sentSlug, setSentSlug] = useState<string | null>(null);
+  // The server names the chat before the first token. Adopting it now,
+  // rather than after the turn, is what makes a reload mid-answer land
+  // on the chat's own page with a run to resume.
+  const onChatSendMessage = useCallback(
+    (response: Response) => {
+      const slug = response.headers.get("x-conversation-slug");
+      if (!slug || slug === conversationId) return;
+      setConversationId(slug);
+      setSentSlug(slug);
+      // The conversation row and its first message now exist, so the
+      // sidebar can show this chat while the answer streams.
+      void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
+      try {
+        localStorage.setItem("myntle-conv", slug);
+      } catch {
+        // Ignore.
+      }
+      try {
+        window.history.replaceState(
+          null,
+          "",
+          `/chat/${encodeURIComponent(slug)}`,
+        );
+      } catch {
+        // Ignore.
+      }
+    },
+    [conversationId, queryClient],
+  );
+  const transport = useMemo(
+    () =>
+      new WorkflowChatTransport({
+        api: "/api/chat",
+        prepareSendMessagesRequest,
+        prepareReconnectToStreamRequest,
+        onChatSendMessage,
+      }),
+    [
+      prepareSendMessagesRequest,
+      prepareReconnectToStreamRequest,
+      onChatSendMessage,
+    ],
+  );
+
+  const { messages, sendMessage, setMessages, status, clearError, regenerate, addToolApprovalResponse, stop, resumeStream } = useChat({
+    // A turn is a durable workflow run now. When the page loads with an
+    // unfinished run, the chat reconnects to its stream and replays from the
+    // first chunk, so a reload mid-answer comes back to the same answer
+    // instead of the snapshot that happened to be saved.
+    resume: resumeInterruptedTurn,
+    // Seed first paint from the newer of the server read and this tab's
+    // persisted copy, so a route payload the router cached before the last
+    // turn can never hide a message that is already on screen somewhere.
+    messages: initialSeed,
+    transport,
   });
   const messagesRef = useRef(messages);
-  messagesRef.current = messages;
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
   // A switch handler reads the live status without being rebuilt on every
   // token, so the listeners that use it stay registered once.
   const statusRef = useRef(status);
-  statusRef.current = status;
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+  // Commit the slug the send response adopted to the run-only refs.
+  // Runs in an effect (not in the transport callback) so the transport
+  // never touches a ref, and runs before the thread loader below so the
+  // loader does not fetch the half-saved history over the live stream.
+  useEffect(() => {
+    if (!sentSlug) return;
+    // Remember this tab's live turn so switching back reconnects to the
+    // run instead of showing the snapshot from the moment we left.
+    liveRunsRef.current.set(sentSlug, Date.now());
+    // The thread loader must not fetch the half-saved history over the
+    // stream that is currently being written.
+    lastLoadedConvRef.current = sentSlug;
+  }, [sentSlug]);
   // The continuation turn is a transport instruction, not something the
   // person typed. It stays out of the transcript so it cannot render a user
   // bubble or count as a newer message that expires an unlock card.
@@ -575,22 +619,32 @@ export default function ChatView({
         const ids = [...approvalReadQueueRef.current];
         approvalReadQueueRef.current.clear();
         if (ids.length === 0) return;
-        void fetchApprovalRecords(ids).then((body) => {
-          if (!body) return;
-          setFetchedDecisions((current) => ({
-            ...current,
-            ...body.decisions,
-          }));
-          setSettlements((current) => ({
-            ...current,
-            ...body.settlements,
-          }));
+        void (async () => {
+          let body = await fetchApprovalRecords(ids);
+          // One bounded retry covers a transient 401/500. If the read still
+          // fails, the card falls back to its message snapshot instead of
+          // staying a skeleton forever; every money route re-checks the
+          // server record before it acts.
+          if (!body) {
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+            body = await fetchApprovalRecords(ids);
+          }
+          if (body) {
+            setFetchedDecisions((current) => ({
+              ...current,
+              ...body.decisions,
+            }));
+            setSettlements((current) => ({
+              ...current,
+              ...body.settlements,
+            }));
+          }
           setReadApprovalIds((current) => {
             const next = new Set(current);
             for (const id of ids) next.add(id);
             return next;
           });
-        });
+        })();
       }, 0);
       return true;
     },
@@ -748,38 +802,38 @@ export default function ChatView({
     }
   }, [initialConversationId, initialThread]);
 
+  // Seeding the transcript from the tab cache is derived during render:
+  // the moment the conversation changes, a warmed preview paints at once
+  // and the loader below only handles the network. The switch handler
+  // above already seeds its own target; this covers mounts and adopted
+  // slugs, where no event carried the cached messages.
+  const [seededConv, setSeededConv] = useState<string | null>(null);
+  if (seededConv !== conversationId) {
+    setSeededConv(conversationId);
+    if (conversationId && messages.length === 0) {
+      const seeded = getCachedMessages(conversationId);
+      if (seeded && seeded.length > 0) {
+        setMessages(seeded);
+        setLoadingThread(false);
+        const pag = threadPagination.get(conversationId);
+        if (pag) setHasMoreOlder(pag.hasMore);
+      }
+    }
+  }
+
   useEffect(() => {
     if (!conversationId) return;
     // Wait for the session answer. A signed-out deep link is about to be
     // redirected; fetching its history first only buys a 401. A signed-in
     // thread normally arrives server-seeded and never reaches this fetch.
     if (sessionStatus !== "signed-in") return;
-    // Visited before: render instantly from cache
+    // Visited before: the render seed above already painted the cache.
     const cached = getCachedMessages(conversationId);
-    if (cached && cached.length > 0 && messages.length === 0) {
-      setMessages(cached);
-      setLoadingThread(false);
-      const threadLabel = threads.find((t) => t.id === conversationId)?.label;
-      // NULL is untitled; a stored "New chat" string is a manual rename and
-      // must survive untouched.
-      if (threadLabel != null) {
-        titleDirtyRef.current = false;
-        setTitle(threadLabel);
-      } else if (titleRef.current?.trim() === "New chat") {
-        // Stale placeholder from before untitled became NULL.
-        titleDirtyRef.current = false;
-        setTitle(null);
-      }
-      const pag = threadPagination.get(conversationId);
-      if (pag) setHasMoreOlder(pag.hasMore);
-    }
-
     if (messages.length > 0 && lastLoadedConvRef.current === conversationId) return;
     // A history that was just read by a hover prefetch, or by the previous
     // open, is already this read. A stale cache still revalidates below.
     if (cached && cached.length > 0 && threadReadRecently(conversationId)) {
       lastLoadedConvRef.current = conversationId;
-      setLoadingThread(false);
       return;
     }
     lastLoadedConvRef.current = conversationId;
@@ -852,14 +906,13 @@ export default function ChatView({
    *
    * Approval records do not gate the transcript at all: a card that is on
    * screen reads its own record, and an off-screen card is not read.
+   *
+   * The release is derived during render, so no effect syncs the loading
+   * flags into the gate.
    */
-  useEffect(() => {
-    if (!assetGate) return;
-    // The messages themselves are still loading; nothing to check yet.
-    if (loadingThread) return;
-    if (assetsPending) return;
+  if (assetGate && !loadingThread && !assetsPending) {
     setAssetGate(false);
-  }, [assetGate, loadingThread, assetsPending]);
+  }
 
   // Learn the server conversation after the first saved turn, persist the
   // local title, refresh the list, then move off the composer onto its
@@ -955,7 +1008,7 @@ export default function ChatView({
         metadata: { createdAt: new Date().toISOString() },
       });
     },
-    [signedIn, sendMessage],
+    [signedIn, sendMessage, setGated],
   );
 
   // After unlocking, continue the paused turn as a new assistant message.
@@ -1304,20 +1357,20 @@ export default function ChatView({
 
   // Seeded mounts skip the history fetch (messages already present) but
   // still need the saved title. The sidebar list carries it. NULL is
-  // untitled; a stored "New chat" string is a manual rename.
-  useEffect(() => {
+  // untitled; a stored "New chat" string is a manual rename. Derived
+  // during render so no effect syncs the list into the title.
+  {
     const needsTitle = !title || title.trim() === "New chat";
-    if (!conversationId || !needsTitle || messages.length === 0) return;
-    const found = threads.find((t) => t.id === conversationId);
-    if (!found) return;
-    if (found.label != null) {
-      titleDirtyRef.current = false;
-      setTitle(found.label);
-    } else if (title?.trim() === "New chat") {
-      titleDirtyRef.current = false;
-      setTitle(null);
+    if (conversationId && needsTitle && messages.length > 0) {
+      const found = threads.find((t) => t.id === conversationId);
+      if (found && found.label != null && found.label !== title) {
+        setTitle(found.label);
+      } else if (!found?.label && title?.trim() === "New chat") {
+        // Stale placeholder from before untitled became NULL.
+        setTitle(null);
+      }
     }
-  }, [conversationId, title, messages.length, threads]);
+  }
 
   const loadOlderMessages = useCallback(async () => {
     if (!conversationId || loadingOlder || !hasMoreOlder) return;
@@ -1374,7 +1427,7 @@ export default function ChatView({
     } finally {
       setLoadingOlder(false);
     }
-  }, [conversationId, loadingOlder, hasMoreOlder, messages, setMessages]);
+  }, [conversationId, loadingOlder, hasMoreOlder, messages, setMessages, setLoadingOlder, setHasMoreOlder]);
 
   return (
     <Harness

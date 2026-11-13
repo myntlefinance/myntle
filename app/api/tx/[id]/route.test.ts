@@ -176,6 +176,18 @@ describe("GET /api/tx/[id]?refresh=1", () => {
     });
   });
 
+  it("returns the sender's registered funding hash", async () => {
+    const tx = transaction();
+    tx.refs = { ...tx.refs, txHash: "0xfunded" };
+    getTransactionMock.mockResolvedValue({ tx, events: [] });
+
+    const body = (await (
+      await GET(request(), params())
+    ).json()) as Record<string, unknown>;
+
+    expect(body.depositTxHash).toBe("0xfunded");
+  });
+
   it("does not check anything without the refresh flag", async () => {
     const res = await GET(request(), params());
     const body = (await res.json()) as Record<string, unknown>;

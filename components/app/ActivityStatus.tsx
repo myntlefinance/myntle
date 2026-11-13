@@ -40,6 +40,7 @@ const APPROVAL_TOOLS = new Set([
   "prepare_swap",
   "prepare_deposit",
   "prepare_withdrawal",
+  "prepare_limit_order",
 ]);
 
 /* One glyph per kind of work, taken from Tabler's outline set on the 24px
@@ -89,6 +90,21 @@ const ICONS: Record<string, ReactNode> = {
     <g {...STROKE}>
       <path d="M7 10h14l-4 -4" />
       <path d="M17 14h-14l4 4" />
+    </g>
+  ),
+  /* Tabler IconClock: a resting order waits for its price. */
+  limit: (
+    <g {...STROKE}>
+      <path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" />
+      <path d="M12 7v5l3 3" />
+    </g>
+  ),
+  /* Tabler IconPlant: a yield position grows while it rests. */
+  earn: (
+    <g {...STROKE}>
+      <path d="M12 21v-7" />
+      <path d="M12 14c-3 0-5 -2 -5 -5c3 0 5 2 5 5z" />
+      <path d="M12 14c3 0 5 -2 5 -5c-3 0 -5 2 -5 5z" />
     </g>
   ),
   deposit: (

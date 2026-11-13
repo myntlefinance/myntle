@@ -304,26 +304,28 @@ export async function POST(req: Request) {
         assetId: params.fromAssetId,
         destination: mode === "confidential-withdrawal" ? params.recipient : null,
         toolApprovalId: body.approvalId || null,
+        // The submit route records the decision only after the signed intent
+        // exists. A cancelled passkey prompt must leave the card retryable.
+        toolName:
+          mode === "confidential-withdrawal"
+            ? "prepare_withdrawal"
+            : mode === "confidential-external"
+              ? "prepare_deposit"
+              : "prepare_swap",
         conversationId,
       },
       state: isSignedQuoteMode(mode) ? "awaiting_approval" : "submitted",
     });
 
-    // The approval is written once the record exists, and the tool it names
-    // follows the stored mode: a withdrawal pays an address, an external
-    // deposit funds the account, everything else is a swap. A failure costs
-    // the decision row, never the trade.
-    if (body.approvalId) {
+    // An external deposit has no signature to wait for, so its decision is
+    // real as soon as the address exists. A signed mode is recorded by the
+    // submit route, after the assertion is verified and the intent is sent.
+    if (body.approvalId && !isSignedQuoteMode(mode)) {
       try {
         await recordToolApproval({
           userId: session.userId,
           toolApprovalId: body.approvalId,
-          toolName:
-            mode === "confidential-withdrawal"
-              ? "prepare_withdrawal"
-              : mode === "confidential-external"
-                ? "prepare_deposit"
-                : "prepare_swap",
+          toolName: "prepare_deposit",
           decision: "approved",
           conversationId,
           quoteId: stored.id,
