@@ -76,25 +76,73 @@ const WALLET_STANDARD: Record<ChainKind, ConnectedWallet["standard"]> = {
  * the signed-in account look replaced. The actual connected account is still
  * available separately for signing and funding; this value is only the
  * session identity the account menu and pages display.
+ *
+ * Brand comes from the live connection first. A session outlives its
+ * connection — the cookie stays while the tab reloads without
+ * auto-reconnect — so a saved record for the same account stands in when
+ * nothing is connected. Display only: it never authorises anything.
  */
 export function sessionAccountFor(
   identity: SessionIdentity | null,
   actual: ConnectedWallet | null,
+  saved?: {
+    kind: unknown;
+    address: unknown;
+    walletName?: unknown;
+    walletIcon?: unknown;
+  } | null,
 ): ConnectedWallet | null {
   if (!identity || identity.kind === "passkey") return actual;
   const matched =
     actual && sameAccount(actual.kind, actual.address, identity)
       ? actual
       : null;
+  if (matched) {
+    return {
+      kind: identity.chain,
+      standard: WALLET_STANDARD[identity.chain],
+      address: identity.address,
+      signerId: identity.intentsAccountId,
+      publicKey: "",
+      walletName: matched.walletName,
+      walletIcon: matched.walletIcon,
+    };
+  }
+  // No live connection, but the browser signed in with this exact account
+  // before: keep its brand instead of falling back to the generic glyph.
+  // Anything else (another account, no record) stays brandless.
+  if (
+    saved &&
+    saved.kind === identity.chain &&
+    typeof saved.address === "string" &&
+    sameAccount(identity.chain, saved.address, identity)
+  ) {
+    const walletName =
+      typeof saved.walletName === "string" && saved.walletName.length > 0
+        ? saved.walletName
+        : undefined;
+    const walletIcon =
+      typeof saved.walletIcon === "string" && saved.walletIcon.length > 0
+        ? saved.walletIcon
+        : undefined;
+    if (walletName !== undefined || walletIcon !== undefined) {
+      return {
+        kind: identity.chain,
+        standard: WALLET_STANDARD[identity.chain],
+        address: identity.address,
+        signerId: identity.intentsAccountId,
+        publicKey: "",
+        ...(walletName !== undefined ? { walletName } : {}),
+        ...(walletIcon !== undefined ? { walletIcon } : {}),
+      };
+    }
+  }
   return {
     kind: identity.chain,
     standard: WALLET_STANDARD[identity.chain],
     address: identity.address,
     signerId: identity.intentsAccountId,
     publicKey: "",
-    ...(matched
-      ? { walletName: matched.walletName, walletIcon: matched.walletIcon }
-      : {}),
   };
 }
 

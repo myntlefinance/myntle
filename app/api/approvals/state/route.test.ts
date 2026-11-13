@@ -52,7 +52,7 @@ describe("/api/approvals/state", () => {
       "aitxt-1": {
         decision: "denied",
         toolName: "prepare_swap",
-        decidedAt: "2026-01-01T00:00:00.000Z",
+        decidedAt: "2026-11-01T00:00:00.000Z",
       },
     });
     listToolApprovalSettlementsMock.mockResolvedValue([

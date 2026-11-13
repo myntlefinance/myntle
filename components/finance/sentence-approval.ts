@@ -84,8 +84,8 @@ export function depositApproval(input: {
 }
 
 /**
- * A confidential swap: approve the stored quote, sign the returned payload
- * with the session signer, submit the assertion.
+ * An account-funded swap: approve the stored quote, sign the returned
+ * payload with the session signer, submit the assertion.
  *
  * The card keeps the quoted figures it was rendered with; the result carries
  * only the record to poll, because the server has not repriced anything the
@@ -95,7 +95,7 @@ export function swapApproval(input: {
   quoteId: string;
   approvalId?: string;
   conversationId?: string | null;
-  sign: (payload: string) => Promise<Record<string, unknown>>;
+  sign: IntentSigner;
 }): SentenceApproval {
   return async ({ onPhase }) => {
     if (!input.quoteId) {

@@ -422,6 +422,30 @@ export async function listToolApprovalSettlements(
   return [...byId.values()];
 }
 
+/**
+ * Whether a money action already produced a transaction for this proposal.
+ *
+ * The settlement list above is deliberately forgiving: a failed read loses a
+ * card's record, not a trade. A refusal cannot afford that trade-off, so this
+ * read throws instead of answering "none". Writing `denied` over a deposit
+ * whose address already exists is the one mistake a refusal must never make,
+ * so the caller has to be able to tell "no transaction" from "could not read".
+ */
+export async function hasToolApprovalSettlement(
+  userId: string,
+  toolApprovalId: string,
+): Promise<boolean> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from("transactions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("tool_approval_id", toolApprovalId)
+    .limit(1);
+  if (error) throw new Error("The settlement could not be read.");
+  return (data?.length ?? 0) > 0;
+}
+
 export type HistoryItem = {
   id: string;
   state: string;

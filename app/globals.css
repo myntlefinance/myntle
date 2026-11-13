@@ -1890,6 +1890,14 @@ th.is-colsel .records-header-icon {
   color: var(--ink);
 }
 
+/* A token chip is 25px tall (an 18px avatar plus its padding), which is
+ * taller than the reply's 1.6 line box, so two wrapped lines of chips meet
+ * edge to edge. A paragraph or list item that carries one takes the same
+ * 2.0 leading the trade sentence already gives the same chip. */
+.md-prose :is(p, li):has([data-token-chip]) {
+  line-height: 2;
+}
+
 /* Task-list checkbox (GFM `- [ ]`). Same visual language as
  * `.records-checkbox-box` — border, radius, and accent fill — sized for
  * 14px reply text. The bullet stays; the box sits inline after it. Static:

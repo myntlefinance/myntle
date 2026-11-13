@@ -6,13 +6,14 @@ export type RouteIntent = {
   toolDomains: ToolDomain[];
 };
 
-const FULL_PROMPT: PromptDomain[] = ["trading", "portfolio", "news"];
+const FULL_PROMPT: PromptDomain[] = ["trading", "portfolio", "news", "names"];
 const FULL_TOOLS: ToolDomain[] = [
   "portfolio",
   "trading",
   "assets",
   "news",
   "intents",
+  "names",
 ];
 
 const TRADE_RE =

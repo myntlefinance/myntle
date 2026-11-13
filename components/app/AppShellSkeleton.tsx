@@ -2,7 +2,6 @@
 
 import { Skeleton } from "skullet/react";
 import {
-  IconArrowRight,
   IconChevronLeft,
   IconCoins,
   IconDots,
@@ -300,15 +299,6 @@ function EmptyBody() {
               </div>
             ))}
             <div className="mt-1 flex items-center gap-5 pl-0.5 text-[13px] text-ink-3">
-              <span className="flex items-center gap-2 py-1">
-                <span {...{ "skullet-ignore": "" }}>
-                  <IconDots size={15} stroke={1.9} />
-                </span>
-                Connect your apps for a better experience
-                <span {...{ "skullet-ignore": "" }}>
-                  <IconArrowRight size={13} stroke={2} />
-                </span>
-              </span>
               <span className="flex items-center gap-2 py-1">
                 <span {...{ "skullet-ignore": "" }}>
                   <IconRefresh size={14} stroke={2} />

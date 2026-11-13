@@ -8,6 +8,7 @@ const {
   createApprovalMock,
   createTransactionMock,
   setTransactionRunIdMock,
+  setTransactionStateMock,
   startMock,
   swapLifecycleStub,
   conversationIdForUserMock,
@@ -21,6 +22,7 @@ const {
   createApprovalMock: vi.fn(),
   createTransactionMock: vi.fn(),
   setTransactionRunIdMock: vi.fn(),
+  setTransactionStateMock: vi.fn(),
   startMock: vi.fn(),
   swapLifecycleStub: vi.fn(),
   conversationIdForUserMock: vi.fn(),
@@ -47,6 +49,7 @@ vi.mock("@/lib/db/transactions", () => ({
   createApproval: createApprovalMock,
   createTransaction: createTransactionMock,
   setTransactionRunId: setTransactionRunIdMock,
+  setTransactionState: setTransactionStateMock,
 }));
 
 vi.mock("@/lib/db/conversations", () => ({
@@ -347,5 +350,73 @@ describe("/api/intents/deposit", () => {
     expect(res.status).toBe(502);
     expect(createTransactionMock).not.toHaveBeenCalled();
     expect(startMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses before minting when the proposal was already denied", async () => {
+    getToolApprovalMock.mockResolvedValue({
+      decision: "denied",
+      toolName: "prepare_deposit",
+      decidedAt: new Date().toISOString(),
+    });
+
+    const res = await POST(
+      request({ assetId: ASSET_ID, amount: "1000000", approvalId: "aitxt-1" }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: "denied",
+      message: "This proposal was rejected. Please ask for a new one.",
+    });
+    expect(createExecutionQuoteMock).not.toHaveBeenCalled();
+    expect(createTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses when a denial won the race after the address was minted", async () => {
+    recordToolApprovalMock.mockResolvedValue({
+      decision: "denied",
+      toolName: "prepare_deposit",
+      decidedAt: new Date().toISOString(),
+    });
+
+    const res = await POST(
+      request({ assetId: ASSET_ID, amount: "1000000", approvalId: "aitxt-1" }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: "denied",
+      message: "This proposal was rejected. Please ask for a new one.",
+    });
+    // The row exists, so it is closed as failed rather than left submitted.
+    expect(setTransactionStateMock).toHaveBeenCalledWith(
+      TRANSACTION_ID,
+      "failed",
+      expect.objectContaining({ error: "denied-after-mint" }),
+    );
+    expect(startMock).not.toHaveBeenCalled();
+    expect(setTransactionRunIdMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the deposit when the decision write is lost", async () => {
+    // A thrown write and a null read are not denials: the transaction is the
+    // stronger fact, and the deny route guards it from here.
+    recordToolApprovalMock
+      .mockRejectedValueOnce(new Error("db down"))
+      .mockResolvedValueOnce(null);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const res = await POST(
+        request({
+          assetId: ASSET_ID,
+          amount: "1000000",
+          approvalId: "aitxt-1",
+        }),
+      );
+      expect(res.status, String(attempt)).toBe(200);
+    }
+
+    expect(setTransactionStateMock).not.toHaveBeenCalled();
+    expect(startMock).toHaveBeenCalledTimes(2);
   });
 });

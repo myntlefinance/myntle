@@ -9,9 +9,14 @@ export type WatchedAddressRow = {
   label: string | null;
   is_default: boolean;
   created_at: string;
+  /** The normalized `.eth` name the row was tracked from, else null. */
+  resolved_name: string | null;
+  /** Fresh ISO UTC from the read that stored the name, else null. */
+  resolved_at: string | null;
 };
 
-const COLUMNS = "id, user_id, chain, address, label, is_default, created_at";
+const COLUMNS =
+  "id, user_id, chain, address, label, is_default, created_at, resolved_name, resolved_at";
 
 /**
  * The watchlist: addresses the user tracks read-only.
@@ -38,13 +43,17 @@ export async function listWatchedAddresses(
 
 /**
  * Tracks an address. A duplicate add stays one row: the unique constraint
- * wins the race and the existing row is returned instead.
+ * wins the race and the existing row is returned instead. A row tracked
+ * from a name carries that name and its read time; a raw address carries
+ * neither.
  */
 export async function addWatchedAddress(args: {
   userId: string;
   chain: WatchChain;
   address: string;
   label: string;
+  resolvedName?: string | null;
+  resolvedAt?: string | null;
 }): Promise<WatchedAddressRow> {
   const sb = getSupabaseAdmin();
   const { data, error } = await sb
@@ -54,6 +63,8 @@ export async function addWatchedAddress(args: {
       chain: args.chain,
       address: args.address,
       label: args.label,
+      resolved_name: args.resolvedName ?? null,
+      resolved_at: args.resolvedAt ?? null,
     })
     .select(COLUMNS)
     .single();
@@ -124,13 +135,17 @@ export async function findWatchedAddress(args: {
 
 /** Renames a row, and moves it when the chain or address changed. Only the
  * caller's own row. A move onto an already-tracked account is rejected by
- * the caller, never merged: the unique constraint wins the race instead. */
+ * the caller, never merged: the unique constraint wins the race instead.
+ * The `resolved` triple travels only when the address changed: a move to a
+ * name stores it fresh, a move to a raw address clears it, and a
+ * rename-only edit leaves the stored name alone. */
 export async function updateWatchedAddress(args: {
   userId: string;
   id: string;
   label: string;
   chain?: WatchChain;
   address?: string;
+  resolved?: { name: string | null; at: string | null };
 }): Promise<WatchedAddressRow | null> {
   const sb = getSupabaseAdmin();
   const { data, error } = await sb
@@ -139,6 +154,9 @@ export async function updateWatchedAddress(args: {
       label: args.label,
       ...(args.chain ? { chain: args.chain } : {}),
       ...(args.address ? { address: args.address } : {}),
+      ...(args.resolved
+        ? { resolved_name: args.resolved.name, resolved_at: args.resolved.at }
+        : {}),
     })
     .eq("id", args.id)
     .eq("user_id", args.userId)

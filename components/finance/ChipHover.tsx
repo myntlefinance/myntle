@@ -22,6 +22,7 @@ import {
   dismissHoverCard,
   releaseHoverCard,
 } from "@/components/app/hoverCard";
+import { useViewportIntent } from "@/components/app/usePrice";
 
 /** Fixed-position detail card for an inline chip. Portalled to the body so
  * an inline wrapper, a card with overflow hidden, or a stacking context
@@ -166,6 +167,10 @@ export function ChipHover({
   // mousedown focuses (opens), mouseup clicks. The flag eats exactly that
   // click; later clicks toggle normally.
   const focusOpened = useRef(false);
+
+  // Warm the card as soon as the chip is within 200px of the viewport, not
+  // only when the pointer arrives. Hover then opens from a warm cache.
+  useViewportIntent(anchorRef, () => onIntent?.(), Boolean(onIntent));
 
   useEffect(() => {
     setMounted(true);

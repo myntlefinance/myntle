@@ -3,12 +3,17 @@ import {
   getConnectedWalletBalances,
   type SupportedNetwork,
 } from "@/lib/wallet/balances";
-import { getIntentsLedgerBalances } from "@/lib/intents/balances";
 import { requireSession } from "@/lib/auth/session";
+
+/* Privacy by default: the public Intents settlement ledger is never read
+ * here. The route returns wallet chain balances only; the confidential
+ * side reads browser-side with its own User-Session and never hits this
+ * route. The empty ledger below keeps the body shape so existing clients
+ * merge to wallet-only with no change. */
 
 type BalancesBody = {
   wallet: Awaited<ReturnType<typeof getConnectedWalletBalances>>;
-  intentsLedger: Awaited<ReturnType<typeof getIntentsLedgerBalances>>;
+  intentsLedger: { status: "empty"; balances: []; totalValueUsd: number };
 };
 
 const balancesCache = new Map<string, { at: number; body: BalancesBody }>();
@@ -50,15 +55,21 @@ export async function GET(req: Request) {
   const cacheKey = `${chain}|${address.toLowerCase()}|${rawNetworks ?? "all"}|${symbol ?? ""}|${mode}`;
   if (!refresh) {
     const cached = balancesCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < 60_000) {
+    if (cached && Date.now() - cached.at < 300_000) {
       return NextResponse.json(cached.body);
     }
   }
 
-  const [wallet, intentsLedger] = await Promise.all([
-    getConnectedWalletBalances(chain, address, { networks, symbol, maxPages }),
-    getIntentsLedgerBalances(address, chain),
-  ]);
+  const wallet = await getConnectedWalletBalances(chain, address, {
+    networks,
+    symbol,
+    maxPages,
+  });
+  const intentsLedger: BalancesBody["intentsLedger"] = {
+    status: "empty",
+    balances: [],
+    totalValueUsd: 0,
+  };
 
   const body: BalancesBody = { wallet, intentsLedger };
   balancesCache.set(cacheKey, { at: Date.now(), body });

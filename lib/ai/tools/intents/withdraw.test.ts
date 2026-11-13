@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createPrepareWithdrawalTool,
   prepareWithdrawalInputSchema,
@@ -6,6 +6,14 @@ import {
 } from "./withdraw";
 import { TOOL_APPROVALS } from "../approval-policy";
 import { createTools } from "../registry";
+
+const { resolveNameMock } = vi.hoisted(() => ({
+  resolveNameMock: vi.fn(),
+}));
+
+vi.mock("@/lib/adapters/registry", () => ({
+  getNameResolverPort: () => ({ resolveName: resolveNameMock }),
+}));
 
 const ASSET =
   "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near";
@@ -44,9 +52,9 @@ describe("prepare_withdrawal", () => {
       toAssetId: ASSET,
       amount: "500000",
       destination: DESTINATION,
-      mode: "confidential-withdrawal",
       note: "The interface will show the destination and the fee from the stored quote. Do not call prepare_withdrawal again for this withdrawal unless the user asks for a new one.",
     });
+    expect(JSON.stringify(result).toLowerCase()).not.toContain("confidential");
     for (const forbidden of [
       "quoteId",
       "depositAddress",
@@ -57,6 +65,47 @@ describe("prepare_withdrawal", () => {
     ]) {
       expect(result).not.toHaveProperty(forbidden);
     }
+  });
+
+  it("resolves a destination name to the bound address", async () => {
+    resolveNameMock.mockResolvedValue({
+      address: DESTINATION,
+      name: "vitalik.eth",
+      resolvedAt: "2026-11-08T00:00:00.000Z",
+    });
+    const tool = createPrepareWithdrawalTool();
+    const result = await tool.execute!(
+      {
+        fromAssetId: ASSET,
+        amount: "500000",
+        destinationAddress: "vitalik.eth",
+      },
+      { toolCallId: "call-withdraw", messages: [], context: {} },
+    );
+
+    expect(resolveNameMock).toHaveBeenCalledWith("evm", "vitalik.eth");
+    expect(result).toMatchObject({
+      acknowledged: true,
+      destination: DESTINATION,
+    });
+  });
+
+  it("asks for the destination when the name is not registered", async () => {
+    resolveNameMock.mockResolvedValue(null);
+    const tool = createPrepareWithdrawalTool();
+
+    await expect(
+      tool.execute!(
+        {
+          fromAssetId: ASSET,
+          amount: "500000",
+          destinationAddress: "nobody.eth",
+        },
+        { toolCallId: "call-withdraw", messages: [], context: {} },
+      ),
+    ).rejects.toThrow(
+      "That name is not registered. Ask the user for the full destination address.",
+    );
   });
 
   it("requires a positive whole amount in the smallest unit", () => {

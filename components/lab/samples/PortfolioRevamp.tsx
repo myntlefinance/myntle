@@ -41,7 +41,7 @@ const SAMPLE_WALLET: AssetGroup[] = [
 const SAMPLE_SUPER: AssetGroup[] = [
   {
     id: "settlement",
-    name: "Settlement Ledger",
+    name: "Near Intents",
     icon: "near",
     items: [
       { id: "s-usdc", symbol: "USDC", name: "USD Coin", amount: "320.50", valueUsd: 320.5, priceUsd: 1, category: "stables", chain: "near", network: "intents" },

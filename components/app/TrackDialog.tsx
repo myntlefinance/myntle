@@ -5,12 +5,17 @@ import { IconEye, IconLoader2, IconX } from "@tabler/icons-react";
 import { WalletPickerDialog } from "@/components/app/WalletPickerDialog";
 import { SegmentedControl } from "@/components/atoms/SegmentedControl";
 import { Button } from "@/components/atoms/Button";
+import { truncateTechData } from "@/components/atoms/TechDataChip";
 import NetworkIcon from "@/components/finance/NetworkIcon";
 import {
   MAX_WATCH_LABEL_LENGTH,
+  isEnsNameInput,
+  isSnsNameInput,
   normalizeWatchedAddress,
   watchAddressError,
+  watchNameError,
   type WatchChain,
+  type WatchInputResolution,
 } from "@/lib/wallet/addresses";
 import type { WatchlistEntry } from "./useWatchlist";
 
@@ -32,11 +37,12 @@ export const CHAIN_TABS: readonly ChainTab[] = [
   "Near",
 ] as const;
 
-/* Domain-name reads are held for later; the EVM hint names them so the
- * field does not have to be relearned when they land. */
+/* The EVM field takes a domain name as well as an address, and so does
+ * the Solana field; a name reads through the resolve route on a debounce
+ * while the dialog shows where the read stands. */
 const PLACEHOLDERS: Record<ChainTab, string> = {
   EVM: "EVM address or domain name",
-  Solana: "Solana address",
+  Solana: "Solana address or domain name",
   Near: "NEAR account",
 };
 
@@ -62,6 +68,52 @@ export function toWatchChain(tab: ChainTab): WatchChain {
   return "near";
 }
 
+/** The pause after the last keystroke before a name read starts. */
+const RESOLVE_DEBOUNCE_MS = 350;
+
+/**
+ * Previews one name input against the resolve route. Never throws: every
+ * failure reads as its status, so the dialog always has a line to show.
+ * The preview only gates the dialog — the server resolves again at submit
+ * time and never trusts the address returned here.
+ */
+export async function previewWatchName(
+  input: string,
+  chain: "evm" | "solana" = "evm",
+): Promise<WatchInputResolution> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `/api/names/resolve?chain=${chain}&name=${encodeURIComponent(input.trim())}`,
+      { cache: "no-store" },
+    );
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+  if (res.status === 404) return { ok: false, reason: "unregistered" };
+  if (res.status === 400) return { ok: false, reason: "invalid" };
+  if (!res.ok) return { ok: false, reason: "unavailable" };
+  const body = (await res.json().catch(() => null)) as {
+    address?: unknown;
+    name?: unknown;
+    resolvedAt?: unknown;
+  } | null;
+  if (
+    !body ||
+    typeof body.address !== "string" ||
+    typeof body.name !== "string" ||
+    typeof body.resolvedAt !== "string"
+  ) {
+    return { ok: false, reason: "unavailable" };
+  }
+  return {
+    ok: true,
+    address: body.address,
+    name: body.name,
+    resolvedAt: body.resolvedAt,
+  };
+}
+
 const CHAIN_TABS_BY_CHAIN: Record<WatchChain, ChainTab> = {
   evm: "EVM",
   solana: "Solana",
@@ -80,7 +132,55 @@ export function useTrackForm(initial?: {
   const [label, setLabel] = useState(initial?.label ?? "");
   const chain = toWatchChain(tab);
   const normalized = normalizeWatchedAddress(chain, address);
-  const error = watchAddressError(chain, address);
+  // A name input on the EVM (`.eth`) or Solana (`.sns`) tab reads as a
+  // name, never as a malformed address: the sync path below stays for raw
+  // input only.
+  const isName =
+    isEnsNameInput(chain, address) || isSnsNameInput(chain, address);
+  const [nameRead, setNameRead] = useState<WatchInputResolution | null>(null);
+  const [resolving, setResolving] = useState(false);
+
+  // The debounced preview: one resolve-route read settles after the user
+  // pauses, and a newer keystroke abandons the in-flight one. The preview
+  // only gates the dialog; the server resolves again at submit time and
+  // never trusts the address shown here.
+  /* eslint-disable react-hooks/set-state-in-effect -- debounce sync: a new
+   * input clears the previous preview and raises the resolving flag */
+  useEffect(() => {
+    if (!isName) {
+      setNameRead(null);
+      setResolving(false);
+      return;
+    }
+    setNameRead(null);
+    setResolving(true);
+    let live = true;
+    // The preview only runs while the input is a name, so the chain here
+    // is always one the resolve route reads: Solana stays Solana, and the
+    // EVM tab stays EVM.
+    const previewChain = chain === "solana" ? "solana" : "evm";
+    const timer = window.setTimeout(() => {
+      void previewWatchName(address, previewChain).then((read) => {
+        if (!live) return;
+        setNameRead(read);
+        setResolving(false);
+      });
+    }, RESOLVE_DEBOUNCE_MS);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [chain, address, isName]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const error = isName
+    ? nameRead && !nameRead.ok
+      ? watchNameError(nameRead.reason)
+      : null
+    : watchAddressError(chain, address);
+  const resolvedAddress =
+    isName && nameRead?.ok ? nameRead.address : null;
+  const resolvedName = isName && nameRead?.ok ? nameRead.name : null;
   return {
     tab,
     setTab,
@@ -91,11 +191,21 @@ export function useTrackForm(initial?: {
     chain,
     normalized,
     error,
-    ready: normalized !== null,
+    /** True while the input is a name rather than a raw address. */
+    isName,
+    /** True while the debounced name read is still on its way. */
+    resolving,
+    /** The previewed address once the name read lands, else null. */
+    resolvedAddress,
+    /** The normalized name once the read lands, else null. */
+    resolvedName,
+    ready: isName ? resolvedAddress !== null : normalized !== null,
     reset() {
       setTab(initial?.tab ?? "EVM");
       setAddress(initial?.address ?? "");
       setLabel(initial?.label ?? "");
+      setNameRead(null);
+      setResolving(false);
     },
   };
 }
@@ -109,6 +219,15 @@ export function TrackAddressFields({
   form: TrackForm;
   onSubmit: () => void;
 }) {
+  // The name read's standing, in the muted voice: what is being read while
+  // it is on its way, and the resolved address once it lands. The address
+  // is the number the user is deciding on, so it earns its place here.
+  const nameStatus =
+    form.isName && (form.resolving || form.resolvedAddress)
+      ? form.resolving
+        ? "Resolving the name."
+        : `Resolves to ${truncateTechData(form.resolvedAddress ?? "", form.chain)}.`
+      : null;
   return (
     <div className="flex flex-col gap-3">
       <SegmentedControl
@@ -181,6 +300,32 @@ export function TrackAddressFields({
               <IconX size={14} aria-hidden />
             </button>
           ) : null}
+        </div>
+        <div
+          className="grid"
+          style={{
+            gridTemplateRows: nameStatus ? "1fr" : "0fr",
+            transition: "grid-template-rows 240ms var(--ease-out-strong)",
+          }}
+        >
+          <div className="min-h-0 overflow-hidden">
+            {nameStatus ? (
+              <p
+                role="status"
+                className="flex items-center gap-1.5 pt-1.5 text-[12.5px] leading-relaxed text-ink-2"
+                style={{ animation: "fade-in 180ms ease-out both" }}
+              >
+                {form.resolving ? (
+                  <IconLoader2
+                    size={12}
+                    aria-hidden
+                    className="animate-spin"
+                  />
+                ) : null}
+                {nameStatus}
+              </p>
+            ) : null}
+          </div>
         </div>
         <div
           className="grid"
@@ -265,15 +410,19 @@ export function TrackDialog({
   if (!open) return null;
 
   const submit = () => {
-    if (!form.normalized || busy || atLimit) return;
-    const normalized = form.normalized;
+    if (!form.ready || busy || atLimit) return;
+    // A name travels as typed: the server resolves it again itself and
+    // never trusts the previewed address. A raw address travels
+    // normalized, exactly as before.
+    const address = form.isName ? form.address.trim() : form.normalized;
+    if (!address) return;
     const chain = form.chain;
     const name = form.label.trim();
     setBusy(true);
     setSubmitError(null);
     void onTrack({
       chain,
-      address: normalized,
+      address,
       ...(name ? { label: name } : {}),
     })
       .then(() => onClose())
@@ -285,10 +434,13 @@ export function TrackDialog({
       .finally(() => setBusy(false));
   };
 
-  // The tab stays out of the content key: switching chains only swaps
-  // the icon and the hint, so the form must not remount and fade. Only
-  // height-affecting states replay the picker's transition.
-  const contentKey = `${form.error ? "invalid" : "valid"}:${submitError ? "submit-error" : "ok"}:${atLimit ? "full" : "room"}`;
+  // The tab and the limit note are the only structural states, and both
+  // are fixed while editing: switching chains only swaps the icon and
+  // the hint, and every notice (validation, resolving, submit failure)
+  // grows through its own grid rhythm. So the key stays put while typing
+  // and the picker's height measure never chases a mid-transition grid,
+  // which is what slid and clipped the error as the input grew.
+  const contentKey = atLimit ? "full" : "room";
 
   return (
     <WalletPickerDialog

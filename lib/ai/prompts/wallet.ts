@@ -9,7 +9,7 @@ export function buildWalletContext(wallet?: {
     const chainInfo = wallet.activeChain ? `\n- Chain: ${wallet.activeChain}` : "";
     return `Connected wallet:
 - Address: ${wallet.activeAddress}${chainInfo}
-Use this address as the default recipient when calling get_quote and prepare_swap unless the user specifies a different recipient.`;
+This wallet signs trades. It is not the default funding source: leave funding at its default to spend the Near Account balance, and use this wallet only when the user explicitly asks to spend from it. A wallet-funded quote can only deliver an output on this wallet's own chain.`;
   }
 
   return `Connected wallet: None (no wallet connected).`;

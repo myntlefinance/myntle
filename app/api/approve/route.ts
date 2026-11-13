@@ -10,6 +10,7 @@ import {
   isApprovalWindowValid,
 } from "@/lib/trade/approval-message";
 import { createExecutionQuote, getAssets } from "@/lib/intents/service";
+import { normalizeEvmAddress } from "@/lib/intents/destination";
 import {
   isConfidentialStoredMode,
   passkeyWalletRouteGuard,
@@ -49,6 +50,14 @@ const Body = z.object({
   /** Tool approval id (aitxt-…), so the card can rejoin its row on reload. */
   approvalId: z.string().max(200).optional(),
 });
+
+/**
+ * EIP-55 for an EVM address; every other value (a name, a Solana or NEAR
+ * address) passes through unchanged.
+ */
+function canonicalEvm(value: string): string {
+  return normalizeEvmAddress(value) ?? value;
+}
 
 /**
  * Signed approval → execution.
@@ -136,21 +145,60 @@ export async function POST(req: Request) {
     );
   }
 
-  // A confidential quote belongs to the Intents account and must be settled by
-  // the signed-intent route. Re-pricing it here as a chain trade would move
-  // the money publicly and could pay the wrong recipient, so refuse before any
-  // signature, chain switch, or quote work.
+  // An account-funded quote belongs to the Intents account and must be
+  // settled by the signed-intent route. Re-pricing it here as a chain trade
+  // would move the money publicly and could pay the wrong recipient, so
+  // refuse before any signature, chain switch, or quote work.
   const storedRequest = stored.request as Record<string, unknown>;
   if (isConfidentialStoredMode(storedRequest.mode)) {
     console.error("[approve] confidential quote on the direct route");
     return NextResponse.json(
       {
-        error: "confidential",
+        error: "unavailable",
         message:
-          "This quote belongs to the confidential account. Use the confidential route.",
+          "This trade can't be completed here. Please ask for a fresh quote.",
       },
       { status: 400 },
     );
+  }
+
+  // A stored quote belongs to the account that priced it. A session switch
+  // (another wallet, or a passkey account) must not re-purpose it, so refuse
+  // before the signature and before any record is written.
+  const storedAccountKind = storedRequest.accountKind;
+  if (
+    typeof storedAccountKind === "string" &&
+    storedAccountKind.length > 0 &&
+    storedAccountKind !== session.accountKind
+  ) {
+    console.error("[approve] stored quote belongs to another account kind");
+    return NextResponse.json(
+      {
+        error: "unavailable",
+        message:
+          "This trade can't be completed here. Please ask for a fresh quote.",
+      },
+      { status: 400 },
+    );
+  }
+  const storedIntentsAccountId = storedRequest.intentsAccountId;
+  if (typeof storedIntentsAccountId === "string" && storedIntentsAccountId.length > 0) {
+    const sameIntentsAccount =
+      session.chain === "near"
+        ? storedIntentsAccountId === session.intentsAccountId
+        : storedIntentsAccountId.toLowerCase() ===
+          session.intentsAccountId.toLowerCase();
+    if (!sameIntentsAccount) {
+      console.error("[approve] stored quote belongs to another Intents account");
+      return NextResponse.json(
+        {
+          error: "unavailable",
+          message:
+            "This trade can't be completed here. Please ask for a fresh quote.",
+        },
+        { status: 400 },
+      );
+    }
   }
 
   const q = stored.request as Record<string, unknown>;
@@ -172,7 +220,97 @@ export async function POST(req: Request) {
   // Refunds must be valid on the origin chain. The card defaults to the
   // connected wallet, which is also the session the signature is checked
   // against, so a silent wallet is still an explicit address.
-  const claimedRefundTo = body.refundTo ?? session.address;
+  // A claim may name its recipient or refund as a name, exactly as the
+  // model passed it to prepare_swap. Each resolves fresh and the bound
+  // addresses are what the stored quote is compared against; a name that
+  // no longer resolves keeps its raw value and fails the comparison below,
+  // exactly as a moved value does.
+  let claimRecipient = body.recipient;
+  let claimedRefundTo = body.refundTo ?? session.address;
+  {
+    const { isNameLikeValue } = await import("@/lib/names/detect");
+    const { resolveInputAddress } = await import("@/lib/names/binding");
+    const bind = async (value: string): Promise<string> => {
+      if (!isNameLikeValue(value)) return value;
+      try {
+        const hit = await resolveInputAddress({
+          value,
+          scope: null,
+          isDirectAddress: () => null,
+        });
+        return hit.address;
+      } catch {
+        return value;
+      }
+    };
+    claimRecipient = await bind(body.recipient);
+    claimedRefundTo = await bind(body.refundTo ?? session.address);
+  }
+
+  // Old dry quotes stored EVM addresses in whatever case the caller used.
+  // Canonicalise both sides before the comparison and the message build, so
+  // an old lowercase row accepts the new card's EIP-55 claim and every
+  // downstream step sees the same value. Names and non-EVM addresses pass
+  // through unchanged.
+  claimRecipient = canonicalEvm(claimRecipient);
+  claimedRefundTo = canonicalEvm(claimedRefundTo);
+  storedParams.recipient = canonicalEvm(storedParams.recipient);
+  storedParams.refundTo = canonicalEvm(storedParams.refundTo);
+
+  // Stored names re-resolve fresh at sign time: a name re-pointed since
+  // pricing fails the approval rather than paying a new address. The
+  // stored `resolvedAt` is never consulted. TTL 0 by construction.
+  {
+    const storedRequest = stored.request as Record<string, unknown>;
+    const storedName = (key: string): string | null => {
+      const value = storedRequest[key];
+      return typeof value === "string" && value.length > 0 ? value : null;
+    };
+    const bindings = [
+      {
+        name: storedName("recipientName"),
+        address: storedParams.recipient,
+      },
+      {
+        name: storedName("refundToName"),
+        address: storedParams.refundTo,
+      },
+    ].filter(
+      (binding): binding is { name: string; address: string } =>
+        binding.name !== null,
+    );
+    if (bindings.length > 0) {
+      const { reverifyNameBinding } = await import("@/lib/names/binding");
+      const { nameChainForInput } = await import("@/lib/names/detect");
+      for (const binding of bindings) {
+        const check = await reverifyNameBinding({
+          chain: nameChainForInput(binding.name) ?? "evm",
+          name: binding.name,
+          address: binding.address,
+        });
+        if (!check.ok) {
+          if (check.reason === "unavailable") {
+            console.error("[approve] name re-resolve unavailable");
+            return NextResponse.json(
+              { error: "An error occurred." },
+              { status: 502 },
+            );
+          }
+          console.error("[approve] stored name changed", {
+            reason: check.reason,
+          });
+          return NextResponse.json(
+            {
+              error: "stale",
+              message:
+                "The trade changed since it was priced. Please ask for a fresh quote.",
+            },
+            { status: 400 },
+          );
+        }
+      }
+    }
+  }
   const { isApprovalClaimMatchingQuote } = await import(
     "@/lib/trade/approval-check"
   );
@@ -181,7 +319,7 @@ export async function POST(req: Request) {
       fromAssetId: body.fromAssetId,
       toAssetId: body.toAssetId,
       amount: body.amount,
-      recipient: body.recipient,
+      recipient: claimRecipient,
       refundTo: claimedRefundTo,
       slippageBps: body.slippageBps,
       minAmountOut: body.minAmountOut,
@@ -294,9 +432,7 @@ export async function POST(req: Request) {
       refundTo: storedParams.refundTo,
       slippageBps: storedParams.slippageBps,
       confidentiality:
-        q.confidentiality === "public" || q.confidentiality === "advanced"
-          ? q.confidentiality
-          : "basic",
+        q.confidentiality === "advanced" ? "advanced" : "basic",
     });
   } catch (err) {
     console.error(
@@ -311,12 +447,55 @@ export async function POST(req: Request) {
   // again — never auto-accepted.
   try {
     if (BigInt(execution.minAmountOutRaw) < BigInt(storedFigures.minAmountOutRaw)) {
+      // The card is about to show figures the user has not signed. The
+      // original preview still holds the old ones, so a resubmission with
+      // the new figures would fail the equality check as "stale". Save the
+      // reviewed figures as a new preview and hand the card its id and a
+      // fresh approval window; the next approval is then checked against
+      // exactly what the user saw.
+      const requestedAt = new Date().toISOString();
+      let freshQuoteId: string;
+      try {
+        freshQuoteId = await createQuote({
+          userId: session.userId,
+          conversationId,
+          // The request is copied from the stored preview, never from the
+          // browser body, so the revised row keeps the same trade and the
+          // same account, route, and name bindings.
+          request: {
+            ...q,
+            revisedFromQuoteId: body.quoteId,
+          },
+          response: {
+            amountIn: execution.amountIn,
+            amountOut: execution.amountOut,
+            minAmountOutRaw: execution.minAmountOutRaw,
+            expiresAt: execution.expiresAt,
+          },
+          expiresAt: execution.expiresAt,
+        });
+      } catch (err) {
+        console.error(
+          "[approve] revised quote could not be saved",
+          err instanceof Error ? err.message.slice(0, 200) : "unknown",
+        );
+        return NextResponse.json(
+          {
+            error: "price-moved",
+            message: "The price has moved. Please ask for a fresh quote.",
+          },
+          { status: 502 },
+        );
+      }
       return NextResponse.json(
         {
           error: "price-moved",
           message: "The price has moved. Please review and resubmit.",
           fresh: {
+            quoteId: freshQuoteId,
+            requestedAt,
             amountOut: execution.amountOutFormatted,
+            amountOutUsd: execution.amountOutUsd,
             minAmountOut: execution.minAmountOut,
             minAmountOutRaw: execution.minAmountOutRaw,
             expiresAt: execution.expiresAt,

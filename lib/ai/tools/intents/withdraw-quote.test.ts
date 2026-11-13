@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getAssetsMock, quoteMock, createQuoteMock } = vi.hoisted(() => ({
+const { getAssetsMock, quoteMock, createQuoteMock, resolveNameMock } = vi.hoisted(() => ({
   getAssetsMock: vi.fn(),
   quoteMock: vi.fn(),
   createQuoteMock: vi.fn(),
+  resolveNameMock: vi.fn(),
 }));
 
 vi.mock("@/lib/intents/service", () => ({
   getAssets: getAssetsMock,
   quote: quoteMock,
+}));
+
+vi.mock("@/lib/adapters/registry", () => ({
+  getNameResolverPort: () => ({ resolveName: resolveNameMock }),
 }));
 
 vi.mock("@/lib/db/transactions", () => ({
@@ -140,7 +145,6 @@ describe("get_withdrawal_quote", () => {
     );
 
     expect(result).toMatchObject({
-      mode: "confidential-withdrawal",
       quoteId: "quote-1",
       amountIn: "0.5",
       amountOut: "0.4894",
@@ -152,6 +156,7 @@ describe("get_withdrawal_quote", () => {
       expiresAt: EXPIRES_AT,
     });
     expect(result).not.toHaveProperty("balances");
+    expect(JSON.stringify(result).toLowerCase()).not.toContain("confidential");
   });
 
   it("normalises a lowercase destination to EIP-55 before pricing", async () => {
@@ -199,6 +204,44 @@ describe("get_withdrawal_quote", () => {
       "The destination is not a valid address on arb.",
     );
     expect(quoteMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves a destination name and binds the address", async () => {
+    resolveNameMock.mockResolvedValue({
+      address: DESTINATION,
+      name: "vitalik.eth",
+      resolvedAt: EXPIRES_AT,
+    });
+
+    const result = await run({ destinationAddress: "vitalik.eth" });
+
+    expect(resolveNameMock).toHaveBeenCalledWith("evm", "vitalik.eth");
+    expect(quoteMock).toHaveBeenCalledWith(
+      expect.objectContaining({ recipient: DESTINATION }),
+    );
+    expect(createQuoteMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          destination: DESTINATION,
+          destinationName: "vitalik.eth",
+          destinationResolvedAt: EXPIRES_AT,
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      destination: DESTINATION,
+      destinationName: "vitalik.eth",
+    });
+  });
+
+  it("asks for the destination when the name is not registered", async () => {
+    resolveNameMock.mockResolvedValue(null);
+
+    await expect(run({ destinationAddress: "nobody.eth" })).rejects.toThrow(
+      "That name is not registered. Ask the user for the full destination address.",
+    );
+    expect(quoteMock).not.toHaveBeenCalled();
+    expect(createQuoteMock).not.toHaveBeenCalled();
   });
 
   it("requires the session's Intents account", async () => {

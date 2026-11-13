@@ -2,9 +2,10 @@
 
 import { memo, useEffect, useMemo, useRef, type ReactNode } from "react";
 import type { UIMessage } from "ai";
-import ActivityPills, {
+import ActivityStatus, {
   type ActivityBlock,
-} from "@/components/app/ActivityPills";
+  type ActivityPhase,
+} from "@/components/app/ActivityStatus";
 import type { ToolDetailLine, ToolStep } from "@/components/primitives/ToolChips";
 import { AgentMessageActions } from "@/components/app/MessageActions";
 import {
@@ -29,6 +30,7 @@ import AddressPill from "@/components/finance/AddressPill";
 import { UnlockRequestCard } from "@/components/app/UnlockCard";
 import type { SupportedChain } from "@/components/atoms/TechDataChip";
 import type { AssetGroup } from "@/lib/wallet/balances";
+import { networkDisplayName } from "@/lib/wallet/balances";
 import {
   approvalDecision,
   approvalIdOf,
@@ -41,6 +43,8 @@ import {
   type SettlementSnapshot,
 } from "@/components/app/approvals";
 import { useResolvedAssetMeta } from "@/components/app/useAssetMeta";
+import { openSignIn } from "@/components/app/SignInDialog";
+import { openWalletPicker } from "@/components/app/ConnectGate";
 import { useWallet } from "@/lib/wallet/registry";
 import { evmChainForSlug } from "@/lib/wallet/evm-chains";
 import { useAuth } from "@/lib/auth/auth-provider";
@@ -66,18 +70,16 @@ import {
  * The assistant's live reply.
  *
  * The message parts arrive in stream order — reasoning deltas between tool
- * rounds, tool calls, and text — and are grouped into activity blocks in
- * that order: consecutive reasoning deltas form one thinking pill, a tool
- * part breaks the run and the next tool call continues the same pills, and
- * text renders as markdown through `components/app/Markdown`. Each
- * interrupt (a new tool run, new thinking after a result, or the turn simply
- * ending) therefore starts a fresh pill; see
- * `components/app/ActivityPills` for the pill lifecycle.
+ * rounds, tool calls, and text — and are grouped into activity runs: every
+ * consecutive reasoning or tool part belongs to one run, and text starts a
+ * new block. A run renders as one line while it is live, naming the phase
+ * in progress, and disappears when the reply follows it; see
+ * `components/app/ActivityStatus` for the line's lifecycle.
  *
- * Every tool row names the object it touched — the ticker looked up, the
- * pair priced, the address checked — never the row's state. The pill header
- * already says whether the run is in flight, so a chip that says "done"
- * repeats what the header said and tells the reader nothing.
+ * Every tool carries its own present-tense name and glyph, chosen by
+ * `liveLabelFor`, so the line says what kind of work is happening rather than
+ * how many calls were made. A failure is the one row that survives, because
+ * a source that did not answer must not vanish.
  */
 export type LiveResponseProps = {
   message: UIMessage;
@@ -91,6 +93,11 @@ export type LiveResponseProps = {
   onRegenerate?: () => void;
   /** Sends a fresh request when an expired unlock card offers one. */
   onRetry?: () => void;
+  /**
+   * Sends a chat prompt from a card. An expired deposit offers one sentence
+   * in place of its dead address, and that sentence asks for a fresh one.
+   */
+  onPrompt?: (text: string) => void;
   /** The chat these cards belong to, so a record can be linked to it. */
   conversationId?: string | null;
   /**
@@ -103,7 +110,7 @@ export type LiveResponseProps = {
     approvalId: string,
     approved: boolean,
     context: ApprovalDecisionContext,
-  ) => void | Promise<void>;
+  ) => void | Promise<void | "approved" | "denied">;
   /** Database settlements by tool approval id; terminal ones paint at once. */
   settlements?: Record<string, SettlementSnapshot>;
   /**
@@ -197,6 +204,7 @@ export const LiveResponse = memo(function LiveResponseInner({
   resolved = false,
   onRegenerate,
   onRetry,
+  onPrompt,
   conversationId,
   decisions,
   onApproval,
@@ -222,28 +230,37 @@ export const LiveResponse = memo(function LiveResponseInner({
     for (const [id, meta] of inTurn) merged.set(id, meta);
     return merged;
   }, [message.parts, resolvedMeta]);
-  // Blocks preserve stream order: consecutive reasoning deltas merge, a tool
-  // part extends the current tools run, text merges until interrupted.
-  // blockOrder records the part index each block started at so landmark
-  // cards can interleave at their own tool index rather than trailing at
-  // the end. A card never splits a sentence: it mounts between two text
-  // blocks at a tool boundary.
+  // Blocks preserve stream order: reasoning and tool parts merge into one
+  // activity run until text interrupts it. blockOrder records the part index
+  // each block started at so landmark cards can interleave at their own tool
+  // index rather than trailing at the end. A card never splits a sentence: it
+  // mounts between two text blocks at a tool boundary.
   const blocks: ActivityBlock[] = [];
   const blockOrder: number[] = [];
   message.parts.forEach((part, index) => {
     if (part.type === "reasoning") {
       const last = blocks[blocks.length - 1];
-      if (last?.kind === "reasoning") last.text += part.text;
-      else {
-        blocks.push({ kind: "reasoning", text: part.text });
+      if (last?.kind === "activity") {
+        last.phases.push({ kind: "reasoning" });
+      } else {
+        blocks.push({
+          kind: "activity",
+          phases: [{ kind: "reasoning" }],
+        });
         blockOrder.push(index);
       }
     } else if (isToolPart(part.type)) {
-      const step = describeTool(toolNameOf(part), part, symbols);
+      const name = toolNameOf(part);
+      const phase: ActivityPhase = {
+        kind: "tool",
+        name,
+        state: stateOf(part),
+        step: describeTool(name, part, symbols),
+      };
       const last = blocks[blocks.length - 1];
-      if (last?.kind === "tools") last.steps.push(step);
+      if (last?.kind === "activity") last.phases.push(phase);
       else {
-        blocks.push({ kind: "tools", steps: [step] });
+        blocks.push({ kind: "activity", phases: [phase] });
         blockOrder.push(index);
       }
     } else if (part.type === "text" && part.text.length > 0) {
@@ -271,7 +288,7 @@ export const LiveResponse = memo(function LiveResponseInner({
   // A session names its signer. A passkey account has no wallet to fall back
   // to, so every card it sees runs the signed-intent route; a wallet session
   // keeps `/api/approve` for a swap.
-  const { identity } = useAuth();
+  const { identity, canSign, connected } = useAuth();
   const passkeyIdentity = identity?.kind === "passkey" ? identity : null;
   // One signer per session, built once: the cards receive the function, not
   // the identity, so no card has to know how a session signs.
@@ -285,17 +302,11 @@ export const LiveResponse = memo(function LiveResponseInner({
       }),
     [identity, account, signMessage, signNEP413],
   );
-  // A confidential swap payload is signed by the same session signer as a
-  // withdrawal; the server only ever issues a WebAuthn string to a passkey
-  // session, so the payload standard is fixed here.
-  const swapSigner = useMemo(
-    () =>
-      passkeyIdentity
-        ? (payload: string) =>
-            intentSigner({ standard: "webauthn", payload })
-        : null,
-    [passkeyIdentity, intentSigner],
-  );
+  // A blocked card offers one action: connect a wallet when none is present,
+  // otherwise sign the session in. The wallet and sign-in dialogs already
+  // decide which signature to ask for.
+  const openApprovalSession = () =>
+    connected ? openSignIn() : openWalletPicker();
   // The tool names an amount in the smallest unit; the sentence reads it in
   // whole units when the catalogue told us the exponent.
   const rawAmountLabel = (assetId: string, amount: string) => {
@@ -460,6 +471,7 @@ export const LiveResponse = memo(function LiveResponseInner({
           {b.address ? (
             <AddressPill
               address={b.address}
+              name={b.resolvedName}
               chain={b.chain}
               walletIcon={isSelf ? (account?.walletIcon ?? undefined) : undefined}
               walletName={isSelf ? (account?.walletName ?? undefined) : undefined}
@@ -485,7 +497,17 @@ export const LiveResponse = memo(function LiveResponseInner({
     // whose localStorage never saw the approval.
     const snap = settlements?.[a.approvalId] ?? null;
     const snapState = snap ? settlementCardState(snap.state) : null;
-    // A passkey card is the intents path, not a restyle: it has no wallet
+    // The quote decides the route, not the session kind: a wallet can spend
+    // its Near Account balance, and that trade is one signed intent. Only a
+    // turn stored before the tool named the route falls back to the account
+    // kind.
+    const accountTrade =
+      a.route === "account"
+        ? true
+        : a.route === "wallet"
+          ? false
+          : passkeyIdentity !== null;
+    // An account trade is the intents path, not a restyle: it has no wallet
     // signature to request, so "approved" means the signed intent is
     // submitted and the settlement is being read.
     const intentsState: SentenceCardState =
@@ -508,6 +530,18 @@ export const LiveResponse = memo(function LiveResponseInner({
     // A refusal is a server write, not a local flag: the card awaits it and
     // keeps offering the decision if it did not land.
     const deny = () => onApproval?.(a.approvalId, false, context);
+    // A waiting card is only useful if the user can act. Name the blocker so
+    // the footer offers the fix instead of a dead "Pending Approval" pill.
+    const blocked: "sign-in" | "quote" | "inactive" | null =
+      a.status !== "awaiting" || cardPending(a.approvalId)
+        ? null
+        : !interactive
+          ? "inactive"
+          : !canSign
+            ? "sign-in"
+            : !a.swapInput?.quoteId
+              ? "quote"
+              : null;
     return (
       <ApprovalVisibility
         key={a.approvalId}
@@ -516,9 +550,9 @@ export const LiveResponse = memo(function LiveResponseInner({
         className="mt-2.5"
       >
         <SentenceTradeCard
-          // A passkey proposal is one signed confidential intent, which the
-          // route submits as a swap. A wallet keeps the action it was given.
-          action={passkeyIdentity ? "swap" : a.action}
+          // An account trade is one signed intent, which the route submits
+          // as a swap. A wallet chain quote keeps the action it was given.
+          action={accountTrade ? "swap" : a.action}
           approvalId={a.approvalId}
           conversationId={conversationId}
           decisionPending={cardPending(a.approvalId)}
@@ -540,27 +574,30 @@ export const LiveResponse = memo(function LiveResponseInner({
           expiresAt={a.expiresAt}
           requestedAt={a.requestedAt}
           slippageBps={a.slippageBps}
-          state={passkeyIdentity ? intentsState : walletState}
+          state={accountTrade ? intentsState : walletState}
           transactionId={snap?.transactionId ?? a.transactionId}
           depositAddress={snap?.depositAddress ?? a.depositAddress ?? undefined}
           initialExplorerUrls={snap?.explorerUrls}
           swapInput={a.status === "awaiting" ? a.swapInput : undefined}
           runApproval={
-            swapSigner
+            accountTrade
               ? swapApproval({
                   quoteId: a.swapInput?.quoteId ?? "",
                   approvalId: a.approvalId,
                   conversationId,
-                  sign: swapSigner,
+                  sign: intentSigner,
                 })
               : undefined
           }
           disabled={
             !interactive ||
+            !canSign ||
             cardPending(a.approvalId) ||
             a.status !== "awaiting" ||
-            (passkeyIdentity !== null && !a.swapInput?.quoteId)
+            !a.swapInput?.quoteId
           }
+          blocked={blocked}
+          onSignIn={openApprovalSession}
           onApprove={approve}
           onDeny={deny}
         />
@@ -609,6 +646,14 @@ export const LiveResponse = memo(function LiveResponseInner({
       onApproval?.(approvalId, true, context);
     };
     const deny = () => onApproval?.(approvalId, false, context);
+    const blocked: "sign-in" | "inactive" | null =
+      decision !== null || recorded !== null || cardPending(approvalId)
+        ? null
+        : !interactive
+          ? "inactive"
+          : !canSign
+            ? "sign-in"
+            : null;
     const symbol = assetName(entry.assetId, symbols);
     const amount = rawAmountLabel(entry.assetId, entry.amount);
     return (
@@ -644,6 +689,9 @@ export const LiveResponse = memo(function LiveResponseInner({
           depositAddress={snap?.depositAddress ?? undefined}
           depositMeta={snap?.deposit ?? undefined}
           initialExplorerUrls={snap?.explorerUrls}
+          // Only the live chat has a composer. An expired address becomes one
+          // sentence there, and a read-only transcript keeps the record.
+          onPrompt={interactive ? onPrompt : undefined}
           runApproval={depositApproval({
             assetId: entry.assetId,
             amount: entry.amount,
@@ -652,13 +700,15 @@ export const LiveResponse = memo(function LiveResponseInner({
           })}
           disabled={
             !interactive ||
+            !canSign ||
             cardPending(approvalId) ||
             decision !== null ||
             recorded !== null
           }
+          blocked={blocked}
+          onSignIn={openApprovalSession}
           onApprove={approve}
           onDeny={deny}
-          onRecord={(tx) => rememberApprovalTx(approvalId, tx)}
         />
       </ApprovalVisibility>
     );
@@ -687,6 +737,16 @@ export const LiveResponse = memo(function LiveResponseInner({
     const amountLabel =
       withdrawal.amountIn ??
       rawAmountLabel(withdrawal.fromAssetId, withdrawal.amount);
+    const blocked: "sign-in" | "quote" | "inactive" | null =
+      withdrawal.status !== "awaiting" || cardPending(approvalId)
+        ? null
+        : !interactive
+          ? "inactive"
+          : !canSign
+            ? "sign-in"
+            : !withdrawal.quoteId || !withdrawal.destination
+              ? "quote"
+              : null;
     return (
       <ApprovalVisibility
         key={approvalId}
@@ -712,6 +772,7 @@ export const LiveResponse = memo(function LiveResponseInner({
           amountOut={withdrawal.amountOut ?? amountLabel}
           minAmountOut={withdrawal.minAmountOut}
           recipient={withdrawal.destination ?? ""}
+          recipientName={withdrawal.destinationName}
           destinationChain={destinationChain}
           fee={withdrawal.fee}
           expiresAt={withdrawal.expiresAt}
@@ -727,10 +788,15 @@ export const LiveResponse = memo(function LiveResponseInner({
           })}
           disabled={
             !interactive ||
+            !canSign ||
             cardPending(approvalId) ||
             withdrawal.status !== "awaiting" ||
-            !withdrawal.quoteId
+            !withdrawal.quoteId ||
+            !withdrawal.destination
           }
+          blocked={blocked}
+          onSignIn={openApprovalSession}
+          onPrompt={interactive ? onPrompt : undefined}
           onApprove={() =>
             onApproval?.(approvalId, true, {
               toolName: "prepare_withdrawal",
@@ -797,9 +863,16 @@ export const LiveResponse = memo(function LiveResponseInner({
     } else {
       const approval = approvalById.get(node.approvalId);
       if (approval) {
+        // A passkey turn stored before the quote named the route still
+        // renders as an account trade. The copy says the same thing, on a
+        // copy so the approval object itself is never rewritten.
+        const copyApproval =
+          passkeyIdentity && approval.route === undefined
+            ? { ...approval, route: "account" as const }
+            : approval;
         copySegments.push({
           kind: "approval",
-          approval,
+          approval: copyApproval,
           settlement: settlements?.[approval.approvalId] ?? null,
         });
       }
@@ -819,6 +892,21 @@ export const LiveResponse = memo(function LiveResponseInner({
     -1,
   );
 
+  // A settled status line is only a fallback for a turn that ends on tool
+  // work: if text or a card follows the run, the line has already done its
+  // job and disappears. Otherwise the last name stays visible so the turn is
+  // never blank.
+  const contentAfter: boolean[] = timeline.map(() => false);
+  let laterContent = false;
+  for (let i = timeline.length - 1; i >= 0; i -= 1) {
+    contentAfter[i] = laterContent;
+    const node = timeline[i];
+    const rendersContent =
+      node.kind !== "blocks" ||
+      node.blocks.some((block) => block.kind === "text");
+    if (rendersContent) laterContent = true;
+  }
+
   return (
     <article
       className="min-w-0"
@@ -835,10 +923,11 @@ export const LiveResponse = memo(function LiveResponseInner({
           if (node.kind === "withdraw") return renderWithdrawal(node.approvalId);
           if (node.kind === "unlock") return renderUnlock(node.callId);
           return (
-            <ActivityPills
+            <ActivityStatus
               key={`blocks-${node.order}-${i}`}
               blocks={node.blocks}
               running={running && i === lastGroupIndex}
+              showSettled={!contentAfter[i]}
             />
           );
         })}
@@ -875,6 +964,8 @@ type BalanceViewInfo = {
   callId: string;
   title: string;
   address?: string;
+  /** The name the address resolved from, when the model passed one. */
+  resolvedName?: string;
   chain?: SupportedChain;
   showFilters: boolean;
   initialFilter: "all" | "stables" | "dust";
@@ -919,6 +1010,10 @@ function collectBalanceViews(parts: UIMessage["parts"]): BalanceViewInfo[] {
         typeof out.address === "string" && out.address.length > 0
           ? out.address
           : undefined,
+      resolvedName:
+        typeof out.resolvedName === "string" && out.resolvedName.length > 0
+          ? out.resolvedName
+          : undefined,
       chain:
         out.chain === "evm" || out.chain === "solana" || out.chain === "near"
           ? out.chain
@@ -937,12 +1032,25 @@ function collectBalanceViews(parts: UIMessage["parts"]): BalanceViewInfo[] {
   return views;
 }
 
-/* ── per-tool rows ────────────────────────────────────────────
- * Each row answers "what did it touch": the ticker, the pair, the trade.
- * The header already carries the run's state, so no chip repeats it —
- * except `failed` and `awaiting approval`, which change what happens next. */
+/* ── per-tool names ───────────────────────────────────────────
+ * The live line names the call in progress. Each tool has its own name and
+ * its own glyph, so a balance read and a settled trade are distinguishable
+ * without reading a count. The row builders below still describe what the
+ * call touched for the failure row and the landmark cards. */
 
 function describeTool(
+  name: string,
+  part: ToolPart,
+  symbols: Map<string, string>,
+): ToolStep {
+  return {
+    ...describeToolStep(name, part, symbols),
+    liveLabel: liveLabelFor(name),
+    doneLabel: doneLabelFor(name),
+  };
+}
+
+function describeToolStep(
   name: string,
   part: ToolPart,
   symbols: Map<string, string>,
@@ -966,6 +1074,9 @@ function describeTool(
       return assetsRow(part);
     case "get_wallet_balances":
       return balancesRow(part);
+    case "resolve_ens_name":
+    case "resolve_sns_name":
+      return nameRow(part);
     case "get_quote":
       return quoteRow(part, symbols, "Quoted a price", "chart");
     case "prepare_swap": {
@@ -1065,6 +1176,9 @@ function iconFor(name: string): string {
       return "assets";
     case "get_wallet_balances":
       return "wallet";
+    case "resolve_ens_name":
+    case "resolve_sns_name":
+      return "name";
     case "get_quote":
       return "chart";
     case "prepare_swap":
@@ -1098,6 +1212,93 @@ function iconFor(name: string): string {
   }
 }
 
+/** One name per tool in both states. The live line names the work while it
+ * happens; the settled fallback keeps the past-tense name when a turn ends
+ * on tool work. A search of one source is distinguishable from a search of
+ * another, and the name is the tool, never the query. */
+const TOOL_NAMES: Record<string, { live: string; done: string }> = {
+  get_supported_assets: { live: "Looking up assets", done: "Looked up assets" },
+  get_wallet_balances: {
+    live: "Reading wallet balances",
+    done: "Read wallet balances",
+  },
+  resolve_ens_name: {
+    live: "Resolving an ENS name",
+    done: "Resolved an ENS name",
+  },
+  resolve_sns_name: {
+    live: "Resolving a Solana name",
+    done: "Resolved a Solana name",
+  },
+  get_quote: { live: "Getting a swap quote", done: "Got a swap quote" },
+  prepare_swap: { live: "Preparing the swap", done: "Prepared the swap" },
+  prepare_deposit: {
+    live: "Preparing the deposit",
+    done: "Prepared the deposit",
+  },
+  get_withdrawal_quote: {
+    live: "Getting a withdrawal quote",
+    done: "Got a withdrawal quote",
+  },
+  prepare_withdrawal: {
+    live: "Preparing the withdrawal",
+    done: "Prepared the withdrawal",
+  },
+  get_transaction_status: {
+    live: "Checking the transaction",
+    done: "Checked the transaction",
+  },
+  get_transaction_history: {
+    live: "Reading transaction history",
+    done: "Read transaction history",
+  },
+  get_super_balances: {
+    live: "Reading the private balance",
+    done: "Read the private balance",
+  },
+  request_super_unlock: {
+    live: "Requesting the private unlock",
+    done: "Requested the private unlock",
+  },
+  get_google_news: {
+    live: "Searching Google News",
+    done: "Searched Google News",
+  },
+  get_reddit_posts: { live: "Searching Reddit", done: "Searched Reddit" },
+  get_x_posts: { live: "Searching X", done: "Searched X" },
+  get_x_user_posts: {
+    live: "Reading an X account",
+    done: "Read an X account",
+  },
+  get_page_content: { live: "Reading articles", done: "Read articles" },
+  get_crypto_news: {
+    live: "Searching crypto news",
+    done: "Searched crypto news",
+  },
+  get_market_news: {
+    live: "Searching market news",
+    done: "Searched market news",
+  },
+};
+
+/** A tool with no entry is still named rather than lumped into "Working":
+ * the internal name is ugly, but it is unique and it points at the missing
+ * entry instead of hiding it. */
+function humanizeToolName(name: string): string {
+  const words = name.replace(/_/g, " ").trim();
+  return words
+    ? `${words.charAt(0).toUpperCase()}${words.slice(1)}`
+    : "Working";
+}
+
+function liveLabelFor(name: string): string {
+  return TOOL_NAMES[name]?.live ?? humanizeToolName(name);
+}
+
+function doneLabelFor(name: string): string {
+  return TOOL_NAMES[name]?.done ?? humanizeToolName(name);
+}
+
 /** The label stays put while the call resolves, so the row never shifts
  * under the reader; the chip is the part that fills in. Labels are generic:
  * the tool used, never the query. */
@@ -1110,6 +1311,9 @@ function labelFor(name: string, part: ToolPart): string {
     }
     case "get_wallet_balances":
       return "Read balances";
+    case "resolve_ens_name":
+    case "resolve_sns_name":
+      return "Resolved a name";
     case "get_quote":
       return "Quoted a price";
     case "prepare_swap":
@@ -1149,7 +1353,9 @@ function catalogueDetail(
   assets: Array<{ assetId: string; symbol: string; chain: string }>,
 ): ToolDetailLine[] {
   const lines = assets.slice(0, 4).map((a) => ({
-    text: a.chain ? `${a.symbol.toUpperCase()} · ${a.chain}` : a.symbol.toUpperCase(),
+    text: a.chain
+      ? `${a.symbol.toUpperCase()} · ${networkDisplayName(a.chain)}`
+      : a.symbol.toUpperCase(),
   }));
   if (assets.length > 4) lines.push({ text: `+${assets.length - 4} more` });
   return lines;
@@ -1200,6 +1406,32 @@ function assetsRow(part: ToolPart): ToolStep {
   };
 }
 
+function nameRow(part: ToolPart): ToolStep {
+  const input = inputOf(part);
+  const output = outputOf(part);
+  const name = str(input.name) ?? str(output.name) ?? "a name";
+  const status = str(output.status);
+  if (status === "resolved") {
+    const address = str(output.address);
+    return {
+      icon: "name",
+      label: "Resolved a name",
+      chip: name,
+      mono: true,
+      detailMono: true,
+      detail: address ? [{ text: address }] : [],
+    };
+  }
+  return {
+    icon: "name",
+    label: "Resolved a name",
+    chip: status ?? name,
+    mono: status == null,
+    detailMono: true,
+    detail: [],
+  };
+}
+
 function balancesRow(part: ToolPart): ToolStep {
   const output = outputOf(part);
   const wallet =
@@ -1217,7 +1449,7 @@ function balancesRow(part: ToolPart): ToolStep {
 
   if (balances.length > 0) {
     const lines: ToolDetailLine[] = balances.slice(0, 4).map((b) => ({
-      text: `${b.symbol ?? "TOKEN"} · ${b.balance ?? "0"} (${b.chain ?? ""})`,
+      text: `${b.symbol ?? "TOKEN"} · ${b.balance ?? "0"} (${networkDisplayName(b.chain)})`,
     }));
     if (balances.length > 4) {
       lines.push({ text: `+${balances.length - 4} more` });

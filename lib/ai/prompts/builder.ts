@@ -2,12 +2,13 @@ import { IDENTITY_PROMPT } from "./identity";
 import { TRADING_PROMPT } from "./trading";
 import { SUPER_PROMPT } from "./super";
 import { PORTFOLIO_PROMPT } from "./portfolio";
+import { NAMES_PROMPT } from "./names";
 import { NEWS_PROMPT } from "./news";
-import { FORMATTING_PROMPT } from "./formatting";
+import { FORMATTING_PROMPT, DISCLOSURE_PROMPT } from "./formatting";
 import { buildWalletContext } from "./wallet";
 import { buildPasskeyContext } from "./passkey";
 
-export type PromptDomain = "trading" | "portfolio" | "news";
+export type PromptDomain = "trading" | "portfolio" | "names" | "news";
 
 /** Which signer owns the account the prompt describes. */
 export type PromptAccountKind = "wallet" | "passkey";
@@ -49,12 +50,17 @@ export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
 
   if (process.env.SYSTEM_INSTRUCTIONS) {
     const base = process.env.SYSTEM_INSTRUCTIONS.trim();
-    return `${base}\n\n${accountSection}`;
+    return `${base}\n\n${DISCLOSURE_PROMPT}\n\n${accountSection}`;
   }
 
   const sections: string[] = [IDENTITY_PROMPT];
 
-  const domains = options.domains ?? ["trading", "portfolio", "news"];
+  const domains = options.domains ?? [
+    "trading",
+    "portfolio",
+    "names",
+    "news",
+  ];
 
   if (domains.includes("trading")) {
     sections.push(TRADING_PROMPT);
@@ -72,11 +78,16 @@ export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
     sections.push(PORTFOLIO_PROMPT);
   }
 
+  if (domains.includes("names")) {
+    sections.push(NAMES_PROMPT);
+  }
+
   if (domains.includes("news")) {
     sections.push(NEWS_PROMPT);
   }
 
   sections.push(FORMATTING_PROMPT);
+  sections.push(DISCLOSURE_PROMPT);
 
   sections.push(accountSection);
 

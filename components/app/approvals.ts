@@ -2,6 +2,8 @@ import type { UIMessage } from "ai";
 import { parseTradeAction, type TradeAction } from "@/lib/trade/action";
 import { formatUsdPrice } from "@/lib/format/price";
 import type { DepositMetadata } from "@/lib/intents/deposit-metadata";
+import { normalizeEvmAddress } from "@/lib/intents/destination";
+import { isNameLikeValue } from "@/lib/names/detect";
 import {
   assetName,
   formatAmount,
@@ -83,6 +85,11 @@ export type ApprovalInfo = {
   toPriceUsd?: string;
   minAmountOut?: string;
   minAmountOutRaw?: string;
+  /**
+   * What funds the trade: the user's Near Account or their connected wallet.
+   * Absent on messages stored before the tool named the route.
+   */
+  route?: "account" | "wallet";
   recipient: string;
   refundTo?: string;
   expiresAt?: string;
@@ -136,18 +143,54 @@ export function collectApprovals(
     typeof metadata?.createdAt === "string" && metadata.createdAt.length > 0
       ? metadata.createdAt
       : new Date().toISOString();
-  // The figures live on the latest get_quote output in the turn; the
-  // approval input carries the pair the user actually agreed to.
-  let quoted: Record<string, unknown> | null = null;
-  for (const part of parts) {
+  // Every quote in the turn is a candidate, keyed by what it priced. A card
+  // takes the latest one before it that matches its own inputs, including the
+  // fields the wallet will sign, so a turn with two quotes cannot lend the
+  // wrong terms to a card.
+  type QuoteCandidate = {
+    index: number;
+    fromAssetId: string;
+    toAssetId: string;
+    amount: string;
+    route: ApprovalInfo["route"];
+    recipient: string;
+    refundTo: string;
+    slippageBps: number;
+    quoteId: string;
+    output: Record<string, unknown>;
+  };
+  const quoteCandidates: QuoteCandidate[] = [];
+  parts.forEach((part, index) => {
     const p = part as ToolPart;
-    if (toolNameOf(p) === "get_quote" && stateOf(p).startsWith("output")) {
-      const out = outputOf(p);
-      if (out.amountIn && out.amountOut) quoted = out;
-    }
-  }
+    if (toolNameOf(p) !== "get_quote" || !stateOf(p).startsWith("output")) return;
+    const out = outputOf(p);
+    // A preview without a stored row can never be approved: no quote id
+    // means the card has nothing to submit against.
+    if (typeof out.quoteId !== "string" || out.quoteId.length === 0) return;
+    if (!out.amountIn || !out.amountOut) return;
+    const input = inputOf(p);
+    const recipient = str(input.recipient) || activeAddress || "";
+    quoteCandidates.push({
+      index,
+      fromAssetId: str(input.fromAssetId) ?? "",
+      toAssetId: str(input.toAssetId) ?? "",
+      amount: str(input.amount) ?? "",
+      route: quoteRouteOf(out),
+      recipient,
+      // The quote tool defaults an absent refund to the connected wallet.
+      refundTo: str(input.refundTo) || activeAddress || recipient,
+      slippageBps:
+        typeof input.slippageBps === "number" ? input.slippageBps : 100,
+      quoteId: out.quoteId,
+      output: out,
+    });
+  });
+  // One quote belongs to one awaiting card. Two identical quotes followed by
+  // two proposals must yield two distinct quote ids, not the same latest one.
+  const usedQuoteCandidates = new Set<number>();
+  const usedQuoteIds = new Set<string>();
   const out: ApprovalInfo[] = [];
-  for (const part of parts) {
+  for (const [index, part] of parts.entries()) {
     const p = part as ToolPart;
     if (toolNameOf(p) !== "prepare_swap") continue;
     const state = stateOf(p);
@@ -160,12 +203,11 @@ export function collectApprovals(
     const amount = str(input.amount);
     const recipient = str(input.recipient);
     const refundTo = str(input.refundTo) || undefined;
-    const quoteId = str(quoted?.quoteId) || undefined;
     if (!fromAssetId || !toAssetId || !amount || !recipient) continue;
 
-    // The record is the primary truth: the message snapshot still says
-    // "approval requested" because it was written before the answer landed.
-    // The live part covers the moment between the click and the server read.
+    // The record decides the status before any quote is assigned: a decided
+    // card may display a quote but must not consume one meant for the next
+    // awaiting card.
     const decision = approvalDecision(p);
     const recorded = decisions?.[approvalId];
     const stored = getApprovalTx(approvalId);
@@ -175,6 +217,45 @@ export function collectApprovals(
       : recorded === "approved" || decision === true || stored
         ? "approved"
         : "awaiting";
+    const awaiting = status === "awaiting";
+    const slippageBps =
+      typeof input.slippageBps === "number" ? input.slippageBps : 100;
+    const proposalRefund = refundTo || activeAddress || recipient;
+
+    // The latest preceding matching quote that no earlier awaiting card
+    // claimed. If the latest is taken, fall back to the next earlier one;
+    // with none, the card refuses rather than borrowing unrelated terms.
+    let matched: QuoteCandidate | null = null;
+    for (let c = quoteCandidates.length - 1; c >= 0; c -= 1) {
+      const candidate = quoteCandidates[c];
+      if (candidate.index >= index) continue;
+      if (awaiting && usedQuoteCandidates.has(candidate.index)) continue;
+      if (awaiting && usedQuoteIds.has(candidate.quoteId)) continue;
+      if (candidate.fromAssetId !== fromAssetId) continue;
+      if (candidate.toAssetId !== toAssetId) continue;
+      if (candidate.amount !== amount) continue;
+      if (candidate.slippageBps !== slippageBps) continue;
+      // The account-funded route overrides recipient and refund inside the
+      // quote tool, and its card never signs those fields. A wallet route
+      // signs them, so they must match the stored quote exactly.
+      if (candidate.route !== "account") {
+        if (!signedPartyMatches(recipient, candidate.recipient)) continue;
+        if (!signedPartyMatches(proposalRefund, candidate.refundTo)) continue;
+      }
+      matched = candidate;
+      break;
+    }
+    if (matched && awaiting) {
+      usedQuoteCandidates.add(matched.index);
+      usedQuoteIds.add(matched.quoteId);
+    }
+    const quoted = matched?.output ?? null;
+    const quoteId = str(quoted?.quoteId) || undefined;
+    // The card routes from the quote, not from the account kind: a wallet
+    // session can spend its Near Account balance. New outputs name the
+    // route; turns stored before it do carry only the internal mode, which
+    // maps one to one. Neither value ever reaches the interface as a mode.
+    const route = quoteRouteOf(quoted);
 
     // Display figures are truncated for humans; the raw values stay on
     // the signed message and the server record. When there is no quote in
@@ -219,11 +300,11 @@ export function collectApprovals(
       toPriceUsd: formatUsdPrice(meta.get(toAssetId)?.priceUsd),
       minAmountOut: rawMin ? formatAmount(rawMin) : undefined,
       minAmountOutRaw: str(quoted?.minAmountOutRaw) ?? undefined,
+      route,
       recipient,
       refundTo,
       expiresAt: str(quoted?.expiresAt) ?? undefined,
-      slippageBps:
-        typeof input.slippageBps === "number" ? input.slippageBps : 100,
+      slippageBps,
       swapInput:
         status === "awaiting"
           ? {
@@ -232,8 +313,7 @@ export function collectApprovals(
               amount,
               recipient,
               refundTo,
-              slippageBps:
-                typeof input.slippageBps === "number" ? input.slippageBps : 100,
+              slippageBps,
               quoteId,
             }
           : undefined,
@@ -328,6 +408,8 @@ export type WithdrawalInfo = {
   fee?: string;
   /** The server-normalised destination from the stored quote. */
   destination?: string;
+  /** The name the destination resolved from, when one was passed. */
+  destinationName?: string;
   destinationChain?: string;
   expiresAt?: string;
   quoteId?: string;
@@ -355,33 +437,66 @@ export function collectWithdrawals(
       ? metadata.createdAt
       : new Date().toISOString();
 
-  let quoted: Record<string, unknown> | null = null;
-  for (const part of message.parts) {
+  // Each stored quote is a candidate keyed by what it priced: the pair, the
+  // amount, and the destination. A withdrawal card takes the latest quote
+  // before it that matches all four, and no quote is shared between cards.
+  type WithdrawalQuoteCandidate = {
+    index: number;
+    fromAssetId: string;
+    toAssetId: string;
+    amount: string;
+    /** The raw input plus the server's resolved address and name. */
+    destinationKeys: string[];
+    quoteId: string;
+    output: Record<string, unknown>;
+  };
+  const quoteCandidates: WithdrawalQuoteCandidate[] = [];
+  message.parts.forEach((part, index) => {
     const p = part as ToolPart;
-    if (toolNameOf(p) !== "get_withdrawal_quote") continue;
-    if (!stateOf(p).startsWith("output")) continue;
+    if (toolNameOf(p) !== "get_withdrawal_quote") return;
+    if (!stateOf(p).startsWith("output")) return;
     const out = outputOf(p);
-    if (out.mode !== "confidential-withdrawal") continue;
-    if (typeof out.quoteId === "string" && out.quoteId.length > 0) quoted = out;
-  }
+    // A preview without a stored row can never be approved.
+    if (typeof out.quoteId !== "string" || out.quoteId.length === 0) return;
+    const input = inputOf(p);
+    const fromAssetId = str(input.fromAssetId);
+    const amount = str(input.amount);
+    const destinationAddress = str(input.destinationAddress);
+    if (!fromAssetId || !amount || !destinationAddress) return;
+    const destinationKeys = [
+      destinationAddress,
+      str(out.destination),
+      str(out.destinationName),
+    ].filter((value): value is string => !!value);
+    quoteCandidates.push({
+      index,
+      fromAssetId,
+      toAssetId: str(input.toAssetId) || fromAssetId,
+      amount,
+      destinationKeys,
+      quoteId: out.quoteId,
+      output: out,
+    });
+  });
+  const usedQuoteCandidates = new Set<number>();
+  const usedQuoteIds = new Set<string>();
 
   const out: WithdrawalInfo[] = [];
-  for (const part of message.parts) {
+  for (const [index, part] of message.parts.entries()) {
     const p = part as ToolPart;
     if (toolNameOf(p) !== "prepare_withdrawal") continue;
     const approvalId = approvalIdOf(p);
     if (!approvalId) continue;
 
     const input = inputOf(p);
-    // The stored quote names the assets it priced. The tool input is only a
-    // fallback for a proposal that arrived without a quote.
-    const fromAssetId =
-      str(quoted?.fromAssetId) || str(input.fromAssetId);
-    const toAssetId =
-      str(quoted?.toAssetId) || str(input.toAssetId) || fromAssetId;
+    const inputFromAssetId = str(input.fromAssetId);
+    const inputToAssetId = str(input.toAssetId) || inputFromAssetId;
     const amount = str(input.amount);
-    if (!fromAssetId || !toAssetId || !amount) continue;
+    const destinationAddress = str(input.destinationAddress);
+    if (!inputFromAssetId || !inputToAssetId || !amount) continue;
 
+    // The status decides whether this card may consume a quote. A decided
+    // card may still display one, but must not starve the next awaiting card.
     const state = stateOf(p);
     const executed = state === "output-available" || state === "output-error";
     // The record decides first: a withdrawal refused on another device is
@@ -395,12 +510,48 @@ export function collectWithdrawals(
       : recorded === "approved" || decision === true || stored || executed
         ? "approved"
         : "awaiting";
+    const awaiting = status === "awaiting";
+
+    // The latest preceding matching quote that no earlier awaiting card
+    // claimed. The destination comparison is address-aware: checksum and
+    // lower-case EVM forms are the same address, and a name quote matches its
+    // resolved address proposal through the quote's own resolved values. The
+    // reverse is not guessed: the model must pass the same destination string
+    // to both tools when it has only an address.
+    let matched: WithdrawalQuoteCandidate | null = null;
+    for (let c = quoteCandidates.length - 1; c >= 0; c -= 1) {
+      const candidate = quoteCandidates[c];
+      if (candidate.index >= index) continue;
+      if (awaiting && usedQuoteCandidates.has(candidate.index)) continue;
+      if (awaiting && usedQuoteIds.has(candidate.quoteId)) continue;
+      if (candidate.fromAssetId !== inputFromAssetId) continue;
+      if (candidate.toAssetId !== inputToAssetId) continue;
+      if (candidate.amount !== amount) continue;
+      if (
+        !destinationAddress ||
+        !destinationMatches(destinationAddress, candidate.destinationKeys)
+      ) {
+        continue;
+      }
+      matched = candidate;
+      break;
+    }
+    if (matched && awaiting) {
+      usedQuoteCandidates.add(matched.index);
+      usedQuoteIds.add(matched.quoteId);
+    }
+    const quoted = matched?.output ?? null;
+    // The stored quote names the assets it priced. Without one, the proposal
+    // still shows its own pair and amount from the tool input.
+    const fromAssetId = str(quoted?.fromAssetId) || inputFromAssetId;
+    const toAssetId = str(quoted?.toAssetId) || inputToAssetId;
 
     const quoteId = str(quoted?.quoteId) || undefined;
     // The destination is only ever the stored quote's value. A proposal with
     // no quote has no authoritative address to show, and the card disables
     // Approve rather than display the model's string.
     const destination = str(quoted?.destination) || undefined;
+    const destinationName = str(quoted?.destinationName) || undefined;
     const destinationChain = str(quoted?.destinationChain) || undefined;
 
     out.push({
@@ -419,6 +570,7 @@ export function collectWithdrawals(
       minAmountOut: str(quoted?.minAmountOut) || undefined,
       fee: str(quoted?.withdrawFeeFormatted) || undefined,
       destination,
+      destinationName,
       destinationChain,
       expiresAt: str(quoted?.expiresAt) || undefined,
       quoteId,
@@ -427,6 +579,75 @@ export function collectWithdrawals(
     });
   }
   return out;
+}
+
+/**
+ * The public route a quote names. New outputs carry `route`; turns stored
+ * before it carry the internal mode, which maps one to one.
+ */
+function quoteRouteOf(
+  output: Record<string, unknown> | null | undefined,
+): "account" | "wallet" | undefined {
+  if (output?.route === "account" || output?.route === "wallet") {
+    return output.route;
+  }
+  if (output?.mode === "confidential-intents") return "account";
+  if (output?.mode === "chain") return "wallet";
+  return undefined;
+}
+
+/**
+ * Whether a signed recipient or refund names the same party as the quote's.
+ *
+ * Two EVM addresses compare after normalisation. Two names compare
+ * case-folded. A name and an address cannot be proven equal on the client, so
+ * that pairing fails closed. Every other value — a Solana or NEAR address,
+ * for example — compares exactly, because those are case-sensitive.
+ */
+function signedPartyMatches(proposal: string, quote: string): boolean {
+  const left = proposal.trim();
+  const right = quote.trim();
+  if (!left || !right) return false;
+  const leftEvm = normalizeEvmAddress(left);
+  const rightEvm = normalizeEvmAddress(right);
+  if (leftEvm && rightEvm) {
+    return leftEvm.toLowerCase() === rightEvm.toLowerCase();
+  }
+  const leftName = isNameLikeValue(left);
+  const rightName = isNameLikeValue(right);
+  if (leftName && rightName) {
+    return left.toLowerCase() === right.toLowerCase();
+  }
+  if (leftName || rightName) return false;
+  return left === right;
+}
+
+/**
+ * Whether a proposal's destination names the same place as a quote's.
+ *
+ * Two EVM addresses compare after normalisation, so a lowercase quote and a
+ * checksummed proposal agree. Anything else compares trimmed, case-folded:
+ * that lets a name quote match its resolved address through the quote's own
+ * `destination` / `destinationName` values.
+ */
+function destinationMatches(
+  proposal: string,
+  candidates: readonly string[],
+): boolean {
+  const proposed = proposal.trim();
+  if (!proposed) return false;
+  const proposedEvm = normalizeEvmAddress(proposed);
+  for (const candidate of candidates) {
+    const other = candidate.trim();
+    if (!other) continue;
+    const otherEvm = normalizeEvmAddress(other);
+    if (proposedEvm && otherEvm) {
+      if (proposedEvm.toLowerCase() === otherEvm.toLowerCase()) return true;
+      continue;
+    }
+    if (proposed.toLowerCase() === other.toLowerCase()) return true;
+  }
+  return false;
 }
 
 /** Dollar value for a formatted amount and a catalogue price, or nothing

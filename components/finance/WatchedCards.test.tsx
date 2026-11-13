@@ -75,7 +75,6 @@ describe("WatchedCards", () => {
     expect(html).toContain('aria-label="Copy address"');
     expect(html).toContain("Watch new");
   });
-
   it("leaves the delete gate to the tab", () => {
     const html = render();
 
@@ -93,5 +92,46 @@ describe("WatchedCards", () => {
     expect(html).toContain("· Default");
     // Only the default row carries the mark.
     expect(html.match(/· Default/g)).toHaveLength(1);
+  });
+
+  it("falls back to the tracked name when no label was given", () => {
+    const html = render({
+      entries: [
+        {
+          id: "watch-3",
+          chain: "evm" as const,
+          address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+          label: null,
+          isDefault: false,
+          resolvedName: "vitalik.eth",
+          resolvedAt: "2026-11-08T12:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(html).toContain("vitalik.eth");
+    // The title already says the name: the visible row reads it once, and
+    // the kebab's action label names the same card.
+    expect(html.match(/>vitalik\.eth</g)).toHaveLength(1);
+    expect(html).toContain("Card actions for vitalik.eth");
+  });
+
+  it("keeps the tracked name on a second line behind a custom label", () => {
+    const html = render({
+      entries: [
+        {
+          id: "watch-3",
+          chain: "evm" as const,
+          address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+          label: "Founder",
+          isDefault: false,
+          resolvedName: "vitalik.eth",
+          resolvedAt: "2026-11-08T12:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(html).toContain("Founder");
+    expect(html).toContain("vitalik.eth");
   });
 });

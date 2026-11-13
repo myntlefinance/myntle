@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { createShader, playSweep, accentChain, ACCENTS } from "glimm";
 import {
   isDesktop,
   isEditableElement,
@@ -10,23 +8,17 @@ import {
   type FocusComposerDetail,
   typeToFocusComposer,
 } from "@/lib/composer";
-
-/* The built-in "prism" palette is only cyan→indigo→magenta, so a sweep
- * reads as blue/purple. Build a true full-spectrum rainbow instead. */
-const RAINBOW = accentChain([
-  ACCENTS.red,
-  ACCENTS.orange,
-  ACCENTS.yellow,
-  ACCENTS.green,
-  ACCENTS.cyan,
-  ACCENTS.blue,
-  ACCENTS.purple,
-]);
+import {
+  fetchNamePreview,
+  findNamesInText,
+  replaceFirstName,
+} from "@/lib/names/detect";
+import { shortAddr } from "@/lib/trade/identity";
 
 /* ─────────────────────────────────────────────────────────
  * PROMPT BAR
  * A composer with real controls: attach, @ data sources,
- * / commands, a model picker, dictation, and send.
+ * / commands, dictation, and send.
  * Type @ or / to open the menus; ↑↓ + Enter to pick.
  * Variants: Rounded (card radius) · Pill (full radius).
  * ───────────────────────────────────────────────────────── */
@@ -102,22 +94,6 @@ const COMMANDS = [
   { key: "restock", name: "/restock", desc: "Build a reorder list" },
   { key: "draft-email", name: "/draft-email", desc: "Write a supplier email" },
   { key: "summarize", name: "/summarize", desc: "Digest the thread so far" },
-];
-
-export type PromptModel = {
-  key: string;
-  name: string;
-  /** What the model is for, in the interface's own words. */
-  tag?: string;
-  /** Whether the model can be selected right now. */
-  enabled?: boolean;
-};
-
-const MODELS: PromptModel[] = [
-  { key: "openai/gpt-6-luna", name: "GPT-6 Luna", tag: "Default", enabled: false },
-  { key: "Qwen/Qwen3.8-27B", name: "Qwen 3.8 27B", tag: "Cheapest", enabled: false },
-  { key: "anthropic/claude-sonnet-5-5", name: "Claude Sonnet 5.5", tag: "Strongest", enabled: false },
-  { key: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash", tag: "Fast", enabled: true },
 ];
 
 export type AttachedFile = {
@@ -199,6 +175,8 @@ const ATTACH_ACCEPT =
   ".png,.jpg,.jpeg,.webp,.gif,.avif,.svg,.bmp,.ico,.heic,.heif,.pdf,.doc,.docx,.odt,.rtf,.txt,.md,.log,.xls,.xlsx,.csv,.tsv,.ods,.ppt,.pptx,.odp,.zip,.rar,.7z,.tar,.gz,.json,.mp3,.wav,.m4a,.mp4,.mov,.webm";
 const MAX_ATTACHMENTS = 10;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
+/** The pause after the last keystroke before a name preview starts. */
+const NAME_STRIP_DEBOUNCE_MS = 350;
 const DICTATION = "Compare pistachio weekends to last summer";
 
 /* self-running demo: walk the @ menu, then the / menu, and repeat.
@@ -207,11 +185,9 @@ const AUTO_STEPS: {
   draft: string;
   active?: number;
   connect?: boolean;
-  modelOpen?: boolean;
-  model?: string;
   hold: number;
 }[] = [
-  { draft: "", connect: false, model: "vanilla-1", hold: 1100 },
+  { draft: "", connect: false, hold: 1100 },
   { draft: "@", active: 0, hold: 900 },
   { draft: "@", active: 1, hold: 620 },
   { draft: "@", active: 4, hold: 620 },
@@ -221,10 +197,6 @@ const AUTO_STEPS: {
   { draft: "/", active: 0, hold: 900 },
   { draft: "/", active: 1, hold: 620 },
   { draft: "/", active: 3, hold: 1000 },
-  { draft: "", hold: 800 },
-  // open the model picker and upgrade to the flagship → rainbow sweep
-  { draft: "", modelOpen: true, hold: 1200 },
-  { draft: "", model: "sprinkles-5", hold: 2400 },
   { draft: "", hold: 900 },
 ];
 
@@ -245,8 +217,6 @@ export default function PromptBar({
   tall = false,
   placeholder,
   onSend,
-  models = MODELS,
-  onModelChange,
   autoFocus = false,
 }: {
   variant?: string;
@@ -256,10 +226,6 @@ export default function PromptBar({
   tall?: boolean;
   placeholder?: string;
   onSend?: (text: string, files: AttachedFile[]) => void;
-  /** the models offered in the picker */
-  models?: PromptModel[];
-  /** called with the model id whenever the selection changes */
-  onModelChange?: (modelId: string) => void;
   /** activates input on mount on desktop only */
   autoFocus?: boolean;
 }) {
@@ -267,9 +233,6 @@ export default function PromptBar({
   const [draft, setDraft] = useState("");
   const [dismissed, setDismissed] = useState(false);
   const [plusOpen, setPlusOpen] = useState(false);
-  const [modelOpen, setModelOpen] = useState(false);
-  const [model, setModel] = useState<PromptModel>(models[0] ?? MODELS[0]);
-  const [soonTip, setSoonTip] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [connected, setConnected] = useState(false);
@@ -279,25 +242,80 @@ export default function PromptBar({
   const [autoStep, setAutoStep] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const wide = expanded || tall;
+
+  /* name confirm strip — the first detected name previews its address
+   * above the input so it can be confirmed before sending. Display only:
+   * the server resolves again when the turn runs and never trusts the
+   * address shown here. */
+  const [nameFound, setNameFound] = useState<{
+    raw: string;
+    name: string;
+    chain: "evm" | "solana";
+  } | null>(null);
+  const [nameAddress, setNameAddress] = useState<string | null>(null);
+  const [dismissedName, setDismissedName] = useState<string | null>(null);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- debounce sync: a new
+   * draft clears the previous preview before its read starts */
+  useEffect(() => {
+    if (demo) return;
+    if (dismissedName && !draft.toLowerCase().includes(dismissedName)) {
+      setDismissedName(null);
+    }
+    const found = findNamesInText(draft)[0] ?? null;
+    if (!found || found.name === dismissedName) {
+      setNameFound(null);
+      setNameAddress(null);
+      return;
+    }
+    setNameFound((current) => {
+      if (current && current.name === found.name) return current;
+      return { raw: found.raw, name: found.name, chain: found.chain };
+    });
+    setNameAddress(null);
+    let live = true;
+    const timer = window.setTimeout(() => {
+      void fetchNamePreview(found.raw, found.chain).then((read) => {
+        if (!live) return;
+        if (read.ok) {
+          setNameAddress(read.address);
+        } else {
+          // No strip for an unregistered or unreadable name: the server
+          // answers properly when the turn runs.
+          setNameFound(null);
+          setNameAddress(null);
+        }
+      });
+    }, NAME_STRIP_DEBOUNCE_MS);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [demo, draft, dismissedName]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const useNameAddress = () => {
+    if (!nameFound || !nameAddress) return;
+    const raw = nameFound.raw;
+    setDraft((current) => replaceFirstName(current, raw, nameAddress));
+    setNameFound(null);
+    setNameAddress(null);
+    inputRef.current?.focus();
+  };
+
+  const dismissNameStrip = () => {
+    if (nameFound) setDismissedName(nameFound.name);
+    setNameFound(null);
+    setNameAddress(null);
+  };
+
   const [rowBox, setRowBox] = useState<{ top: number; height: number } | null>(null);
   const [engaged, setEngaged] = useState(false);
-  const [modelBox, setModelBox] = useState<{ top: number; height: number } | null>(null);
-  const [modelHovered, setModelHovered] = useState<number | null>(null);
-  const [modelMenuLeft, setModelMenuLeft] = useState(0);
-  const [modelMenuBottom, setModelMenuBottom] = useState(0);
-  const [modelMenuTop, setModelMenuTop] = useState(0);
-  const [modelMenuBelow, setModelMenuBelow] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const composerAnchorRef = useRef<HTMLDivElement>(null);
   const controlsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const measureRef = useRef<HTMLSpanElement>(null);
-  const modelRef = useRef<HTMLButtonElement>(null);
   const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const modelRowRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const glimmRef = useRef<HTMLCanvasElement>(null);
-  const shaderRef = useRef<ReturnType<typeof createShader> | null>(null);
-  const sweepingRef = useRef(false);
 
   /* hand control to the user: stop the demo loop, and when they aim at
    * the input itself, clear the demo's leftover draft for a clean start */
@@ -394,7 +412,7 @@ export default function PromptBar({
         if (isEditableElement(target) || isEditableElement(activeEl)) return;
         if (
           document.querySelector(
-            '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-model-menu], [aria-modal="true"]',
+            '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [aria-modal="true"]',
           )
         ) {
           return;
@@ -420,7 +438,7 @@ export default function PromptBar({
       // Check if an open modal, alertdialog, or menu is active
       if (
         document.querySelector(
-          '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-model-menu], [aria-modal="true"]',
+          '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [aria-modal="true"]',
         )
       ) {
         return;
@@ -475,120 +493,6 @@ export default function PromptBar({
     if (target) setRowBox({ top: target.offsetTop, height: target.offsetHeight });
   }, [menu, query, active, connected, rows.length]);
 
-  /* same gliding highlight in the model menu — floats to the hovered
-   * row, falling back to the currently-selected model */
-  const modelIndex = models.findIndex((m) => m.key === model.key);
-  useLayoutEffect(() => {
-    if (!modelOpen) return;
-    const target = modelRowRefs.current[modelHovered ?? modelIndex];
-    if (target) setModelBox({ top: target.offsetTop, height: target.offsetHeight });
-  }, [modelOpen, modelHovered, modelIndex]);
-
-  /* The menu portals to the body with viewport-fixed coordinates, so it
-   * always paints above surrounding content. An absolutely-positioned menu
-   * stays trapped in the composer's stacking context (the entrance reveal
-   * leaves a transform on the wrapper), and later siblings — like the
-   * suggestion list under the empty-state composer — paint over it.
-   * It drops below the trigger whenever the viewport has room for it and
-   * only flips above when it must; scroll and resize re-measure. */
-  useLayoutEffect(() => {
-    if (!modelOpen || !modelRef.current) return;
-    const measure = () => {
-      const trigger = modelRef.current;
-      if (!trigger) return;
-      const triggerRect = trigger.getBoundingClientRect();
-      setModelMenuLeft(Math.max(8, Math.min(triggerRect.left, window.innerWidth - 176 - 8)));
-      // Rows are 30px tall inside 4px of padding.
-      const menuHeight = models.length * 30 + 8;
-      const below = triggerRect.bottom + 8 + menuHeight <= window.innerHeight;
-      setModelMenuBelow(below);
-      if (below) {
-        setModelMenuTop(triggerRect.bottom + 8);
-      } else {
-        setModelMenuBottom(window.innerHeight - triggerRect.top + 8);
-      }
-    };
-    measure();
-    window.addEventListener("resize", measure);
-    window.addEventListener("scroll", measure, true);
-    return () => {
-      window.removeEventListener("resize", measure);
-      window.removeEventListener("scroll", measure, true);
-    };
-  }, [modelOpen, wide, model.name, models.length]);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (!modelOpen) setModelHovered(null);
-  }, [modelOpen]);
-
-  /* Build the shader with a pinned hue phase. createShader seeds its
-   * internal hueShift from Math.random(), which made the sweep a different
-   * colour on every reload — pin it so the rainbow is identical each time. */
-  const makeShader = () => {
-    const canvas = glimmRef.current;
-    if (!canvas) return null;
-    const random = Math.random;
-    Math.random = () => 0;
-    try {
-      return createShader({
-        canvas,
-        palette: RAINBOW,
-        direction: "ltr",
-        bandTight: 10,
-        swellAmount: 0.85,
-      });
-    } finally {
-      Math.random = random;
-    }
-  };
-
-  /* Glimm shader lives inside the composer, invisible at rest. Selecting
-   * the flagship model fires a one-shot rainbow sweep across the interior. */
-  useEffect(() => {
-    shaderRef.current = makeShader();
-    return () => {
-      shaderRef.current?.destroy();
-      shaderRef.current = null;
-    };
-  }, []);
-
-  const celebrate = () => {
-    if (sweepingRef.current) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    // Recreate the shader per sweep so uTime restarts at 0 — the hue phase
-    // (which drifts with time) is then identical on every trigger.
-    shaderRef.current?.destroy();
-    const shader = makeShader();
-    shaderRef.current = shader;
-    if (!shader) return;
-    sweepingRef.current = true;
-    const sweep = playSweep(shader, {
-      palette: RAINBOW,
-      direction: "ltr",
-      sweepMs: 570,
-      outroMs: 80,
-      peakAlpha: 1.3,
-      bandTight: 10,
-      brightness: 1.4,
-      swellAmount: 1,
-      waveSpeed: 1.8,
-      easing: "easeOutExpo",
-    });
-    sweep.done.finally(() => {
-      sweepingRef.current = false;
-    });
-  };
-
-  const selectModel = (next: PromptModel) => {
-    setModel(next);
-    setModelOpen(false);
-    onModelChange?.(next.key);
-  };
-
   /* autoplay: apply the current step, then advance after its hold */
   useEffect(() => {
     if (!auto) return;
@@ -596,18 +500,9 @@ export default function PromptBar({
     setDraft(step.draft);
     if (step.active !== undefined) setActive(step.active);
     if (step.connect !== undefined) setConnected(step.connect);
-    if (step.modelOpen !== undefined) setModelOpen(step.modelOpen);
-    if (step.model) {
-      const next = models.find((m) => m.key === step.model);
-      if (next) {
-        setModel(next);
-        setModelOpen(false);
-        onModelChange?.(next.key);
-      }
-    }
     const t = setTimeout(() => setAutoStep((s) => s + 1), step.hold);
     return () => clearTimeout(t);
-  }, [auto, autoStep, models, onModelChange]);
+  }, [auto, autoStep]);
 
   /* dictation resolves after a beat, like a real transcript landing */
   useEffect(() => {
@@ -625,11 +520,10 @@ export default function PromptBar({
     const input = inputRef.current;
     const controls = controlsRef.current;
     const measure = measureRef.current;
-    const modelButton = modelRef.current;
-    if (!input || !controls || !measure || !modelButton) return;
+    if (!input || !controls || !measure) return;
 
-    const fixedControlsWidth = 28 * 3 + modelButton.offsetWidth;
-    const inlineGaps = 4 * 4;
+    const fixedControlsWidth = 28 * 3;
+    const inlineGaps = 3 * 4;
     const inlineInputWidth = controls.clientWidth - fixedControlsWidth - inlineGaps;
     const needsFullWidth = draft.includes("\n") || measure.offsetWidth + 8 > inlineInputWidth;
     if (needsFullWidth !== expanded) {
@@ -644,23 +538,20 @@ export default function PromptBar({
     input.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
   }, [draft, expanded]);
 
-  /* clicking anywhere outside the composer closes the open menus —
-   * the model menu lives in a portal, so it opts back in explicitly */
+  /* clicking anywhere outside the composer closes the plus menu */
   useEffect(() => {
-    if (!modelOpen && !plusOpen) return;
+    if (!plusOpen) return;
     const close = (event: PointerEvent) => {
-      if (!(event.target as Element).closest("[data-promptbar],[data-model-menu]")) {
-        setModelOpen(false);
+      if (!(event.target as Element).closest("[data-promptbar]")) {
         setPlusOpen(false);
       }
     };
     document.addEventListener("pointerdown", close);
     return () => document.removeEventListener("pointerdown", close);
-  }, [modelOpen, plusOpen]);
+  }, [plusOpen]);
 
   const closeMenus = () => {
     setPlusOpen(false);
-    setModelOpen(false);
   };
 
   const pick = (row: { key: string; name: string }) => {
@@ -783,72 +674,6 @@ export default function PromptBar({
         </div>
       )}
 
-      {/* ── model menu ─────────────────────────────────── */}
-      {modelOpen && mounted
-        ? createPortal(
-            <div
-              data-model-menu
-              onMouseLeave={() => setModelHovered(null)}
-              className="fixed z-[100] w-44 rounded-[10px] bg-surface p-1 shadow-raised"
-              style={{
-                left: modelMenuLeft,
-                ...(modelMenuBelow ? { top: modelMenuTop } : { bottom: modelMenuBottom }),
-                animation: "pop-in 180ms cubic-bezier(0.23,1,0.32,1) both",
-                transformOrigin: modelMenuBelow ? "top left" : "bottom left",
-              }}
-            >
-          {/* single gliding highlight — floats to the hovered / selected row */}
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-x-1 rounded-[6px] bg-hover"
-            style={{
-              top: modelBox?.top ?? 0,
-              height: modelBox?.height ?? 0,
-              opacity: modelBox && modelHovered !== null ? 1 : 0,
-              transition:
-                "top 220ms cubic-bezier(0.23,1,0.32,1), height 220ms cubic-bezier(0.23,1,0.32,1), opacity 150ms ease",
-            }}
-          />
-          {models.map((m, i) => (
-            <button
-              key={m.key}
-              type="button"
-              ref={(el) => {
-                modelRowRefs.current[i] = el;
-              }}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                if (m.enabled === false) {
-                  setSoonTip(m.key);
-                  setTimeout(() => setSoonTip(null), 1200);
-                  return;
-                }
-                selectModel(m);
-                inputRef.current?.focus();
-              }}
-              disabled={m.enabled === false}
-              title={m.enabled === false ? "Coming soon" : undefined}
-              onMouseEnter={() => setModelHovered(i)}
-              className={`relative z-10 flex h-7.5 w-full items-center gap-2 rounded-[6px] px-2 text-left ${
-                m.enabled === false ? "cursor-not-allowed opacity-40" : ""
-              }`}
-            >
-              <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink">{m.name}</span>
-              {soonTip === m.key ? (
-                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-[4px] bg-ink px-1.5 py-0.5 text-[10px] font-medium text-page">
-                  soon
-                </span>
-              ) : null}
-              <span className={`shrink-0 text-ink ${m.key === model.key ? "" : "invisible"}`}>
-                <Icon size={13} strokeWidth={2.5}><path d="M20 6L9 17l-5-5" /></Icon>
-              </span>
-            </button>
-          ))}
-            </div>,
-            document.body,
-          )
-        : null}
-
       {/* ── composer ───────────────────────────────────── */}
       <div
         className={`relative isolate flex flex-col overflow-hidden border border-line bg-surface shadow-card transition-[border-color,border-radius] duration-150 focus-within:border-line-strong ${
@@ -857,15 +682,6 @@ export default function PromptBar({
           pill ? (attachments.length > 0 || wide ? "rounded-[24px]" : "rounded-full") : tall ? "rounded-[22px]" : "rounded-[14px]"
         }`}
       >
-        {/* rainbow glimm sweep — plays across the interior on model change.
-            explicit w/h: a <canvas> is a replaced element and won't stretch
-            to inset-0 alone, which feeds back into the shader's ResizeObserver. */}
-        <canvas
-          ref={glimmRef}
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 -z-10 h-full w-full"
-          style={{ borderRadius: "inherit" }}
-        />
         <span
           ref={measureRef}
           aria-hidden="true"
@@ -916,20 +732,52 @@ export default function PromptBar({
           }}
         />
 
+        {/* name confirm strip — the detected name with its previewed
+            address, above the input. Use swaps the address into the draft;
+            Dismiss hides the strip until the name is retyped. */}
+        {nameFound ? (
+          <div
+            role="status"
+            className="flex items-center gap-2 px-1"
+            style={{ animation: "fade-in 180ms ease-out both" }}
+          >
+            {nameAddress ? (
+              <>
+                <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-2">
+                  {nameFound.name} → {shortAddr(nameAddress)}
+                </span>
+                <button
+                  type="button"
+                  onClick={useNameAddress}
+                  className="shrink-0 rounded-full bg-ink px-2.5 py-1 text-[11.5px] font-medium text-surface transition-transform duration-150 active:scale-[0.96]"
+                >
+                  Use
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissNameStrip}
+                  className="shrink-0 rounded-full px-2 py-1 text-[11.5px] font-medium text-ink-3 transition-colors duration-100 hover:text-ink"
+                >
+                  Dismiss
+                </button>
+              </>
+            ) : (
+              <span className="text-[12.5px] text-ink-3">
+                Resolving {nameFound.name}.
+              </span>
+            )}
+          </div>
+        ) : null}
+
         <div
           ref={controlsRef}
-          className={`grid items-end gap-x-1 gap-y-1.5 ${
-            wide
-              ? "grid-cols-[28px_auto_minmax(0,1fr)_28px_28px]"
-              : "grid-cols-[28px_minmax(0,1fr)_auto_28px_28px]"
-          }`}
+          className="grid grid-cols-[28px_minmax(0,1fr)_28px_28px] items-end gap-x-1 gap-y-1.5"
         >
           <button
             type="button"
             aria-label="Add attachments and sources"
             aria-expanded={plusOpen}
             onClick={() => {
-              setModelOpen(false);
               setPlusOpen((current) => !current);
               inputRef.current?.focus();
             }}
@@ -980,26 +828,6 @@ export default function PromptBar({
             }`}
           />
 
-          {/* model picker */}
-          <button
-            ref={modelRef}
-            type="button"
-            aria-expanded={modelOpen}
-            aria-label="Choose model"
-            onClick={() => {
-              setPlusOpen(false);
-              setModelOpen((current) => !current);
-            }}
-            className={`flex h-7 shrink-0 items-center gap-1 px-1.5 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink ${
-              pill ? "rounded-full" : "rounded-[8px]"
-            } ${wide ? "col-start-2 row-start-2 justify-self-start" : "col-start-3 row-start-1"}`}
-          >
-            {model.name}
-            <span className="text-ink-3">
-              <Icon size={11} strokeWidth={2.4}><path d="M6 9l6 6 6-6" /></Icon>
-            </span>
-          </button>
-
           {/* dictation */}
           <button
             type="button"
@@ -1008,7 +836,7 @@ export default function PromptBar({
             onClick={() => setListening((current) => !current)}
             className={`flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] ${
               pill ? "rounded-full" : "rounded-[8px]"
-            } ${listening ? "bg-accent-tint text-accent-ink" : "text-ink-3 hover:bg-hover hover:text-ink"} ${wide ? "col-start-4 row-start-2" : "col-start-4 row-start-1"}`}
+            } ${listening ? "bg-accent-tint text-accent-ink" : "text-ink-3 hover:bg-hover hover:text-ink"} ${wide ? "col-start-3 row-start-2" : "col-start-3 row-start-1"}`}
           >
             {listening ? (
               <span className="flex h-3.5 items-center gap-[2.5px]">
@@ -1040,7 +868,7 @@ export default function PromptBar({
             onClick={send}
             className={`flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-200 enabled:active:scale-[0.94] ${
               pill ? "rounded-full" : "rounded-[8px]"
-            } ${wide ? "col-start-5 row-start-2" : "col-start-5 row-start-1"}`}
+            } ${wide ? "col-start-4 row-start-2" : "col-start-4 row-start-1"}`}
             style={{
               background: canSend ? "var(--ink)" : "var(--line-strong)",
               color: canSend ? "var(--surface)" : "var(--ink-2)",

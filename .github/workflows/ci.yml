@@ -34,6 +34,12 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      - name: Typecheck the prices Worker
+        run: bun run prices:typecheck
+
+      - name: Validate the prices Worker bundle
+        run: bun run prices:dry-run
+
       - name: Lint
         run: bun run lint
 

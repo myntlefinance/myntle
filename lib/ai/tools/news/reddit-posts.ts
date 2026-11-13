@@ -16,7 +16,7 @@ export const GET_REDDIT_POSTS_CAPABILITY: Capability = {
 
 const SortEnum = z.enum(["hot", "new", "top", "relevance"]).default("hot");
 
-// Reddit upstream is slower than Google News (observed ~15s in Oct 2026),
+// Reddit upstream is slower than Google News (observed ~15s against the live API),
 // so this tool allows a much longer fetch than the shared default without
 // blocking news results. Safe: the chat route runs with maxDuration = 300.
 const REDDIT_TIMEOUT_MS = 45000;

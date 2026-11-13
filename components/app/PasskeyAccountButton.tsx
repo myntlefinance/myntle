@@ -13,18 +13,16 @@ import {
  * The account control for a passkey-owned account.
  *
  * It renders the same menu as a wallet: copy the account id, unlock or lock
- * the private balance, profile, usage, theme, and sign out. A passkey
+ * the private balance, profile, theme, and sign out. A passkey
  * account is a full account, not a reduced one.
  */
 export function PasskeyAccountButton({
   compact = false,
   onProfile,
-  onUsage,
 }: {
   /** icon-only rail control for the collapsed sidebar */
   compact?: boolean;
   onProfile?: () => void;
-  onUsage?: () => void;
 } = {}) {
   const { identity, signOut } = useAuth();
   const [open, setOpen] = useState(false);
@@ -41,7 +39,6 @@ export function PasskeyAccountButton({
       onClose={() => setOpen(false)}
       onDisconnect={() => void signOut()}
       onProfile={onProfile}
-      onUsage={onUsage}
       onUnlock={() => {
         setOpen(false);
         openSuperUnlock();

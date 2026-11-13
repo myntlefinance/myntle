@@ -60,7 +60,7 @@ describe("PortfolioHero", () => {
       />,
     );
     expect(html).toContain(
-      "Watching Vault’s public holdings across 4 assets.",
+      "Vault’s wallet holds $896.98 across 4 assets.",
     );
     expect(html).toContain("$896.98");
     expect(html).not.toContain("Your wallet holds");
@@ -78,9 +78,7 @@ describe("PortfolioHero", () => {
         onSelect={vi.fn()}
       />,
     );
-    expect(html).toContain(
-      "Watching this account’s public holdings across 1 asset.",
-    );
+    expect(html).toContain("This wallet holds $5.00 across 1 asset.");
   });
 
   it("mutes every segment until one is selected", () => {

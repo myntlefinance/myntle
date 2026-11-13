@@ -5,7 +5,6 @@ import {
   IconCoin,
   IconCoins,
   IconGasStation,
-  IconRefresh,
 } from "@tabler/icons-react";
 import { TextMorph } from "torph/react";
 import MorphMoney, {
@@ -278,83 +277,6 @@ function AllocationSegmentButton({
 
 export type HeroScope = "wallet" | "super" | "watched";
 
-/* The section title with its refresh action on the same row: the
- * heading names the balances below, and the button re-reads
- * them. While a background full read is in flight the refresh
- * glyph crossfades to the Dots pixel grid and the label morphs
- * to Refreshing; both morph back when the balances settle. */
-const DOTS_DELAYS = Array.from({ length: 9 }, (_, i) => {
-  const r = Math.floor(i / 3), c = i % 3;
-  return (c + Math.abs(r - 1)) * 90;
-});
-
-export function DotsGrid({ size = 4 }: { size?: number }) {
-  return (
-    <span
-      aria-hidden
-      className="grid shrink-0 grid-cols-[repeat(3,4px)] gap-[1.5px]"
-    >
-      {DOTS_DELAYS.map((delay, index) => (
-        <span
-          key={index}
-          className="size-[4px] rounded-full bg-ink"
-          style={{
-            width: size,
-            height: size,
-            opacity: 0.15,
-            animation: `pixel-on 650ms ease-in-out ${delay}ms infinite`,
-          }}
-        />
-      ))}
-    </span>
-  );
-}
-
-export function BalancesTitleRow({
-  onRefresh,
-  label = "Refresh balances",
-  refreshing = false,
-}: {
-  onRefresh: () => void;
-  label?: string;
-  refreshing?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <h2 className="text-[14px] font-medium text-ink">Balances</h2>
-      <button
-        type="button"
-        onClick={onRefresh}
-        aria-label={label}
-        aria-busy={refreshing || undefined}
-        className="flex h-8 shrink-0 items-center gap-1.5 rounded-[7px] px-2 text-[13px] font-medium text-ink-3 transition-colors duration-100 hover:bg-hover hover:text-ink"
-      >
-        <span className="relative flex size-[15px] shrink-0 items-center justify-center">
-          <span
-            aria-hidden
-            className={`absolute inset-0 flex items-center justify-center transition-opacity duration-150 ${refreshing ? "opacity-0" : "opacity-100"}`}
-          >
-            <IconRefresh size={15} stroke={2} />
-          </span>
-          <span
-            aria-hidden
-            className={`absolute inset-0 flex items-center justify-center transition-opacity duration-150 ${refreshing ? "opacity-100" : "opacity-0"}`}
-          >
-            <DotsGrid />
-          </span>
-        </span>
-        <TextMorph
-          duration={MORPH_DURATION}
-          ease={MORPH_EASE}
-          respectReducedMotion
-        >
-          {refreshing ? "Refreshing" : "Refresh"}
-        </TextMorph>
-      </button>
-    </div>
-  );
-}
-
 export function PortfolioHero({
   total,
   count,
@@ -367,6 +289,7 @@ export function PortfolioHero({
   steadyBar = false,
   animate = true,
   morphDuration = MORPH_DURATION,
+  hideTotal = false,
 }: {
   total: number;
   count: number;
@@ -388,13 +311,18 @@ export function PortfolioHero({
   /** Per-surface timing; the watched hero runs slower so progressive
     * chunk merges glide instead of flickering. */
   morphDuration?: number;
+  /** Wallet and super render the total in the address row above, so the
+    * hero keeps the sentence and the bar only. Watched keeps it here. */
+  hideTotal?: boolean;
 }) {
   const bar = steadyBar
     ? allocationShares(items, total)
     : allocationSegments(items, total);
   const sentence =
     scope === "watched"
-      ? `Watching ${subject ?? "this account"}’s public holdings across ${count} ${count === 1 ? "asset" : "assets"}.`
+      ? subject
+        ? `${subject}’s wallet holds ${formatMoney(total)} across ${count} ${count === 1 ? "asset" : "assets"}.`
+        : `This wallet holds ${formatMoney(total)} across ${count} ${count === 1 ? "asset" : "assets"}.`
       : scope === "wallet"
         ? masked
           ? "Your wallet holds $•••••• across •• assets."
@@ -422,14 +350,16 @@ export function PortfolioHero({
           sentence
         )}
       </p>
-      <p className="mt-1 text-[26px] font-semibold tabular-nums tracking-[-0.02em] text-ink">
-        <MorphMoney
-          value={total}
-          masked={masked}
-          disabled={!animate}
-          duration={morphDuration}
-        />
-      </p>
+      {hideTotal ? null : (
+        <p className="mt-1 text-[26px] font-medium tabular-nums tracking-[-0.02em] text-ink">
+          <MorphMoney
+            value={total}
+            masked={masked}
+            disabled={!animate}
+            duration={morphDuration}
+          />
+        </p>
+      )}
       {bar.some((s) => s.pct > 0) ? (
         <div
           className="mt-3 flex h-9 gap-1"

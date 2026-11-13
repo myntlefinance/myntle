@@ -48,7 +48,7 @@ vi.mock("@/components/app/SuperUnlockDialog", () => ({
 const PUBLIC: AssetGroup[] = [
   {
     id: "settlement",
-    name: "Settlement Ledger",
+    name: "Near Intents",
     icon: "near",
     items: [
       {
@@ -115,6 +115,16 @@ beforeEach(() => {
 });
 
 describe("SuperAccountTab", () => {
+  it("names the section with the address, copy mark, and QR mark", () => {
+    state.unlocked = true;
+    state.priv = { status: "loaded", snapshot: PRIVATE };
+    const html = renderTab();
+    expect(html).toContain(WALLET);
+    expect(html).toContain("Copy address");
+    expect(html).toContain("Deposit");
+    expect(html).toContain("Refresh balances");
+  });
+
   it("keeps the layout and fades the in-chat unlock card over it when locked", () => {
     state.unlocked = false;
     const html = renderTab([]);

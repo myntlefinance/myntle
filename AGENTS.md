@@ -87,7 +87,7 @@ Four layers, each replaceable without touching the others.
 
 **Presentation** is a Next.js App Router client application. It renders the conversation, the tool activity, the quote card, the approval card, and the transaction timeline.
 
-**Intelligence** is a single route handler at `app/api/chat/route.ts` that calls NEAR AI Cloud through the Vercel AI SDK. It owns the system instructions, the tool registry, and the approval policy. It never sees a wallet, an address, or a signature.
+**Intelligence** is a single route handler at `app/api/chat/route.ts` that starts one durable turn per message in `workflows/chat-turn.ts`. The turn's step calls NEAR AI Cloud through the Vercel AI SDK, and it owns the system instructions, the tool registry, and the approval policy. It never sees a wallet, an address, or a signature. The route returns the run's stream instead of generating it, so a reload reconnects to the same turn rather than cancelling it.
 
 **Authorization and execution** is deterministic application code. The model may only request an intent; the server validates it against an allowlist, renders an approval card bound to the exact parameters, and the connected wallet signs. The application constructs the transaction from trusted inputs rather than from anything the model produced.
 
@@ -112,7 +112,8 @@ Browser ──▶ /api/chat ──▶ NEAR AI Cloud  (model + tool calls only)
 
 ```
 app/
-  api/chat/route.ts              AI route: model, tools, approval policy
+  api/chat/route.ts              AI route: starts the turn run, records it on the chat
+  api/chat/[id]/stream/route.ts  run replay: `startIndex` from the client's cursor
   api/approve/route.ts           approval → starts the swap workflow
   api/tx/[id]/route.ts           transaction record + status
   api/auth/                      chain challenge, verification, session
@@ -124,6 +125,7 @@ app/
   (app)/page.tsx                 the chat screen, driving the harness
   globals.css                    the design foundation
 workflows/
+  chat-turn.ts                   one durable chat turn: model, tools, persistence
   swap-lifecycle.ts              durable execution, polling, reconciliation
 lib/
   ai/provider.ts                 NEAR AI Cloud, and the model list
@@ -175,6 +177,8 @@ Never build a component in the lab. The lab is where a component is decided.
 **Multi-step tool loops need an explicit bound.** `stopWhen` defaults to `isStepCount(1)` in `streamText`, which silently ends an agent after one tool round. `WorkflowAgent` has the opposite default and applies no limit at all. Every agent call sets `stopWhen: isStepCount(N)` explicitly.
 
 **I/O belongs in steps.** A workflow function is replayed from an event log, so it must be deterministic and cannot touch Node.js modules. Anything that calls the wallet libraries, the AI SDK, Supabase, or the network goes inside a `'use step'` function.
+
+**A chat turn is a workflow run.** `/api/chat` resolves the session and the chat, starts `chatTurn`, and returns the run's stream; the model call and the tool loop run in a step that writes UI chunks to `getWritable()`. `GET /api/chat/[id]/stream` replays the run from the client's chunk cursor, which is what makes a reload or a dropped connection resume the same answer. A finished run is replayed through `lib/ai/replay-pace.ts`, which spaces the text chunks at a human pace without splitting or reordering them, so the client cursor still maps to the durable stream. Do not move generation back into the response path: a response-owned stream cancels the model when the browser leaves. A step that streams must set `maxRetries = 0`, because a retry after a partial write would append a second answer to the same stream.
 
 **The model proposes, the application decides.** Amount, asset, destination, and slippage bounds are validated server-side against the user's connected account before anything is signed. Model output is never passed to a signature or a contract call without passing through that validation.
 
@@ -250,7 +254,7 @@ No motion, component, or style is designed from scratch in a working session. Th
 
 *Short version: every tool call shows an icon that says what kind of work it did, and a new tool is not finished until it has one. A small palette of generic verbs is not enough, because it makes reading a balance and settling a trade look identical.*
 
-Each row in a tool run takes an `icon` key from its `ToolStep`; the key is chosen per tool in `components/app/LiveResponse.tsx` and drawn in `components/app/ActivityPills.tsx`. Drawings come from the installed Tabler outline set on the 24px grid the row renders at 13px, so an icon is never invented for a single screen. Tools that do the same job against different sources may share a glyph, as the news tools do, because the label is already the same. `unknown` is a fallback and not a destination: a new tool ships with its own key in the same change. Check a new glyph at 13px before committing it, because detail that reads at 40px disappears at the size the row actually draws.
+Each tool takes an `icon` key from its `ToolStep`; the key is chosen per tool in `components/app/LiveResponse.tsx` and drawn in `components/app/ActivityStatus.tsx`. Drawings come from the installed Tabler outline set on the 24px grid the line renders at 13px, so an icon is never invented for a single screen. Tools that do the same job against different sources may share a glyph, as the news tools do, because the kind of work is the same. `unknown` is a fallback and not a destination: a new tool ships with its own key and its own name in the same change. Check a new glyph at 13px before committing it, because detail that reads at 40px disappears at the size the line actually draws.
 
 ## Context documents
 

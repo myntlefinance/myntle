@@ -1,18 +1,21 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import type { LivelinePoint } from "liveline";
-import { useSymbolPrice } from "@/components/app/useAssetPrice";
+import { useSymbolAsset } from "@/components/app/useAssetPrice";
+import { useVisiblePrice } from "@/components/app/usePrice";
+import { useTokenSeries } from "@/components/app/useTokenSeries";
 import { formatUsdPrice } from "@/lib/format/price";
 import { TokenAvatar } from "@/components/finance/TokenAvatar";
 import { TokenPriceChart } from "@/components/finance/TokenPriceChart";
 import { networkDisplayName } from "@/lib/wallet/balances";
 
 /** The token hover card: ticker, chain, unit price, and the 24-hour line.
- * `history` is optional so the card is usable before a price-history feed
- * exists; an empty list renders Liveline's own “No data to display” state.
- * When `price` is not supplied, the catalogue resolves the ticker so an
- * inline `<asset>` chip still carries a real unit price. */
+ * `history` is optional so a caller can supply its own series; otherwise the
+ * card fetches one when it opens, and an empty list renders Liveline's own
+ * “No data to display” state. When `price` is not supplied, the catalogue
+ * resolves the ticker and the live store keeps the unit price current while
+ * the card is on screen. */
 export function TokenPopup({
   symbol,
   chain,
@@ -27,11 +30,32 @@ export function TokenPopup({
   changePct?: number | null;
 }) {
   const providedPrice = price?.trim() || undefined;
-  const fetchedPrice = useSymbolPrice(providedPrice ? null : symbol, chain);
-  const displayPrice = providedPrice ?? formatUsdPrice(fetchedPrice);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // A card handed both the price and the line has no catalogue row left to
+  // resolve; skipping the lookup avoids a request nobody reads.
+  const needsAsset = !(providedPrice && history !== undefined);
+  const asset = useSymbolAsset(needsAsset ? symbol : null, chain);
+  // Price keeps the ordinary fallback; the chart is chain-strict.
+  const visible = useVisiblePrice(asset.assetId, rootRef);
+  // A caller that passed a series owns it; only a card with no history
+  // fetches one, and it does so once the popup is open.
+  const series = useTokenSeries(asset.historyAssetId, history === undefined);
+  // The header keeps the caller's quote price; the line's right edge is the
+  // live store quote only when its source matches the series. A spread
+  // between the two is real and is never smoothed away.
+  const displayPrice =
+    providedPrice ?? formatUsdPrice(visible?.usd ?? asset.priceUsd);
+  const chartPoints = history ?? series.points;
+  // Each prop is an independent override: a caller may supply the line, the
+  // percent, or both, and the chart derives one from the other when absent.
+  const chartChangePct = changePct ?? series.changePct;
+  // The chart remounts per series identity. The catalogue id is canonical;
+  // the requested ticker and chain still distinguish a caller-supplied line
+  // from the next card's line before a catalogue row has resolved.
+  const chartSeriesId = asset.historyAssetId ?? `${symbol}@${chain ?? ""}`;
 
   return (
-    <div>
+    <div ref={rootRef}>
       <div className="mb-1 flex items-center gap-2">
         <TokenAvatar symbol={symbol} networkBadge={chain} size={24} />
         <div className="min-w-0 flex-1">
@@ -52,7 +76,11 @@ export function TokenPopup({
           ) : null}
         </div>
       </div>
-      <TokenPriceChart points={history} changePct={changePct} />
+      <TokenPriceChart
+        points={chartPoints}
+        changePct={chartChangePct}
+        seriesId={chartSeriesId}
+      />
     </div>
   );
 }

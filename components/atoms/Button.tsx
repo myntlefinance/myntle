@@ -19,6 +19,8 @@ export const buttonVariants = cva(
         secondary: "bg-surface text-ink shadow-btn hover:bg-inset aria-expanded:bg-hover",
         ghost: "bg-hover-2 text-ink hover:bg-line-strong",
         accent: `bg-accent text-white hover:bg-accent-ink ${filledShadow}`,
+        /* transparent pill with a visible edge — a secondary action that should still read as a button */
+        outline: "border border-line-strong bg-transparent text-ink hover:bg-hover",
         success: `bg-green text-white hover:brightness-95 ${filledShadow}`,
         destructive: `bg-red text-white hover:brightness-95 ${filledShadow}`,
         /* transparent until hovered — for dense toolbars/action rows */

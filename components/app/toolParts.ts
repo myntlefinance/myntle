@@ -87,6 +87,8 @@ export type AssetMeta = {
   symbol: string;
   chain?: string;
   priceUsd?: number;
+  /** When the catalogue observed the unit price, in milliseconds. */
+  priceAsOf?: number;
   /** Smallest-unit exponent, used to show a raw deposit amount as units. */
   decimals?: number;
 };
@@ -107,6 +109,7 @@ export function harvestAssetMeta(
         chain?: unknown;
         priceUsd?: unknown;
         price?: unknown;
+        priceAsOf?: unknown;
         decimals?: unknown;
       };
       if (typeof asset.assetId !== "string" || typeof asset.symbol !== "string") {
@@ -122,6 +125,12 @@ export function harvestAssetMeta(
             : typeof asset.price === "number"
               ? asset.price
               : undefined,
+        priceAsOf:
+          typeof asset.priceAsOf === "number" &&
+          Number.isFinite(asset.priceAsOf) &&
+          asset.priceAsOf > 0
+            ? asset.priceAsOf
+            : undefined,
         decimals:
           typeof asset.decimals === "number" &&
           Number.isInteger(asset.decimals) &&

@@ -93,7 +93,7 @@ export const SAMPLE_HISTORY_ROWS: HistoryRow[] = [
     amountOut: "0.0816",
     explorerUrls: [],
     conversationId: null,
-    createdAt: "2026-10-30T14:22:00.000Z",
+    createdAt: "2026-11-03T14:22:00.000Z",
   },
   {
     id: "sample-2",
@@ -107,7 +107,7 @@ export const SAMPLE_HISTORY_ROWS: HistoryRow[] = [
     amountOut: null,
     explorerUrls: [],
     conversationId: null,
-    createdAt: "2026-10-29T09:08:00.000Z",
+    createdAt: "2026-11-02T09:08:00.000Z",
   },
   {
     id: "sample-3",
@@ -121,7 +121,7 @@ export const SAMPLE_HISTORY_ROWS: HistoryRow[] = [
     amountOut: null,
     explorerUrls: [],
     conversationId: null,
-    createdAt: "2026-10-27T18:41:00.000Z",
+    createdAt: "2026-11-01T18:41:00.000Z",
   },
 ];
 

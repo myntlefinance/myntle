@@ -16,6 +16,11 @@
 import { PasskeyError } from "@/lib/auth/passkey-client";
 import type { DepositMetadata } from "./deposit-metadata";
 import type { IntentStandard } from "./service";
+import type { IntentSigner } from "./session-signer";
+import {
+  WALLET_NOT_CONNECTED,
+  WALLET_SIGNATURE_FAILED,
+} from "./wallet-signer";
 
 /* ------------------------------------------------------------------ */
 /* shared                                                             */
@@ -209,10 +214,11 @@ export type IntentsApprovalInput = {
   conversationId?: string | null;
   approvalId?: string;
   /**
-   * The session's signer, narrowed to the swap payload: the server issues a
-   * WebAuthn string, and only a passkey session can answer it.
+   * The session's signer. The server picks the standard from the session, so
+   * a passkey answers WebAuthn and a wallet answers the standard its chain
+   * uses; this helper accepts whichever one arrives.
    */
-  sign: (payload: string) => Promise<Record<string, unknown>>;
+  sign: IntentSigner;
   /** Reports which half of the sequence is running, for the footer. */
   onPhase?: (phase: "signing" | "submitting") => void;
   /** Called after the server accepted the signed intent. */
@@ -224,6 +230,19 @@ export type IntentsApprovalInput = {
 const EXPIRED = "The quote expired. Ask for a new one.";
 const SIGNATURE_REJECTED =
   "Nothing was moved. The signature was not accepted.";
+
+/** The only signer messages allowed to reach the reader verbatim. */
+const SAFE_SIGNER_MESSAGES = new Set([
+  WALLET_SIGNATURE_FAILED,
+  WALLET_NOT_CONNECTED,
+]);
+
+/** A payload with nothing to sign is not a request the signer can answer. */
+function isEmptyPayload(payload: string | Record<string, unknown>): boolean {
+  return typeof payload === "string"
+    ? payload.length === 0
+    : Object.keys(payload).length === 0;
+}
 
 /**
  * Runs the exact sequence the plan defines, in order:
@@ -292,42 +311,48 @@ export async function approveIntentsTrade(
   const depositAddress =
     typeof prepared.depositAddress === "string" ? prepared.depositAddress : "";
   const intent = asRecord(prepared.intent);
-  const payload = typeof intent?.payload === "string" ? intent.payload : "";
-  if (!transactionId || !depositAddress || !payload) {
+  const standard = intent?.standard;
+  const rawPayload = intent?.payload;
+  const payload: string | Record<string, unknown> | null =
+    typeof rawPayload === "string" ? rawPayload : asRecord(rawPayload);
+  if (
+    !transactionId ||
+    !depositAddress ||
+    !isIntentStandard(standard) ||
+    payload === null ||
+    isEmptyPayload(payload)
+  ) {
     return {
       ok: false,
       reason: "unavailable",
       message: "The trade could not be prepared. Nothing was moved.",
     };
   }
-  // The server picks the standard from the session; a passkey session can
-  // only ever receive a WebAuthn payload.
-  if (intent?.standard !== "webauthn") {
-    return {
-      ok: false,
-      reason: "unavailable",
-      message: "This account cannot sign that intent.",
-    };
-  }
 
   input.onPhase?.("signing");
   let signed: Record<string, unknown>;
   try {
-    signed = await input.sign(payload);
+    signed = await input.sign({ standard, payload });
   } catch (cause) {
+    // Only two safe sentences leave this module: the passkey's own, and the
+    // wallet signer's fixed rejection or disconnect notice. Anything else is
+    // the neutral signature sentence, never arbitrary provider text.
     return {
       ok: false,
       reason: "signature",
       message:
         cause instanceof PasskeyError
           ? cause.message
-          : "The passkey did not sign this trade. Nothing was moved.",
+          : cause instanceof Error && SAFE_SIGNER_MESSAGES.has(cause.message)
+            ? cause.message
+            : SIGNATURE_REJECTED,
     };
   }
 
-  // The bytes that leave the browser are the bytes the server stored. The
-  // signer never re-stringifies, and neither does this check.
-  if (signed.payload !== payload) {
+  // The bytes that leave the browser are the bytes the server stored. A
+  // string payload must match exactly; a NEP-413 envelope is compared field
+  // by field. The signer never re-stringifies, and neither does this check.
+  if (!samePayload(payload, signed.payload)) {
     return {
       ok: false,
       reason: "signature",
@@ -558,7 +583,8 @@ export async function approveIntentsWithdrawal(
     !depositAddress ||
     !destination ||
     !isIntentStandard(standard) ||
-    payload === null
+    payload === null ||
+    isEmptyPayload(payload)
   ) {
     return {
       ok: false,
@@ -578,7 +604,9 @@ export async function approveIntentsWithdrawal(
       message:
         cause instanceof PasskeyError
           ? cause.message
-          : "The signature was not completed. Nothing was moved.",
+          : cause instanceof Error && SAFE_SIGNER_MESSAGES.has(cause.message)
+            ? cause.message
+            : SIGNATURE_REJECTED,
     };
   }
 

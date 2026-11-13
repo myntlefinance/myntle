@@ -11,10 +11,12 @@ import {
 import {
   MAX_WATCH_ADDRESS_LENGTH,
   MAX_WATCH_LABEL_LENGTH,
-  normalizeWatchedAddress,
   normalizeWatchLabel,
+  resolveWatchInput,
+  watchNameError,
   type WatchChain,
 } from "@/lib/wallet/addresses";
+import type { NameChain, ResolvedName } from "@/lib/ports/names";
 
 /** Removes one watchlist entry. Immediate and ungated: re-adding restores it. */
 export async function DELETE(
@@ -56,6 +58,8 @@ function toWatchedEntry(row: {
   label: string | null;
   is_default: boolean | null;
   created_at: string;
+  resolved_name?: string | null;
+  resolved_at?: string | null;
 }) {
   return {
     id: row.id,
@@ -64,7 +68,22 @@ function toWatchedEntry(row: {
     label: row.label,
     isDefault: row.is_default ?? false,
     createdAt: row.created_at,
+    resolvedName: row.resolved_name ?? null,
+    resolvedAt: row.resolved_at ?? null,
   };
+}
+
+/**
+ * The server's own fresh read of a name, like the POST route's: an edit
+ * whose input is a name re-resolves here, and the stored triple is always
+ * this read, never anything the client sent.
+ */
+async function serverResolveName(
+  chain: NameChain,
+  input: string,
+): Promise<ResolvedName | null> {
+  const { getNameResolverPort } = await import("@/lib/adapters/registry");
+  return getNameResolverPort().resolveName(chain, input);
 }
 
 /**
@@ -135,17 +154,35 @@ export async function PATCH(
 
   let chain = current.chain as WatchChain;
   let address = current.address;
+  // The stored name triple travels only when the address moved: a move to
+  // a name stores it fresh, a move to a raw address clears it, and a
+  // rename-only edit leaves it alone.
+  let resolved: { name: string | null; at: string | null } | undefined;
+  let movedName: string | null = null;
+  const moved = Boolean(parsed.data.chain || parsed.data.address);
   if (parsed.data.chain || parsed.data.address) {
     if (!parsed.data.chain || !parsed.data.address) {
       return NextResponse.json({ error: "Invalid request." }, { status: 400 });
     }
     const nextChain = parsed.data.chain as WatchChain;
-    const normalized = normalizeWatchedAddress(nextChain, parsed.data.address);
-    if (!normalized) {
+    const read = await resolveWatchInput(
+      nextChain,
+      parsed.data.address,
+      serverResolveName,
+    );
+    if (!read.ok) {
+      if (read.reason === "unregistered" || read.reason === "unavailable") {
+        return NextResponse.json(
+          { error: watchNameError(read.reason) },
+          { status: read.reason === "unavailable" ? 503 : 400 },
+        );
+      }
       return NextResponse.json({ error: "Invalid request." }, { status: 400 });
     }
     chain = nextChain;
-    address = normalized;
+    address = read.address;
+    movedName = read.name;
+    resolved = { name: read.name, at: read.resolvedAt };
     const taken = await findWatchedAddress({
       userId: session.userId,
       chain,
@@ -159,13 +196,27 @@ export async function PATCH(
     }
   }
 
-  // A blanked label keeps the current one; a missing one falls back to
-  // the truncated address, like tracking does.
+  // A blanked label keeps the current one on a rename-only edit; on a move
+  // it re-defaults, preferring the fresh name, so a row tracked from one
+  // name and moved to another never keeps the old name as its label. A
+  // custom label survives any move untouched.
   const rawLabel = parsed.data.label;
-  const label =
-    rawLabel === undefined || !rawLabel.trim()
-      ? (current.label ?? normalizeWatchLabel(undefined, chain, address))
-      : normalizeWatchLabel(rawLabel, chain, address);
+  let label: string | null;
+  if (rawLabel !== undefined && rawLabel.trim()) {
+    label = normalizeWatchLabel(rawLabel, chain, address);
+  } else if (!moved) {
+    label =
+      current.label ?? normalizeWatchLabel(undefined, chain, address);
+  } else if (movedName && movedName.length <= MAX_WATCH_LABEL_LENGTH) {
+    label = movedName;
+  } else if (
+    current.label === null ||
+    (current.resolved_name !== null && current.label === current.resolved_name)
+  ) {
+    label = normalizeWatchLabel(undefined, chain, address);
+  } else {
+    label = current.label;
+  }
   if (!label) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
@@ -177,6 +228,7 @@ export async function PATCH(
       label,
       chain,
       address,
+      ...(resolved !== undefined ? { resolved } : {}),
     });
     if (!row) {
       return NextResponse.json({ error: "An error occurred." }, { status: 404 });

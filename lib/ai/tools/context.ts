@@ -23,7 +23,13 @@ export const SupportedNetworkEnum = z.enum([
 
 export const SupportedChainEnum = z.enum(["evm", "solana", "near"]);
 
-export type ToolDomain = "portfolio" | "trading" | "assets" | "news" | "intents";
+export type ToolDomain =
+  | "portfolio"
+  | "trading"
+  | "assets"
+  | "news"
+  | "intents"
+  | "names";
 
 /**
  * Context passed to the tools from the active chat turn.

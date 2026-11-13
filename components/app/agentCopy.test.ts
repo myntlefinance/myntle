@@ -73,6 +73,32 @@ describe("agentCopy", () => {
     expect(md).toContain("Pending");
   });
 
+  it("writes an account-funded swap in Near Account and omits the recipient", () => {
+    const accountFunded = { ...approval, route: "account" as const };
+    const md = approvalToMarkdown(accountFunded, null);
+    expect(md).toContain("Swap 100 USDC for 95 NEAR in Near Account");
+    expect(md).not.toContain("Recipient:");
+
+    const html = buildAgentCopyHtml([
+      { kind: "approval", approval: accountFunded, settlement: null },
+    ]);
+    expect(html).toContain("in Near Account");
+    expect(html).not.toContain("Recipient:");
+
+    // The wallet's own quote keeps the recipient and the old preposition.
+    expect(approvalToMarkdown(approval, null)).toContain("on Near Account");
+    expect(approvalToMarkdown(approval, null)).toContain("Recipient: 0xrecipient");
+  });
+
+  it("keeps the recipient row on an account-funded withdrawal", () => {
+    const md = approvalToMarkdown(
+      { ...approval, action: "withdraw", route: "account" },
+      null,
+    );
+    expect(md).toContain("Withdraw 100 USDC to 0xrecipient");
+    expect(md).toContain("Recipient: 0xrecipient");
+  });
+
   it("builds one transcript in visual order, excluding tool calls", () => {
     const segments: AgentCopySegment[] = [
       { kind: "text", text: "Here is what I found." },

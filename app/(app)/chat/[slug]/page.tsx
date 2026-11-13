@@ -39,6 +39,9 @@ export default async function ChatPage({
           title: thread.title,
           hasMore: thread.hasMore,
           oldestSeq: thread.oldestSeq,
+          activeRunId: thread.activeRunId,
+          activeRunStartedAt: thread.activeRunStartedAt,
+          activeRunFinishedAt: thread.activeRunFinishedAt,
         };
       }
     }

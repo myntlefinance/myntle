@@ -1,11 +1,15 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import SentenceTradeCard, {
   AddressPopup,
+  RefundToValue,
   TokenPopup,
   VenuePopup,
   YouPill,
+  adoptRevisedQuote,
+  directApprovalFailure,
   inkCorrection,
   locateLineIndex,
   resolveAbove,
@@ -40,7 +44,7 @@ const swapProps = {
   minAmountOut: "0.0495",
   minAmountOutRaw: "49000000000000000",
   recipient: RECIPIENT,
-  expiresAt: "2026-10-29T14:04:31.000Z",
+  expiresAt: "2026-11-02T14:04:31.000Z",
   slippageBps: 100,
 } as const;
 
@@ -112,11 +116,191 @@ describe("SentenceTradeCard", () => {
     expect(html).toContain('tabindex="0"');
     expect(html).toContain('aria-expanded="false"');
   });
+
+  it("shows a resolving state for a named refund while its preview lands", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <SentenceTradeCard
+        {...swapProps}
+        refundTo="example.sns"
+        swapInput={{
+          fromAssetId: "nep141:usdc",
+          toAssetId: "nep141:wrap.near",
+          amount: "25000000",
+          recipient: RECIPIENT,
+          refundTo: "example.sns",
+          slippageBps: 100,
+        }}
+      />,
+    );
+    // The effect never runs in static markup, so the preview is always
+    // pending here: the row names the resolving state, never the raw name
+    // as an address, and offers no copy of it.
+    expect(html).toContain("Refund to");
+    expect(html).toContain("Resolving example.sns.");
+    expect(html).not.toContain(">example.sns<");
+  });
 });
+
+describe("adopting a revised quote", () => {
+  it("moves the figures, the preview, and the approval window together", () => {
+    const next = adoptRevisedQuote(
+      {
+        amountOut: "0.05",
+        minAmountOut: "0.0495",
+        minAmountOutRaw: "49500000000000000",
+        expiresAt: "2026-11-12T10:00:00.000Z",
+        quoteId: "11111111-1111-4111-8111-111111111111",
+        requestedAt: "2026-11-12T09:27:18.173Z",
+      },
+      {
+        amountOut: "0.048",
+        minAmountOut: "0.0475",
+        minAmountOutRaw: "47500000000000000",
+        expiresAt: "2026-11-15T09:57:52.936Z",
+        quoteId: "22222222-2222-4222-8222-222222222222",
+        requestedAt: "2026-11-12T09:28:04.000Z",
+      },
+    );
+
+    expect(next).toMatchObject({
+      amountOut: "0.048",
+      minAmountOut: "0.0475",
+      minAmountOutRaw: "47500000000000000",
+      expiresAt: "2026-11-15T09:57:52.936Z",
+      quoteId: "22222222-2222-4222-8222-222222222222",
+      requestedAt: "2026-11-12T09:28:04.000Z",
+    });
+  });
+
+  it("keeps the current preview and birth when the response omits them", () => {
+    const next = adoptRevisedQuote(
+      {
+        amountOut: "0.05",
+        quoteId: "11111111-1111-4111-8111-111111111111",
+        requestedAt: "2026-11-12T09:27:18.173Z",
+      },
+      { amountOut: "0.048" },
+    );
+
+    expect(next.quoteId).toBe("11111111-1111-4111-8111-111111111111");
+    expect(next.requestedAt).toBe("2026-11-12T09:27:18.173Z");
+    expect(next.amountOut).toBe("0.048");
+  });
+});
+
+describe("direct approval failure", () => {
+  it("shows the message a 400 response carries", async () => {
+    const res = new Response(
+      JSON.stringify({
+        error: "unavailable",
+        message:
+          "This trade can't be completed here. Please ask for a fresh quote.",
+      }),
+      { status: 400, headers: { "content-type": "application/json" } },
+    );
+
+    expect(res.status).toBe(400);
+    expect(directApprovalFailure(await res.json())).toBe(
+      "This trade can't be completed here. Please ask for a fresh quote.",
+    );
+  });
+
+  it("keeps the card's own fallback when the body has no real message", () => {
+    expect(directApprovalFailure({ error: "An error occurred." })).toBe(
+      "Unable to execute trade. Please try again.",
+    );
+    expect(directApprovalFailure(null)).toBe(
+      "Unable to execute trade. Please try again.",
+    );
+    expect(directApprovalFailure({ message: "   " })).toBe(
+      "Unable to execute trade. Please try again.",
+    );
+  });
+});
+
+describe("RefundToValue", () => {
+  const TYPED = "example.sns";
+  const RESOLVED = "Fw1ETanDZafof7xEULsnq9UY6o71Tpds89tNwPkWLb1v";
+  const SHORT = "Fw1ETa…Lb1v";
+
+  /** The value the copy control carries, read off the element tree. */
+  function copyValueOf(element: React.JSX.Element): unknown {
+    const children = React.Children.toArray(
+      (element.props as { children?: React.ReactNode }).children,
+    );
+    const copies = children.filter(
+      (child) =>
+        React.isValidElement(child) &&
+        (child.props as { value?: unknown }).value !== undefined,
+    );
+    expect(copies).toHaveLength(1);
+    return (copies[0] as React.ReactElement<{ value?: unknown }>).props.value;
+  }
+
+  it("shows the typed name beside its resolved address", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <RefundToValue
+        refundAddr={TYPED}
+        typedName={TYPED}
+        preview={{ address: RESOLVED, name: TYPED }}
+      />,
+    );
+
+    expect(html).toContain(`${TYPED} · ${SHORT}`);
+    expect(html).toContain(`title="${RESOLVED}"`);
+    expect(html).toContain("Copy address");
+    expect(html).not.toContain(`>${RESOLVED}<`);
+  });
+
+  it("hands the copy control the previewed resolved address", () => {
+    const value = copyValueOf(
+      RefundToValue({
+        refundAddr: TYPED,
+        typedName: TYPED,
+        preview: { address: RESOLVED, name: TYPED },
+      }),
+    );
+
+    expect(value).toBe(RESOLVED);
+  });
+
+  it("shows a resolving state, never the raw name, while the preview lands", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <RefundToValue refundAddr={TYPED} typedName={TYPED} preview={null} />,
+    );
+
+    expect(html).toContain(`Resolving ${TYPED}.`);
+    expect(html).not.toContain(`>${TYPED}<`);
+    expect(html).not.toContain("Copy address");
+  });
+
+  it("keeps the shortened address and its copy for a plain refund", () => {
+    const raw = "0x3259aBcDeF12345678901073";
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <RefundToValue refundAddr={raw} typedName={null} preview={null} />,
+    );
+
+    expect(html).toContain("0x3259…1073");
+    expect(html).toContain("Copy address");
+    const value = copyValueOf(
+      RefundToValue({ refundAddr: raw, typedName: null, preview: null }),
+    );
+    expect(value).toBe(raw);
+  });
+});
+
+function renderPopup(node: React.ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return ReactDOMServer.renderToStaticMarkup(
+    <QueryClientProvider client={client}>{node}</QueryClientProvider>,
+  );
+}
 
 describe("TokenPopup", () => {
   it("names the chain, the unit price, and the 24-hour chart", () => {
-    const html = ReactDOMServer.renderToStaticMarkup(
+    const html = renderPopup(
       <TokenPopup symbol="USDC" chain="arb" price="$1.00" />,
     );
     expect(html).toContain("USDC");
@@ -130,12 +314,27 @@ describe("TokenPopup", () => {
   });
 
   it("keeps a price slot at the title edge when no price is known yet", () => {
-    const html = ReactDOMServer.renderToStaticMarkup(
-      <TokenPopup symbol="USDC" chain="arb" />,
-    );
+    const html = renderPopup(<TokenPopup symbol="USDC" chain="arb" />);
     expect(html).toContain("Arbitrum");
     expect(html).toContain("—");
     expect(html).not.toContain("Price");
+  });
+
+  it("lets an explicit series and percent win over the fetched one", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const html = renderPopup(
+      <TokenPopup
+        symbol="USDC"
+        chain="arb"
+        price="$1.00"
+        history={[
+          { time: now - 3600, value: 100 },
+          { time: now, value: 110 },
+        ]}
+        changePct={10}
+      />,
+    );
+    expect(html).toContain("+10.00%");
   });
 });
 
@@ -357,9 +556,9 @@ describe("TokenAvatar badge", () => {
 
   it("keeps the wider badge and ring on large avatars", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
-      <TokenAvatar symbol="USDC" networkBadge="near" size={28} />,
+      <TokenAvatar symbol="USDC" networkBadge="near" size={36} />,
     );
-    expect(html).toContain("width:11px");
+    expect(html).toContain("width:14px");
     expect(html).toContain("ring-2");
   });
 });

@@ -34,7 +34,7 @@ function row(id: string, state = "settled"): HistoryRow {
     amountOut: "0.0031",
     explorerUrls: [],
     conversationId: null,
-    createdAt: "2026-10-31T00:00:00.000Z",
+    createdAt: "2026-11-04T00:00:00.000Z",
   };
 }
 

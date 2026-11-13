@@ -9,6 +9,10 @@ export type IntentsLedgerBalance = {
   rawBalance: string;
   priceUsd?: number;
   valueUsd?: number;
+  /** Whole-unit quantity, from the formatted ledger amount. */
+  quantity?: number;
+  /** When the catalogue observed the unit price, in milliseconds. */
+  priceAsOf?: number;
 };
 
 export type IntentsBalancesResult = {
@@ -172,6 +176,10 @@ export async function getIntentsLedgerBalances(
         rawBalance: raw,
         priceUsd,
         valueUsd,
+        ...(Number.isFinite(numFormatted) ? { quantity: numFormatted } : {}),
+        ...(asset?.priceUpdatedAt !== undefined
+          ? { priceAsOf: asset.priceUpdatedAt }
+          : {}),
       });
     }
 

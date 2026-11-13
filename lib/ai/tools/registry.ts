@@ -61,6 +61,12 @@ import {
   createPageContentTool,
   GET_PAGE_CONTENT_CAPABILITY,
 } from "./news/page-content";
+import {
+  createResolveEnsNameTool,
+  createResolveSnsNameTool,
+  RESOLVE_ENS_NAME_CAPABILITY,
+  RESOLVE_SNS_NAME_CAPABILITY,
+} from "./names/resolve";
 import type { Capability } from "./capability";
 
 /**
@@ -85,6 +91,8 @@ export const CAPABILITIES: Capability[] = [
   GET_PAGE_CONTENT_CAPABILITY,
   REQUEST_SUPER_UNLOCK_CAPABILITY,
   GET_SUPER_BALANCES_CAPABILITY,
+  RESOLVE_ENS_NAME_CAPABILITY,
+  RESOLVE_SNS_NAME_CAPABILITY,
 ];
 
 export type ToolRegistryOptions = {
@@ -100,7 +108,14 @@ export function createTools(
   context?: ToolContext,
   options: ToolRegistryOptions = {},
 ) {
-  const domains = options.domains ?? ["portfolio", "trading", "assets", "news", "intents"];
+  const domains = options.domains ?? [
+    "portfolio",
+    "trading",
+    "assets",
+    "news",
+    "intents",
+    "names",
+  ];
   // The toolset is heterogeneous: each tool has its own input and output, so
   // it is typed as the union rather than as the first tool that was added.
   const toolset: Record<string, Tool> = {};
@@ -134,6 +149,11 @@ export function createTools(
     toolset.prepare_withdrawal = createPrepareWithdrawalTool();
     toolset.get_super_balances = createSuperBalancesTool(context);
     toolset.request_super_unlock = createRequestSuperUnlockTool();
+  }
+
+  if (domains.includes("names")) {
+    toolset.resolve_ens_name = createResolveEnsNameTool();
+    toolset.resolve_sns_name = createResolveSnsNameTool();
   }
 
   return toolset;

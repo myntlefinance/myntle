@@ -30,25 +30,30 @@ const siteUrl =
     ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
     : undefined);
 
+/* One sentence for the card, and a different one for the image, so a preview
+ * does not show the same words twice. The image itself lives in
+ * app/opengraph-image.tsx and carries the home screen's other line. */
 const description =
-  "Myntle is a chat-first finance app. Connect a wallet you already have, describe the trade in plain language, and approve exactly what settles on chain.";
+  "Connect the wallet you already have and approve exactly what you see.";
+
+const shareTitle = "Ask for a trade and watch it settle";
 
 export const metadata: Metadata = {
   ...(siteUrl ? { metadataBase: new URL(siteUrl) } : {}),
-  title: { default: "Myntle", template: "%s — Myntle" },
+  title: { default: "Myntle — chat-first finance", template: "%s — Myntle" },
   description,
   applicationName: "Myntle",
   ...(siteUrl ? { alternates: { canonical: "/" } } : {}),
   openGraph: {
     type: "website",
     siteName: "Myntle",
-    title: "Myntle",
+    title: shareTitle,
     description,
     locale: "en_US",
   },
   twitter: {
-    card: "summary",
-    title: "Myntle",
+    card: "summary_large_image",
+    title: shareTitle,
     description,
   },
   icons: {

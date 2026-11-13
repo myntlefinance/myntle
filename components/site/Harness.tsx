@@ -13,13 +13,11 @@ import {
 } from "react";
 import type { UIMessage } from "ai";
 import {
-  IconArrowRight,
   IconChartBar,
   IconChecklist,
   IconCode,
   IconCoins,
   IconDatabase,
-  IconDots,
   IconGavel,
   IconPencil,
   IconRefresh,
@@ -74,7 +72,7 @@ const SelectionActions = dynamic(
   { ssr: false, loading: () => null },
 );
 import LoadingState from "@/components/primitives/LoadingState";
-import PromptBar, { type PromptModel } from "@/components/primitives/PromptBar";
+import PromptBar from "@/components/primitives/PromptBar";
 import RecommendationCard from "@/components/primitives/RecommendationCard";
 import SidebarNav from "@/components/primitives/SidebarNav";
 import StreamingText from "@/components/primitives/StreamingText";
@@ -575,7 +573,7 @@ function homeRevealStyle(
 }
 
 
-function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { onSend: (text: string, id: ScenarioId) => void; shuffle: () => void; offset: number; live?: LiveChat; models?: PromptModel[]; onModelChange?: (modelId: string) => void }) {
+function EmptyState({ onSend, shuffle, offset, live }: { onSend: (text: string, id: ScenarioId) => void; shuffle: () => void; offset: number; live?: LiveChat }) {
   const pool = live ? LIVE_SUGGESTIONS : SUGGESTION_POOL;
   const shown = [0, 1, 2].map((i) => pool[(offset + i) % pool.length]);
   /* The live composer is the primary action, not a scene to reveal. It is
@@ -621,8 +619,6 @@ function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { 
               demo={false}
               tall
               autoFocus={true}
-              models={models}
-              onModelChange={onModelChange}
               placeholder={live ? "Ask for a trade, or ask what you hold" : "Ask anything about your finance ops..."}
               onSend={(text) => {
                 if (live) live.send(text);
@@ -656,11 +652,6 @@ function EmptyState({ onSend, shuffle, offset, live, models, onModelChange }: { 
             </button>
           ))}
           <div className="mt-1 flex items-center gap-5 pl-0.5 text-[13px] text-ink-3">
-            <button type="button" className="flex items-center gap-2 py-1 transition-colors duration-150 hover:text-ink">
-              <IconDots size={15} stroke={1.9} aria-hidden />
-              Connect your apps for a better experience
-              <IconArrowRight size={13} stroke={2} aria-hidden />
-            </button>
             <button type="button" onClick={shuffle} className="flex items-center gap-2 py-1 transition-colors duration-150 hover:text-ink">
               <IconRefresh size={14} stroke={2} aria-hidden />
               Shuffle suggestions
@@ -830,7 +821,7 @@ export type LiveChat = {
     approvalId: string,
     approved: boolean,
     context: ApprovalDecisionContext,
-  ) => void | Promise<void>;
+  ) => void | Promise<void | "approved" | "denied">;
   /** The chat these cards belong to, so a record can be linked to it. */
   conversationId?: string | null;
   /** Decisions on record; null while the read is in flight. */
@@ -871,8 +862,6 @@ export default function Harness({
   loadingThread,
   footer,
   footerCompact,
-  models,
-  onModelChange,
   onLoadOlder,
   hasMoreOlder,
   loadingOlder,
@@ -920,10 +909,6 @@ export default function Harness({
   footer?: ReactNode;
   /** the icon-only footer control the collapsed sidebar keeps */
   footerCompact?: ReactNode;
-  /** the models the composer offers */
-  models?: PromptModel[];
-  /** called with the model id whenever the selection changes */
-  onModelChange?: (modelId: string) => void;
   /** triggers loading older history when scrolling to the top */
   onLoadOlder?: () => void;
   /** whether there are more older messages to load */
@@ -1544,6 +1529,7 @@ export default function Harness({
                           superseded={superseded}
                           resolved={unlockResolved}
                           onRetry={() => live.send(retryText)}
+                          onPrompt={live.send}
                           onRegenerate={
                             live.regenerate
                               ? () => live.regenerate?.(message.id)
@@ -1622,12 +1608,12 @@ export default function Harness({
               assistant content to attach to, so the loader sits on its own */}
           {showInflightLoader ? (
             <div data-role="loading" className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
-              {/* Pixel-matched to ActivityPills' PillButton (-mx-1.5 + px-1.5 + py-1,
-                  icon 15px, gap-2, 13px label) so the swap to the Thinking pill
-                  on the first stream chunk doesn't move the text. */}
+              {/* Pixel-matched to ActivityStatus' status row (-mx-1.5 + px-1.5
+                  + py-1, icon 15px, gap-2, 13px label) so the swap to the live
+                  activity line on the first stream chunk doesn't move the text. */}
               <div className="w-full max-w-95">
                 <div className="-mx-1.5 flex w-fit items-center gap-2 rounded-control px-1.5 py-1">
-                  <LoadingState variant="Drive" />
+                  <LoadingState label="Thinking" variant="Drive" />
                 </div>
               </div>
             </div>
@@ -1658,8 +1644,6 @@ export default function Harness({
             demo={false}
             tall
             autoFocus={true}
-            models={models}
-            onModelChange={onModelChange}
             placeholder="Reply"
             onSend={(text) => {
               const el = scrollRef.current;
@@ -1787,7 +1771,7 @@ export default function Harness({
                   renderThread(false)
                 ) : (
                   <div className="min-h-0 flex-1 overflow-y-auto scroll-slim [scrollbar-gutter:stable]">
-                    <EmptyState onSend={send} shuffle={() => setOffset((current) => (current + 3) % SUGGESTION_POOL.length)} offset={offset} live={live} models={models} onModelChange={onModelChange} />
+                    <EmptyState onSend={send} shuffle={() => setOffset((current) => (current + 3) % SUGGESTION_POOL.length)} offset={offset} live={live} />
                   </div>
                 )}
               </section>

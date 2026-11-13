@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEPOSIT_FUNDING_MARGIN_MS,
+  FRESH_DEPOSIT_PROMPT,
   depositCardStateForRecord,
   depositExpired,
   depositFundingDeadline,
@@ -135,8 +136,9 @@ describe("deposit copy", () => {
     expect(depositStatusMessage("failed")).toBe(
       "The deposit did not settle. The record has the details.",
     );
-    expect(depositStatusMessage("expired")).toBe(
-      "Expired. Please generate a fresh deposit address.",
+    expect(depositStatusMessage("expired")).toBe("Expired.");
+    expect(FRESH_DEPOSIT_PROMPT).toBe(
+      "Please generate a fresh deposit address.",
     );
   });
 

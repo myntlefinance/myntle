@@ -8,8 +8,10 @@ import type { WatchChain } from "@/lib/wallet/addresses";
  *
  * Listing, adding, and removing all go through `/api/watchlist`; there is
  * no fetch code beyond the routes. The list holds for 60s — it changes
- * only through this tab — and mutations invalidate it. Errors surface in
- * the query and mutation state, never as thrown promises.
+ * only through this tab — and mutations invalidate it. A tracked row is
+ * written into the cached list before the re-read starts, so its card is
+ * on screen while the dialog that asked for it is still open. Errors
+ * surface in the query and mutation state, never as thrown promises.
  */
 
 export type WatchlistEntry = {
@@ -20,6 +22,10 @@ export type WatchlistEntry = {
   /** The default a fresh visit opens to; at most one per list. */
   isDefault: boolean;
   createdAt: string;
+  /** The normalized `.eth` name the row was tracked from, if any. */
+  resolvedName?: string | null;
+  /** Fresh ISO UTC from the read that stored the name, if any. */
+  resolvedAt?: string | null;
 };
 
 export const WATCHLIST_QUERY_KEY = ["watchlist"] as const;
@@ -54,6 +60,8 @@ export async function fetchWatchlist(): Promise<WatchlistEntry[]> {
 
 export async function addWatchlistEntry(input: {
   chain: WatchChain;
+  /** A raw address, or a `.eth` name on EVM — the server resolves names
+   * itself and never trusts an address the client worked out. */
   address: string;
   label?: string;
 }): Promise<WatchlistEntry> {
@@ -117,6 +125,20 @@ export async function updateWatchlistDefault(
   return entry as WatchlistEntry;
 }
 
+/** One row placed into the cached list: a row already on screen keeps its
+ * slot and takes the fresh read, and a brand-new address appends after the
+ * cards the user is already looking at. */
+export function insertWatchlistEntry(
+  entries: WatchlistEntry[] | undefined,
+  entry: WatchlistEntry,
+): WatchlistEntry[] | undefined {
+  if (!entries) return entries;
+  if (entries.some((row) => row.id === entry.id)) {
+    return entries.map((row) => (row.id === entry.id ? entry : row));
+  }
+  return [...entries, entry];
+}
+
 export function useWatchlist(enabled: boolean) {
   const client = useQueryClient();
 
@@ -134,7 +156,14 @@ export function useWatchlist(enabled: boolean) {
 
   const add = useMutation({
     mutationFn: addWatchlistEntry,
-    onSuccess: () => void refresh(),
+    // The row the route returned joins the list before anything else runs.
+    // The card therefore paints under the open dialog instead of after it,
+    // and the caller's re-read only reconciles the order behind it.
+    onSuccess: (entry) => {
+      client.setQueryData<WatchlistEntry[]>(WATCHLIST_QUERY_KEY, (old) =>
+        insertWatchlistEntry(old, entry),
+      );
+    },
   });
 
   const remove = useMutation({

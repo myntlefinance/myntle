@@ -22,11 +22,9 @@ import { useAuth } from "@/lib/auth/auth-provider";
  */
 export function AccountControl({
   onProfile,
-  onUsage,
   compact = false,
 }: {
   onProfile?: () => void;
-  onUsage?: () => void;
   /** icon-only rail control for the collapsed sidebar */
   compact?: boolean;
 } = {}) {
@@ -64,13 +62,11 @@ export function AccountControl({
         <PasskeyAccountButton
           compact={compact}
           onProfile={onProfile}
-          onUsage={onUsage}
         />
       ) : (
         <WalletButton
           compact={compact}
           onProfile={onProfile}
-          onUsage={onUsage}
         />
       )}
       {!compact && passkeyOpen ? (

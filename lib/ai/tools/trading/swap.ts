@@ -43,12 +43,15 @@ export function createPrepareSwapTool(_context?: ToolContext) {
         .min(1)
         .optional()
         .describe(
-          "The account refunds return to on the origin chain. Defaults to the connected wallet.",
+          "The account refunds return to on the origin chain. Ignored for an " +
+            "account-funded quote, which refunds to the account itself. For a " +
+            "wallet-funded quote it defaults to the connected wallet.",
         ),
       slippageBps: z.number().int().min(1).max(300).default(100),
     }),
     // No settlement happens here. The interface signs the exact parameters
-    // and POSTs them to /api/approve, which starts the durable workflow.
+    // and sends them through the route the quote named — a signed intent for
+    // an account-funded trade, or `/api/approve` for a chain trade.
     // This only acknowledges the decision so the turn — and every later
     // turn that resends this history — carries a tool result. Without it,
     // an approved call has no output, the provider rejects the resubmitted

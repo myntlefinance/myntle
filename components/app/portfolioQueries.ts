@@ -32,7 +32,9 @@ import {
   writeSuperPrivateCache,
   type PortfolioSnapshot,
 } from "./portfolioCache";
+import { isIntentsGroupName, type AssetGroup } from "@/lib/wallet/balances";
 import { useResolvedAssetMeta } from "./useAssetMeta";
+import { useLiveSnapshot } from "./liveSnapshot";
 
 export const PORTFOLIO_QUERY_KEY = ["portfolio"] as const;
 
@@ -48,7 +50,7 @@ export function usePortfolio(
   enabled: boolean,
 ) {
   const { refresh } = useAuth();
-  // A manual refresh must reach Alchemy, not the balances route's 60s
+  // A manual refresh must reach Alchemy, not the balances route's 300s
   // response cache. The flag is read by the query function and reset once
   // the refetch settles, so its retries stay uncached too.
   const forceRead = useRef(false);
@@ -68,9 +70,9 @@ export function usePortfolio(
       );
     },
     enabled: enabled && scope !== null,
-    // Balances settle slowly: serve the cache for 60s across tab switches
+    // Balances settle slowly: serve the cache for 300s across tab switches
     // and re-read behind it. Manual refresh and unlock/lock events refetch.
-    staleTime: 60_000,
+    staleTime: 300_000,
     retry: (count, error) =>
       !(error instanceof AuthExpiredError) && count < 2,
     initialData: () => (scope ? readPortfolioCache(scope) : undefined),
@@ -88,7 +90,7 @@ export function usePortfolio(
     writePortfolioCache(scope, query.data);
     const walletGroups =
       query.data.walletGroups ??
-      query.data.groups.filter((group) => group.name !== "Settlement Ledger");
+      query.data.groups.filter((group) => !isIntentsGroupName(group.name));
     writePortfolioRowCount(scope, "wallet", countGroupRows(walletGroups));
   }, [scope, query.data]);
 
@@ -105,8 +107,11 @@ export function usePortfolio(
     }
   };
 
+  // The settled snapshot keeps its quantities; only the unit prices move.
+  const liveSnapshot = useLiveSnapshot(query.data ?? null);
+
   return {
-    snapshot: query.data ?? null,
+    snapshot: liveSnapshot,
     error: query.error,
     authExpired,
     isPending: query.isPending,
@@ -155,6 +160,86 @@ function combineWatchedGroups(
   };
 }
 
+
+
+/* Upserts one side of the portfolio by group: a group the partial carries
+ * merges item-by-item (matching ids replace, new ids append, absent ids
+ * stay), a group it does not carry stays untouched, and a brand-new
+ * network group appends. The ledger is identical in every group response,
+ * so it replaces wholesale whenever the partial carries it. Items
+ * re-sort by value after the upsert — live reorder is allowed because
+ * the rows stay keyed by stable id and morph in place. */
+function overlayItemGroups(
+  prevGroups: AssetGroup[],
+  nextGroups: AssetGroup[],
+): AssetGroup[] {
+  const nextByName = new Map(nextGroups.map((group) => [group.name, group]));
+  const prevNames = new Set(prevGroups.map((group) => group.name));
+  const out: AssetGroup[] = prevGroups.map((prev) => {
+    const next = nextByName.get(prev.name);
+    if (!next || isIntentsGroupName(prev.name)) return next ?? prev;
+    const byId = new Map(prev.items.map((item) => [item.id, item]));
+    for (const item of next.items) byId.set(item.id, item);
+    const items = [...byId.values()].sort(
+      (a, b) => b.valueUsd - a.valueUsd || a.symbol.localeCompare(b.symbol),
+    );
+    return { ...prev, items };
+  });
+  for (const next of nextGroups) {
+    if (!prevNames.has(next.name)) out.push(next);
+  }
+  return out;
+}
+
+/* Overlays a partial chunk merge onto the painted snapshot. Wallet
+ * groups upsert so nothing vanishes mid-load; the ledger follows the
+ * richest-part rule by replacing wholesale when the partial carries it.
+ * Totals are recomputed as the sum of what is on screen, split wallet
+ * versus Near Intents, so the hero and the table always agree. */
+function overlaySnapshot(
+  prev: PortfolioSnapshot,
+  next: PortfolioSnapshot,
+): PortfolioSnapshot {
+  const prevWallet =
+    prev.walletGroups ??
+    prev.groups.filter((group) => !isIntentsGroupName(group.name));
+  const nextWallet =
+    next.walletGroups ??
+    next.groups.filter((group) => !isIntentsGroupName(group.name));
+  const nextLedger =
+    next.superGroups ??
+    next.groups.filter((group) => isIntentsGroupName(group.name));
+  const walletGroups = overlayItemGroups(prevWallet, nextWallet);
+  const superGroups =
+    nextLedger.length > 0 ? nextLedger : (prev.superGroups ?? []);
+  const round = (n: number) => Number.parseFloat(n.toFixed(2));
+  const sum = (groups: AssetGroup[]) =>
+    groups.reduce(
+      (total, group) =>
+        total + group.items.reduce((sub, item) => sub + item.valueUsd, 0),
+      0,
+    );
+  const walletUsd = round(sum(walletGroups));
+  const superUsd = round(sum(superGroups));
+  // Group order follows the painted snapshot; brand-new networks append
+  // in the partial's order. The complete merge restores canonical order.
+  const order = new Map<string, number>();
+  for (const group of [...prev.groups, ...next.groups]) {
+    if (!order.has(group.name)) order.set(group.name, order.size);
+  }
+  const groups = [...walletGroups, ...superGroups].sort(
+    (a, b) => (order.get(a.name) ?? 9999) - (order.get(b.name) ?? 9999),
+  );
+  return {
+    groups,
+    totalUsd: round(walletUsd + superUsd),
+    walletGroups,
+    superGroups,
+    walletUsd,
+    superUsd,
+  };
+}
+
 /**
  * A watched address, read from the public ledger only.
  *
@@ -190,8 +275,8 @@ export function useWatchedPortfolio(
     },
     enabled: enabled && scope !== null,
     // Same paint-at-once contract as the wallet portfolio.
-    staleTime: 60_000,
-    gcTime: 300_000,
+    staleTime: 300_000,
+    gcTime: 600_000,
     retry: (count, error) =>
       !(error instanceof AuthExpiredError) && count < 2,
     initialData: () => (scope ? readPortfolioCache(scope) : undefined),
@@ -227,8 +312,8 @@ export function useWatchedPortfolio(
           scope !== null &&
           (fast.data !== undefined || fast.isFetched),
         // Same paint-at-once contract as the wallet portfolio.
-        staleTime: 60_000,
-        gcTime: 300_000,
+        staleTime: 300_000,
+        gcTime: 600_000,
         retry: (count: number, error: Error) =>
           !(error instanceof AuthExpiredError) && count < 2,
       })),
@@ -250,41 +335,74 @@ export function useWatchedPortfolio(
 
   // Every group has answered (data or error). Partial merges before this
   // point cover fewer networks than a cached full, so they stay out of
-  // the cache and, usually, off the screen.
+  // the cache — but not off the screen (see the progressive shown below).
   const complete = grouped.complete;
 
   const candidate = mergedFull ?? fast.data ?? null;
 
-  // The screen is monotonic within a load: a partial merge or a fresh
-  // fast read (top networks, first page) is smaller than the cached full
-  // it would replace, so hold the painted snapshot until the merge is
-  // complete or the candidate actually exceeds it. A complete merge
-  // always wins, even downward — that is a real balance change.
-  // Seeded from the cache so a reload paints instantly with no flash.
-  const [shown, setShown] = useState<PortfolioSnapshot | null>(() =>
-    scope ? readPortfolioCache(scope) ?? null : null,
-  );
+  // The screen grows within a load: each landed chunk merges over the
+  // painted snapshot instead of waiting for every group, so a large
+  // address streams in rather than arriving all at once. Item ids are
+  // stable (`rawNet-symbol-contractAddress`), so matching ids replace in
+  // place and the row morphs on its key; new ids append; ids absent from
+  // the partial stay put. Only a complete merge replaces wholesale — and
+  // prunes — even downward, because that is a real balance change.
+  // Within a group the items re-sort by value, so live reorder is
+  // allowed: the rows stay keyed by stable id, and the table's
+  // pagination key carries no data, so the visible count survives each
+  // overlay. Seeded from the cache so a reload paints instantly. The
+  // snapshot is stored with the scope it belongs to: for one render after
+  // a card switch the state still holds the previous account, and handing
+  // that to the new address made the text change before its numbers.
+  const [shown, setShown] = useState<{
+    scope: string | null;
+    snapshot: PortfolioSnapshot | null;
+  }>(() => ({
+    scope,
+    snapshot: scope ? readPortfolioCache(scope) ?? null : null,
+  }));
   /* eslint-disable react-hooks/set-state-in-effect -- scope reset: the shown
    * snapshot belongs to one watched address, like the filter reset below */
   useEffect(() => {
-    setShown(scope ? readPortfolioCache(scope) ?? null : null);
+    setShown({
+      scope,
+      snapshot: scope ? readPortfolioCache(scope) ?? null : null,
+    });
   }, [scope]);
   /* eslint-enable react-hooks/set-state-in-effect */
-  /* eslint-disable react-hooks/set-state-in-effect -- monotonic shown: the
-   * painted snapshot only advances to larger or complete merges */
+  /* eslint-disable react-hooks/set-state-in-effect -- progressive shown: a
+   * partial merge overlays the painted snapshot, a complete merge wins */
   useEffect(() => {
     if (!candidate) return;
     setShown((prev) => {
-      if (prev === null)
-        return candidate.totalUsd > 0 || complete ? candidate : prev;
-      if (complete) return candidate;
-      return candidate.totalUsd >= prev.totalUsd ? candidate : prev;
+      const current = prev.snapshot;
+      let next = current;
+      if (complete) {
+        next = candidate;
+      } else if (mergedFull) {
+        if (current === null) {
+          next = candidate.totalUsd > 0 ? candidate : current;
+        } else {
+          next = overlaySnapshot(current, mergedFull);
+        }
+      } else if (current === null) {
+        // Fast read only, no chunk landed yet: hold the cached full until
+        // the chunks start overlaying above.
+        next = candidate.totalUsd > 0 ? candidate : current;
+      } else if (candidate.totalUsd >= current.totalUsd) {
+        next = candidate;
+      }
+      return { scope, snapshot: next };
     });
-  }, [candidate, complete]);
+  }, [candidate, complete, mergedFull, scope]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const snapshot = shown;
-  const isPending = shown === null;
+  // A snapshot from another scope is no snapshot: the detail keeps its
+  // last pair until this account's own read lands, so the address and the
+  // numbers advance together and the hero morph has nothing to queue.
+  const snapshot = shown.scope === scope ? shown.snapshot : null;
+  const liveSnapshot = useLiveSnapshot(snapshot);
+  const isPending = snapshot === null;
   const isRefreshing =
     (fast.isFetching || grouped.fetching || manualRefreshing) &&
     snapshot !== null;
@@ -332,7 +450,7 @@ export function useWatchedPortfolio(
   }, [scope, complete, mergedFull]);
 
   return {
-    snapshot,
+    snapshot: liveSnapshot,
     error,
     authExpired,
     isPending,
@@ -367,8 +485,8 @@ export function usePasskeyPortfolio(
       return fetchPasskeyPortfolio(accountId);
     },
     enabled: enabled && scope !== null,
-    // Same 60s cache as the wallet hook; unlock/lock events refetch below.
-    staleTime: 60_000,
+    // Same 300s cache as the wallet hook; unlock/lock events refetch below.
+    staleTime: 300_000,
     // The read reports its own locked and error states; a thrown failure is
     // unexpected, and retrying it would ask 1Click again for no benefit.
     retry: false,
@@ -395,6 +513,7 @@ export function usePasskeyPortfolio(
     () => (query.data?.ok ? buildPasskeySnapshot(entries, meta) : null),
     [query.data, entries, meta],
   );
+  const liveSnapshot = useLiveSnapshot(snapshot);
 
   const refresh = query.refetch;
 
@@ -422,7 +541,7 @@ export function usePasskeyPortfolio(
     status: query.isError
       ? ("error" as const)
       : passkeyPortfolioStatus(query.data),
-    snapshot,
+    snapshot: liveSnapshot,
     entries,
     error: query.error,
     isPending: query.isPending,
@@ -457,7 +576,7 @@ export function useSuperPrivateBalances(
     // Same paint-at-once contract as the wallet portfolio: the last
     // private snapshot renders instantly and revalidates quietly, so the
     // tab never drops to a bare loading line while the read is in flight.
-    staleTime: 60_000,
+    staleTime: 300_000,
     retry: false,
     initialData: () => (scope ? readSuperPrivateCache(scope) : undefined),
     initialDataUpdatedAt: 0,
@@ -476,6 +595,9 @@ export function useSuperPrivateBalances(
     () => (query.data?.ok ? buildPasskeySnapshot(entries, meta) : null),
     [query.data, entries, meta],
   );
+  // The private rows carry the ledger's asset ids, so they read the same
+  // live store as the public side instead of ageing with the metadata read.
+  const liveSnapshot = useLiveSnapshot(snapshot);
 
   const refresh = query.refetch;
 
@@ -507,7 +629,7 @@ export function useSuperPrivateBalances(
     status: query.isError
       ? ("error" as const)
       : passkeyPortfolioStatus(query.data),
-    snapshot,
+    snapshot: liveSnapshot,
     entries,
     error: query.error,
     isPending: query.isPending,

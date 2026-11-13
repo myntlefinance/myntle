@@ -30,6 +30,8 @@ export type Asset = {
   decimals: number;
   chain: string;
   price: number;
+  /** When the catalogue observed this price, in milliseconds. */
+  priceUpdatedAt?: number;
   contractAddress: string;
 };
 
@@ -82,6 +84,7 @@ type TokensResponse = {
     decimals: number;
     blockchain: string;
     price: number;
+    priceUpdatedAt?: string;
     contractAddress: string;
   }>;
 };
@@ -100,14 +103,18 @@ export async function getAssets(): Promise<Asset[]> {
 
   const raw = (await res.json()) as TokensResponse | TokensResponse["data"];
   const items = Array.isArray(raw) ? raw : (raw.data ?? []);
-  const assets = items.map((t) => ({
-    assetId: t.assetId,
-    symbol: t.symbol,
-    decimals: t.decimals,
-    chain: t.blockchain,
-    price: t.price,
-    contractAddress: t.contractAddress,
-  }));
+  const assets = items.map((t) => {
+    const observed = t.priceUpdatedAt ? Date.parse(t.priceUpdatedAt) : NaN;
+    return {
+      assetId: t.assetId,
+      symbol: t.symbol,
+      decimals: t.decimals,
+      chain: t.blockchain,
+      price: t.price,
+      ...(Number.isFinite(observed) ? { priceUpdatedAt: observed } : {}),
+      contractAddress: t.contractAddress,
+    };
+  });
 
   catalogueCache = assets;
   catalogueFetchedAt = now;
@@ -244,9 +251,9 @@ async function requestQuote(params: {
       slippageTolerance: params.slippageBps ?? 100,
       deadline: fallbackDeadline,
       // Confidential-only thesis: every foreign-to-foreign quote requests
-      // privacy. The partner key (server-side) authorizes it; the response
-      // is priced identically, only unlinkable.
-      confidentiality: params.confidentiality ?? "basic",
+      // privacy. The boundary still accepts `public` for old stored callers,
+      // but nothing is ever sent with it.
+      confidentiality: params.confidentiality === "advanced" ? "advanced" : "basic",
     }),
   });
 

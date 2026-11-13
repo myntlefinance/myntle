@@ -1,0 +1,26 @@
+# Copy to .dev.vars for local `wrangler dev`. Never commit the copy.
+
+# Optional. Enables the Alchemy current and history fallback.
+ALCHEMY_API_KEY=
+
+# Optional. Only needed if Binance.US requires a key for public data.
+BINANCE_US_API_KEY=
+
+# Optional. A CoinGecko demo key lifts the rate limit on the history fallback.
+# Without it the free tier still works, but it answers 429 sooner.
+# COINGECKO_API_KEY=
+
+# Optional. A CoinGecko pro key uses the pro host and header instead.
+# COINGECKO_PRO_API_KEY=
+
+# Optional accelerator, never a dependency. Set to 1 to try api.binance.com
+# before the US hosts; a 451 there rotates straight back to Binance.US for ten
+# minutes before the global host is tried again.
+# BINANCE_GLOBAL=
+
+# Commented on purpose: uncommenting this replaces the deployed allowlist with
+# the local origin, so a local run would stop accepting production origins.
+# APP_ORIGINS=http://localhost:3000
+
+# Required for GET /probe, which answers 404 unless this secret is set.
+# PROBE_KEY=

@@ -11,6 +11,8 @@ import {
 
 export type AddressPillProps = {
   address: string;
+  /** The name the address resolved from, shown beside the truncated address. */
+  name?: string | null;
   /** Chain family from the tool. Wins over address-shape detection when set. */
   chain?: SupportedChain;
   /** Connected wallet brand mark, shown when this address is the connected wallet. */
@@ -29,7 +31,24 @@ export type AddressPillProps = {
  * mark. The explicit chain wins over address-shape detection, because a NEAR
  * balance read for an EVM-shaped Intents account is still a NEAR read.
  */
-export function AddressPill({ address, chain, walletIcon, walletName }: AddressPillProps) {
+/**
+ * The wallet or chain mark: the connected wallet's brand when known,
+ * otherwise the chain mark detected from the address. Shared by the
+ * chat pill and the portfolio title row so the two never disagree.
+ */
+export function WalletMark({
+  address,
+  chain,
+  walletIcon,
+  size = 14,
+}: {
+  address: string;
+  chain?: SupportedChain;
+  /** Connected wallet brand mark; falls back to the chain mark. */
+  walletIcon?: string | null;
+  /** Rendered edge length in pixels. */
+  size?: number;
+}) {
   const detectedChain = detectTechData(address)?.chain;
   const resolvedChain = chain ?? detectedChain;
   const chainIcon = resolvedChain ? CHAIN_ICONS[resolvedChain] : undefined;
@@ -39,34 +58,67 @@ export function AddressPill({ address, chain, walletIcon, walletName }: AddressP
   }, [walletIcon, address]);
   const providerIcon = walletIcon && !iconFailed ? walletIcon : undefined;
   const icon = providerIcon ?? chainIcon;
+  if (!icon) return null;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={icon}
+      alt=""
+      aria-hidden="true"
+      onError={providerIcon ? () => setIconFailed(true) : undefined}
+      className="shrink-0 rounded-full object-contain"
+      style={{ width: size, height: size }}
+    />
+  );
+}
+
+export function AddressPill({ address, name, chain, walletIcon, walletName }: AddressPillProps) {
+  const detectedChain = detectTechData(address)?.chain;
+  const resolvedChain = chain ?? detectedChain;
 
   return (
     <span
       className="inline-flex h-7 max-w-full items-center gap-1 rounded-full bg-inset px-2 text-[12px] font-medium text-ink-2 shadow-btn"
       title={walletName ? `${walletName} · ${address}` : address}
     >
-      {icon ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={icon}
-          alt=""
-          aria-hidden="true"
-          onError={providerIcon ? () => setIconFailed(true) : undefined}
-          className="size-3.5 shrink-0 rounded-full object-contain"
-        />
-      ) : null}
+      <WalletMark
+        address={address}
+        chain={chain}
+        walletIcon={walletIcon}
+        size={14}
+      />
       <span className="min-w-0 truncate">
-        <span className="sm:hidden">
-          {truncateTechData(address, resolvedChain)}
-        </span>
-        <span className="hidden sm:inline">{address}</span>
+        {name ? (
+          // A resolved name reads beside its truncated address, so the
+          // numbers below are never mistaken for the user's own.
+          <span>
+            {name} · {truncateTechData(address, resolvedChain)}
+          </span>
+        ) : (
+          <>
+            <span className="sm:hidden">
+              {truncateTechData(address, resolvedChain)}
+            </span>
+            <span className="hidden sm:inline">{address}</span>
+          </>
+        )}
       </span>
       <CopyButton value={address} />
     </span>
   );
 }
 
-function CopyButton({ value }: { value: string }) {
+export function CopyButton({
+  value,
+  size = 13,
+  tone = "muted",
+}: {
+  value: string;
+  /** Glyph edge length; the 22px hit area never changes. */
+  size?: number;
+  /** `ink` matches bright title text; `muted` is the pill default. */
+  tone?: "muted" | "ink";
+}) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -96,7 +148,13 @@ function CopyButton({ value }: { value: string }) {
           }
         })();
       }}
-      className="relative ml-1 inline-flex size-[22px] shrink-0 items-center justify-center rounded-full text-ink-3 transition-colors duration-100 hover:bg-hover hover:text-ink"
+      className={`relative ml-1 inline-flex shrink-0 items-center justify-center rounded-full transition-colors duration-100 hover:bg-hover ${
+        tone === "ink" ? "text-ink" : "text-ink-3 hover:text-ink"
+      }`}
+      style={{
+        width: Math.max(22, size + 8),
+        height: Math.max(22, size + 8),
+      }}
     >
       <span
         aria-hidden={copied}
@@ -110,7 +168,7 @@ function CopyButton({ value }: { value: string }) {
           willChange: "transform, opacity, filter",
         }}
       >
-        <IconCopy size={13} stroke={1.8} strokeWidth={1.8} />
+        <IconCopy size={size} stroke={1.8} strokeWidth={1.8} />
       </span>
       <span
         aria-hidden={!copied}
@@ -124,7 +182,7 @@ function CopyButton({ value }: { value: string }) {
           willChange: "transform, opacity, filter",
         }}
       >
-        <IconCheck size={13} stroke={2.6} strokeWidth={2.6} />
+        <IconCheck size={size} stroke={2.6} strokeWidth={2.6} />
       </span>
     </button>
   );

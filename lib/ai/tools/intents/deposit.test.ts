@@ -36,11 +36,11 @@ describe("prepare_deposit", () => {
       action: "deposit",
       assetId: ASSET_ID,
       amount: "1000000",
-      mode: "confidential-external",
       note: "The interface will show the exact deposit address.",
     });
     expect(result).not.toHaveProperty("depositAddress");
     expect(result).not.toHaveProperty("intent");
+    expect(JSON.stringify(result).toLowerCase()).not.toContain("confidential");
   });
 
   it("requires a positive whole amount in the smallest unit", () => {

@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useId, useState, useMemo } from "react";
 import { NetworkIcon, isolateSvgIds } from "./NetworkIcon";
+import { TOKEN_FILES } from "./iconFiles";
 import { UPLOADED_TOKENS } from "./uploadedSvgs";
 
 export type TokenAvatarProps = {
@@ -16,6 +17,53 @@ export type TokenAvatarProps = {
   className?: string;
 };
 
+const TOKEN_FILE_SET = new Set<string>(TOKEN_FILES);
+
+/* Ethereum has a dark charcoal diamond on a transparent background with tight
+ * vertical bounds, so it sits on a white disc. WBTC's black outer rings need
+ * the same backing. */
+function tokenPaddingClass(key: string): string {
+  if (key === "eth") return "bg-white p-[3.5px]";
+  if (key === "wbtc") return "bg-white p-[2px]";
+  return "";
+}
+
+/* Resolve a ticker to the file key used by the local supply. The key may be
+ * inlined in uploadedSvgs.ts, served from public/tokens, or both. */
+function tokenKey(symbol: string): string | null {
+  if (!symbol) return null;
+  const s = symbol.trim().toLowerCase();
+
+  if (UPLOADED_TOKENS[s] || TOKEN_FILE_SET.has(s)) return s;
+  if (
+    s === "weth" ||
+    s === "vweth" ||
+    s === "steth" ||
+    s.startsWith("eth-") ||
+    s.endsWith("-eth")
+  ) {
+    return "eth";
+  }
+  if (
+    s === "btc" ||
+    s === "tbtc" ||
+    s === "cbtc" ||
+    s.startsWith("btc-") ||
+    s.endsWith("-btc")
+  ) {
+    return "wbtc";
+  }
+  if (s.includes("usdc")) return "usdc";
+  if (s.includes("usdt")) return "usdt";
+  if (s === "wnear" || s.startsWith("near-")) return "near";
+  if (s === "wsol" || s.startsWith("sol-") || s.endsWith("-sol")) return "sol";
+  if (s === "arbitrum") return "arb";
+  if (s === "optimism") return "op";
+  if (s === "hyperliquid") return "hype";
+  if (s === "pol" || s === "matic" || s === "polygon") return "pol";
+  return null;
+}
+
 /**
  * Resolves a token symbol to its official uploaded SVG vector and appropriate styling.
  */
@@ -23,60 +71,29 @@ export function resolveUploadedToken(symbol: string): {
   svg: string;
   paddingClass: string;
 } | null {
-  if (!symbol) return null;
-  const s = symbol.trim().toLowerCase();
-
-  let key: string | null = null;
-  if (UPLOADED_TOKENS[s]) {
-    key = s;
-  } else if (
-    s === "weth" ||
-    s === "vweth" ||
-    s === "steth" ||
-    s.startsWith("eth-") ||
-    s.endsWith("-eth")
-  ) {
-    key = "eth";
-  } else if (
-    s === "btc" ||
-    s === "tbtc" ||
-    s === "cbtc" ||
-    s.startsWith("btc-") ||
-    s.endsWith("-btc")
-  ) {
-    key = "wbtc";
-  } else if (s.includes("usdc")) {
-    key = "usdc";
-  } else if (s.includes("usdt")) {
-    key = "usdt";
-  } else if (s === "wnear" || s.startsWith("near-")) {
-    key = "near";
-  } else if (s === "wsol" || s.startsWith("sol-") || s.endsWith("-sol")) {
-    key = "sol";
-  } else if (s === "arbitrum") {
-    key = "arb";
-  } else if (s === "optimism") {
-    key = "op";
-  } else if (s === "hyperliquid") {
-    key = "hype";
-  }
-
+  const key = tokenKey(symbol);
   if (!key || !UPLOADED_TOKENS[key]) return null;
-
-  // Ethereum has a dark charcoal diamond on a transparent background with tight vertical bounds.
-  // We place it on a clean white circular disc with 3.5px padding so it is 100% visible, centered,
-  // and the points never touch or clip the circular boundary.
-  // WBTC has black outer rings on a transparent background, so it also uses a white backing disc.
-  let paddingClass = "";
-  if (key === "eth") {
-    paddingClass = "bg-white p-[3.5px]";
-  } else if (key === "wbtc") {
-    paddingClass = "bg-white p-[2px]";
-  }
 
   return {
     svg: UPLOADED_TOKENS[key],
-    paddingClass,
+    paddingClass: tokenPaddingClass(key),
+  };
+}
+
+/**
+ * Resolves a token symbol to a local SVG served from public/tokens.
+ * Used for the long tail that is not inlined in uploadedSvgs.ts.
+ */
+export function resolveTokenFile(symbol: string): {
+  file: string;
+  paddingClass: string;
+} | null {
+  const key = tokenKey(symbol);
+  if (!key || !TOKEN_FILE_SET.has(key)) return null;
+
+  return {
+    file: key,
+    paddingClass: tokenPaddingClass(key),
   };
 }
 
@@ -124,6 +141,7 @@ export function TokenAvatar({
   size = 28,
   className = "",
 }: TokenAvatarProps) {
+  const [localFailed, setLocalFailed] = useState(false);
   const [remoteFailed, setRemoteFailed] = useState(false);
   const sym = symbol.toUpperCase();
   const label = name || symbol;
@@ -136,13 +154,16 @@ export function TokenAvatar({
   const uid = useId();
 
   // 1. Direct inline SVG lookup for curated / uploaded tokens (instant, zero rasterization)
-  const uploaded = resolveUploadedToken(symbol);
+  const uploaded = useMemo(() => resolveUploadedToken(symbol), [symbol]);
   const uploadedSvg = useMemo(
     () => (uploaded ? isolateSvgIds(uploaded.svg, uid) : null),
     [uploaded, uid],
   );
 
-  // 2. Candidate remote URL fallback for unlisted / dynamic tokens
+  // 2. Local file for the long tail in public/tokens
+  const localFile = useMemo(() => resolveTokenFile(symbol), [symbol]);
+
+  // 3. Candidate remote URL fallback for unlisted / dynamic tokens
   const remoteUrl = useMemo(() => {
     if (uploaded) return null;
     if (logo) return logo;
@@ -167,6 +188,21 @@ export function TokenAvatar({
           style={{ width: size, height: size }}
           dangerouslySetInnerHTML={{ __html: uploadedSvg }}
         />
+      ) : localFile && !localFailed ? (
+        <span
+          className={`w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden select-none ${localFile.paddingClass}`}
+          style={{ width: size, height: size }}
+        >
+          <img
+            src={`/tokens/${localFile.file}.svg`}
+            alt={label}
+            width={size}
+            height={size}
+            className="w-full h-full object-contain rounded-full"
+            onError={() => setLocalFailed(true)}
+            loading="lazy"
+          />
+        </span>
       ) : remoteUrl && !remoteFailed ? (
         <span
           className="w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden bg-white/5"

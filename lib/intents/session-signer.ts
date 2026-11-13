@@ -5,7 +5,11 @@ import { signIntentWithPasskey } from "@/lib/auth/passkey-signer";
 import type { SessionIdentity } from "@/lib/auth/session-identity";
 import type { ConnectedWallet } from "@/lib/wallet/types";
 import type { IntentStandard } from "./service";
-import { signIntentWithWallet, type WalletIntentSigner } from "./wallet-signer";
+import {
+  signIntentWithWallet,
+  WALLET_NOT_CONNECTED,
+  type WalletIntentSigner,
+} from "./wallet-signer";
 
 /**
  * One signer for one session.
@@ -53,7 +57,7 @@ export function signIntentForSession(input: SessionSignerInput): IntentSigner {
     if (standard === "webauthn") {
       throw new Error("This account signs with a wallet. Nothing was moved.");
     }
-    if (!account) throw new Error("Connect a wallet first.");
+    if (!account) throw new Error(WALLET_NOT_CONNECTED);
     return signIntentWithWallet({
       standard,
       payload,

@@ -35,6 +35,10 @@ export type TokenPriceChartProps = {
   points?: LivelinePoint[];
   /** Optional pre-computed change; otherwise derived from the points. */
   changePct?: number | null;
+  /** Stable identity of the series, the resolved asset id. A paused Liveline
+   * cannot swap to a different series in place, so a changed id remounts the
+   * canvas; without one, two series are assumed to be the same chart. */
+  seriesId?: string | null;
   className?: string;
 };
 
@@ -50,6 +54,7 @@ export type TokenPriceChartProps = {
 export function TokenPriceChart({
   points = [],
   changePct,
+  seriesId,
   className,
 }: TokenPriceChartProps) {
   const dark = useDarkMode();
@@ -92,6 +97,15 @@ export function TokenPriceChart({
         }
       >
         <Liveline
+          /* `paused` freezes Liveline's own transition clock and snapshots the
+           * first series it draws. A chart mounted on the empty state and then
+           * given a series keeps its start-of-transition value and range, so
+           * the line sits squashed against the range top while the endpoint dot
+           * rests on the dashed current-value line at the bottom; a chart given
+           * a different series keeps drawing the first one. Mounting a fresh
+           * canvas per series identity and availability is the only state
+           * `paused` can hold. */
+          key={`${hasData ? "series" : "empty"}:${seriesId ?? ""}`}
           data={hasData ? points : []}
           value={hasData ? last : 0}
           theme={dark ? "dark" : "light"}

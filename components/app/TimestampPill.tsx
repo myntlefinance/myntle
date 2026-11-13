@@ -174,7 +174,7 @@ export function computeMessageClusters<T>(
  * Formats a timestamp into human-calm date and time components:
  * - "Today | 09:53 PM"
  * - "Yesterday | 04:12 PM"
- * - "Oct 24 | 11:30 AM" (or "Oct 24, 2025 | 11:30 AM" if different year)
+ * - "Nov 2 | 11:30 AM" (or "Nov 2, 2025 | 11:30 AM" if different year)
  */
 export function formatClusterTimestamp(
   timestamp: number | Date | string,

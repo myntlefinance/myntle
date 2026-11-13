@@ -199,6 +199,40 @@ describe("addWatchedAddress", () => {
       }),
     ).rejects.toThrow("The address could not be tracked.");
   });
+
+  it("stores the resolved name and read time with a named row", async () => {
+    state.mode = "insert-ok";
+
+    await addWatchedAddress({
+      userId: "user-a",
+      chain: "evm",
+      address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+      label: "vitalik.eth",
+      resolvedName: "vitalik.eth",
+      resolvedAt: "2026-11-08T12:00:00.000Z",
+    });
+
+    expect(state.inserted).toMatchObject({
+      resolved_name: "vitalik.eth",
+      resolved_at: "2026-11-08T12:00:00.000Z",
+    });
+  });
+
+  it("stores nulls for a raw row", async () => {
+    state.mode = "insert-ok";
+
+    await addWatchedAddress({
+      userId: "user-a",
+      chain: "evm",
+      address: "0xabc",
+      label: "Vault",
+    });
+
+    expect(state.inserted).toMatchObject({
+      resolved_name: null,
+      resolved_at: null,
+    });
+  });
 });
 
 describe("removeWatchedAddress", () => {
@@ -258,6 +292,56 @@ describe("updateWatchedAddress", () => {
       chain: "near",
       address: "desk.near",
     });
+  });
+
+  it("stores the fresh triple when the move lands on a name", async () => {
+    state.mode = "update-ok";
+
+    await updateWatchedAddress({
+      userId: "user-a",
+      id: "watch-1",
+      label: "vitalik.eth",
+      chain: "evm",
+      address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+      resolved: { name: "vitalik.eth", at: "2026-11-08T12:00:00.000Z" },
+    });
+
+    expect(state.updated).toMatchObject({
+      resolved_name: "vitalik.eth",
+      resolved_at: "2026-11-08T12:00:00.000Z",
+    });
+  });
+
+  it("clears the triple when the move lands on a raw address", async () => {
+    state.mode = "update-ok";
+
+    await updateWatchedAddress({
+      userId: "user-a",
+      id: "watch-1",
+      label: "Vault",
+      chain: "evm",
+      address: "0xabc",
+      resolved: { name: null, at: null },
+    });
+
+    expect(state.updated).toMatchObject({
+      resolved_name: null,
+      resolved_at: null,
+    });
+  });
+
+  it("leaves the stored name alone on a rename-only edit", async () => {
+    state.mode = "update-ok";
+
+    await updateWatchedAddress({
+      userId: "user-a",
+      id: "watch-1",
+      label: "Desk",
+    });
+
+    expect(state.updated).toMatchObject({ label: "Desk" });
+    expect(state.updated).not.toHaveProperty("resolved_name");
+    expect(state.updated).not.toHaveProperty("resolved_at");
   });
 
   it("reports another watcher's row as missing", async () => {

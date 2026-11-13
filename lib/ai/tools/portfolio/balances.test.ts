@@ -2,15 +2,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolContext } from "../context";
 import { createWalletBalancesTool } from "./balances";
 
-const { walletBalancesMock, ledgerMock } = vi.hoisted(() => ({
+const { walletBalancesMock, ledgerMock, resolveNameMock } = vi.hoisted(() => ({
   walletBalancesMock: vi.fn(),
   ledgerMock: vi.fn(),
+  resolveNameMock: vi.fn(),
+}));
+
+const { getLivePricesMock } = vi.hoisted(() => ({
+  getLivePricesMock: vi.fn(),
+}));
+
+vi.mock("@/lib/prices/server", () => ({
+  getLivePrices: getLivePricesMock,
 }));
 
 vi.mock("@/lib/wallet/balances", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/wallet/balances")>();
   return { ...actual, getConnectedWalletBalances: walletBalancesMock };
 });
+
+vi.mock("@/lib/adapters/registry", () => ({
+  getNameResolverPort: () => ({ resolveName: resolveNameMock }),
+}));
 
 vi.mock("@/lib/intents/balances", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/intents/balances")>();
@@ -78,6 +91,8 @@ async function run(
 }
 
 beforeEach(() => {
+  getLivePricesMock.mockReset();
+  getLivePricesMock.mockResolvedValue(new Map());
   ledgerMock.mockResolvedValue(ledger);
   walletBalancesMock.mockResolvedValue({
     address: walletContext.activeAddress,
@@ -114,7 +129,7 @@ describe("get_wallet_balances for a passkey account", () => {
       items: Array<{ symbol: string; amount: string }>;
     }>;
     expect(groups).toHaveLength(1);
-    expect(groups[0].name).toBe("Settlement Ledger");
+    expect(groups[0].name).toBe("Near Intents");
     expect(groups[0].items[0]).toMatchObject({ symbol: "USDC", amount: "25" });
   });
 
@@ -354,5 +369,161 @@ describe("get_wallet_balances for a wallet account", () => {
       "USDC",
     ]);
     expect(ledgerResult.totalValueUsd).toBe(25);
+  });
+
+  it("resolves a model-supplied name before the provider read", async () => {
+    const resolvedAt = "2026-11-08T00:00:00.000Z";
+    resolveNameMock.mockResolvedValue({
+      address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+      name: "vitalik.eth",
+      resolvedAt,
+    });
+
+    const result = await run(walletContext, {
+      address: "vitalik.eth",
+      chain: "evm",
+    });
+
+    expect(resolveNameMock).toHaveBeenCalledWith("evm", "vitalik.eth");
+    expect(walletBalancesMock.mock.calls[0][1]).toBe(
+      "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+    );
+    expect(ledgerMock.mock.calls[0][0]).toBe(
+      "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+    );
+    expect(result.source).toBe("requested");
+    expect(result.address).toBe(
+      "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+    );
+    expect(result.resolvedName).toBe("vitalik.eth");
+  });
+
+  it("asks for the address when the name is not registered", async () => {
+    resolveNameMock.mockResolvedValue(null);
+
+    const result = await run(walletContext, {
+      address: "nobody.eth",
+      chain: "evm",
+    });
+
+    expect(result.source).toBe("none");
+    expect(result.message).toBe(
+      "That name is not registered. Ask the user for the full address.",
+    );
+    expect(walletBalancesMock).not.toHaveBeenCalled();
+    expect(ledgerMock).not.toHaveBeenCalled();
+  });
+
+  it("overrides wallet and ledger rows with live quotes", async () => {
+    walletBalancesMock.mockResolvedValue({
+      address: walletContext.activeAddress,
+      chain: "evm",
+      balances: [
+        {
+          ...arbitrumUsdc,
+          assetId: "nep141:arb-0xaf88",
+          quantity: 5.2,
+          priceAsOf: 1_762_760_000_000,
+        },
+      ],
+      totalValueUsd: 5.2,
+    });
+    ledgerMock.mockResolvedValue({
+      status: "settled",
+      balances: [
+        {
+          assetId: "nep141:usdc",
+          symbol: "USDC",
+          decimals: 6,
+          balance: "25",
+          rawBalance: "25000000",
+          priceUsd: 1,
+          valueUsd: 25,
+          quantity: 25,
+          priceAsOf: 1_762_760_060_000,
+        },
+      ],
+      totalValueUsd: 25,
+    });
+    getLivePricesMock.mockResolvedValue(
+      new Map([
+        [
+          "nep141:arb-0xaf88",
+          { usd: 1.25, asOf: 1_762_800_000_000, source: "binance", stale: false },
+        ],
+        [
+          "nep141:usdc",
+          { usd: 1.01, asOf: 1_762_800_060_000, source: "binance", stale: false },
+        ],
+      ]),
+    );
+
+    const result = await run(walletContext);
+    const wallet = result.wallet as {
+      balances: Array<{
+        valueUsd?: number;
+        priceAsOf?: number;
+        address?: string;
+      }>;
+      totalValueUsd: number;
+    };
+    const ledgerResult = result.settlementLedger as {
+      balances: Array<{ valueUsd?: number; priceAsOf?: number }>;
+      totalValueUsd: number;
+    };
+
+    expect(getLivePricesMock).toHaveBeenCalledWith([
+      "nep141:arb-0xaf88",
+      "nep141:usdc",
+    ]);
+    expect(wallet.balances[0].valueUsd).toBe(6.5);
+    expect(wallet.balances[0].priceAsOf).toBe(1_762_800_000_000);
+    expect(wallet.totalValueUsd).toBe(6.5);
+    expect(ledgerResult.balances[0].valueUsd).toBe(25.25);
+    expect(ledgerResult.balances[0].priceAsOf).toBe(1_762_800_060_000);
+    expect(ledgerResult.totalValueUsd).toBe(25.25);
+    expect(result.totalValueUsd).toBe(31.75);
+    // The model sees prices and quantities, never a wallet address.
+    expect("address" in wallet.balances[0]).toBe(false);
+    expect("address" in ledgerResult.balances[0]).toBe(false);
+  });
+
+  it("does not write an infinite value from an overflowing quote", async () => {
+    walletBalancesMock.mockResolvedValue({
+      address: walletContext.activeAddress,
+      chain: "evm",
+      balances: [
+        {
+          ...arbitrumUsdc,
+          assetId: "nep141:arb-0xaf88",
+          quantity: 1e300,
+          priceUsd: 1,
+          valueUsd: 5,
+        },
+      ],
+      totalValueUsd: 5,
+    });
+    getLivePricesMock.mockResolvedValue(
+      new Map([
+        [
+          "nep141:arb-0xaf88",
+          {
+            usd: 1e300,
+            asOf: 1_762_800_000_000,
+            source: "binance",
+            stale: false,
+          },
+        ],
+      ]),
+    );
+
+    const result = await run(walletContext);
+    const wallet = result.wallet as {
+      balances: Array<{ priceUsd?: number; valueUsd?: number }>;
+    };
+
+    expect(wallet.balances[0].priceUsd).toBe(1e300);
+    expect(wallet.balances[0].valueUsd).toBe(5);
+    expect(Number.isFinite(result.totalValueUsd)).toBe(true);
   });
 });

@@ -3,7 +3,10 @@ import { z } from "zod";
 import { requireSession } from "@/lib/auth/session";
 import { checkRateLimit, clientIp } from "@/lib/auth/rate-limit";
 import { conversationIdForUser } from "@/lib/db/conversations";
-import { getQuote } from "@/lib/db/transactions";
+import {
+  getQuote,
+  hasToolApprovalSettlement,
+} from "@/lib/db/transactions";
 import {
   TOOL_APPROVAL_NAMES,
   recordToolApproval,
@@ -81,19 +84,42 @@ export async function POST(req: Request) {
     quoteId = stored?.id ?? null;
   }
 
+  // A proposal whose money already started cannot be refused after the fact.
+  // The address was minted and the approval row was written with the trade, so
+  // a refusal here would paint Rejected over a live deposit. The settlement
+  // decides whether it started; when that read fails nothing is written,
+  // because a refusal must never be recorded while the action may be live.
+  let started = false;
+  try {
+    started = await hasToolApprovalSettlement(
+      session.userId,
+      body.approvalId,
+    );
+  } catch {
+    console.error("[approvals/deny] settlement read failed", {
+      approvalId: body.approvalId,
+    });
+    return NextResponse.json({ error: "An error occurred." }, { status: 500 });
+  }
+
+  // A started proposal is recorded as approved. First-write-wins keeps a row
+  // that already exists (including a historical denial), and a missing one is
+  // repaired so the record matches the trade that was already created.
+  const decision = started ? "approved" : "denied";
+
   try {
     const record = await recordToolApproval({
       userId: session.userId,
       toolApprovalId: body.approvalId,
       toolName: body.toolName,
-      decision: "denied",
+      decision,
       conversationId,
       quoteId,
       requestedAt: body.requestedAt ?? null,
     });
     return NextResponse.json({
       approvalId: body.approvalId,
-      decision: record?.decision ?? "denied",
+      decision: record?.decision ?? decision,
       decidedAt: record?.decidedAt ?? null,
     });
   } catch {

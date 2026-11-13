@@ -17,6 +17,7 @@ import {
   createQuote,
   createTransaction,
   setTransactionRunId,
+  setTransactionState,
 } from "@/lib/db/transactions";
 
 /**
@@ -36,6 +37,7 @@ import {
 
 const DEPOSIT_ERROR = "An error occurred.";
 const DEPOSIT_UNAVAILABLE = "The deposit could not be prepared. Please try again.";
+const DEPOSIT_REJECTED = "This proposal was rejected. Please ask for a new one.";
 
 const depositBodySchema = z.strictObject({
   assetId: z.string().min(1).max(300),
@@ -90,7 +92,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error: "denied",
-          message: "This proposal was rejected. Please ask for a new one.",
+          message: DEPOSIT_REJECTED,
         },
         { status: 409 },
       );
@@ -217,10 +219,16 @@ export async function POST(req: Request) {
       state: "submitted",
     });
 
-    // The address was minted and recorded, so the approval is real now.
+    // The address was minted and recorded, so the approval is real now. The
+    // returned row is the verdict, not the write: a denial that won the race
+    // between the pre-check and this insert refuses the deposit even though
+    // the address exists, so no settlement reader starts for it. A write that
+    // throws or returns null is not a denial: the transaction is the stronger
+    // fact, and the deny route guards it from here.
+    let refused = false;
     if (body.approvalId) {
       try {
-        await recordToolApproval({
+        const recorded = await recordToolApproval({
           userId: session.userId,
           toolApprovalId: body.approvalId,
           toolName: "prepare_deposit",
@@ -228,11 +236,31 @@ export async function POST(req: Request) {
           conversationId,
           quoteId: wetQuoteId,
         });
+        refused = recorded?.decision === "denied";
       } catch {
         console.error("[intents/deposit] decision record failed", {
           transactionId: tx.id,
         });
       }
+    }
+
+    if (refused) {
+      // The row exists but must never look fundable: it is closed as failed
+      // and left without a workflow. A failed state write is logged, because
+      // the refusal is still the answer the caller needs.
+      try {
+        await setTransactionState(tx.id, "failed", {
+          error: "denied-after-mint",
+        });
+      } catch {
+        console.error("[intents/deposit] refusal state write failed", {
+          transactionId: tx.id,
+        });
+      }
+      return NextResponse.json(
+        { error: "denied", message: DEPOSIT_REJECTED },
+        { status: 409 },
+      );
     }
 
     transactionId = tx.id;

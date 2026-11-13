@@ -8,7 +8,7 @@ import { historyStateMeta } from "@/components/app/historyCache";
 describe("history cursors", () => {
   it("round-trips a page cursor", () => {
     const cursor = {
-      createdAt: "2026-10-31T00:00:00.000Z",
+      createdAt: "2026-11-04T00:00:00.000Z",
       id: "123e4567-e89b-12d3-a456-426614174000",
     };
     expect(parseHistoryCursor(encodeHistoryCursor(cursor))).toEqual(cursor);
@@ -19,7 +19,7 @@ describe("history cursors", () => {
     expect(parseHistoryCursor("")).toBeNull();
     expect(parseHistoryCursor("no-separator")).toBeNull();
     expect(parseHistoryCursor("not-a-date|abc")).toBeNull();
-    expect(parseHistoryCursor("2026-10-31T00:00:00.000Z|")).toBeNull();
+    expect(parseHistoryCursor("2026-11-04T00:00:00.000Z|")).toBeNull();
   });
 });
 

@@ -8,7 +8,11 @@ import {
   type AssetCategory,
   type TokenBalance,
 } from "@/lib/wallet/balances";
+import { normalizeWatchedAddress } from "@/lib/wallet/addresses";
 import { getIntentsLedgerBalances } from "@/lib/intents/balances";
+import { getLivePrices, type LivePrice } from "@/lib/prices/server";
+import { NameInputError, resolveInputAddress } from "@/lib/names/binding";
+import { isNameLikeValue } from "@/lib/names/detect";
 import {
   SupportedNetworkEnum,
   SupportedChainEnum,
@@ -32,6 +36,65 @@ export async function readBalances(accountId: string, chain = "near") {
   return getConnectedWalletBalances(chain, accountId);
 }
 
+/** The ids a set of balances can be priced by, without duplicates. */
+function pricedAssetIds(balances: readonly TokenBalance[]): string[] {
+  return [
+    ...new Set(
+      balances
+        .map((balance) => balance.assetId)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  ];
+}
+
+/**
+ * Rewrites a balance's unit price and value from a live quote.
+ *
+ * The quantity the balance layer derived is exact, so it is preferred over
+ * re-parsing the display string. A row without an asset id, or without a
+ * quote, keeps the price the provider or the catalogue settled.
+ */
+function withLivePrice(
+  balance: TokenBalance,
+  live: ReadonlyMap<string, LivePrice>,
+): TokenBalance {
+  if (!balance.assetId) return balance;
+  const quote = live.get(balance.assetId);
+  if (!quote || !Number.isFinite(quote.usd)) return balance;
+
+  const quantity =
+    typeof balance.quantity === "number" && Number.isFinite(balance.quantity)
+      ? balance.quantity
+      : Number.parseFloat(balance.balance.replace(/,/g, ""));
+  if (!Number.isFinite(quantity)) {
+    return balance.priceUsd === quote.usd &&
+      balance.priceAsOf === quote.asOf
+      ? balance
+      : { ...balance, priceUsd: quote.usd, priceAsOf: quote.asOf };
+  }
+
+  const valueUsd = Number.parseFloat((quantity * quote.usd).toFixed(2));
+  if (!Number.isFinite(valueUsd)) {
+    return balance.priceUsd === quote.usd &&
+      balance.priceAsOf === quote.asOf
+      ? balance
+      : { ...balance, priceUsd: quote.usd, priceAsOf: quote.asOf };
+  }
+  if (
+    balance.priceUsd === quote.usd &&
+    balance.valueUsd === valueUsd &&
+    balance.priceAsOf === quote.asOf
+  ) {
+    return balance;
+  }
+  return {
+    ...balance,
+    priceUsd: quote.usd,
+    valueUsd,
+    priceAsOf: quote.asOf,
+  };
+}
+
 export function createWalletBalancesTool(context?: ToolContext) {
   const accountKind = context?.accountKind ?? "wallet";
 
@@ -39,17 +102,18 @@ export function createWalletBalancesTool(context?: ToolContext) {
     description:
       accountKind === "passkey"
         ? "Read this account's token balances. A passkey account has no chain wallet, so this " +
-          "reads the account's NEAR Intents ledger only and never a wallet. The confidential " +
-          "private balance is read with get_super_balances. Use this whenever the user asks " +
+          "reads the account's NEAR Intents ledger only and never a wallet. The private " +
+          "balance is read with get_super_balances. Use this whenever the user asks " +
           "what the account holds or what is available to trade. Pass symbol for a single-token " +
           "check and omit it for an inventory."
         : "Read the user's public token balances. Returns on-chain balances in their connected wallet " +
           "(EVM, Solana, or NEAR) and their public NEAR Intents settlement ledger balance. " +
-          "This tool cannot see confidential funds: for the private balance inside the super account, " +
+          "This tool cannot see private funds: for the private balance inside the super account, " +
           "call get_super_balances instead. " +
           "Use this whenever the user asks about their balances, portfolio, or what they have available to trade. " +
           "A single-token question should pass symbol, and the one network when the user named one; a portfolio " +
-          "question should omit both.",
+          "question should omit both. An address argument may be a name such as vitalik.eth or example.sns; " +
+          "it resolves server-side before the read.",
     inputSchema: z.object({
       address: z
         .string()
@@ -122,24 +186,38 @@ export function createWalletBalancesTool(context?: ToolContext) {
         const allowZero = Boolean(includeZeroValue || symbol);
         const wantedSymbol = symbol?.trim().toLowerCase() || null;
 
+        // Price the whole ledger once, then filter. A live quote can make a
+        // row valuable that the catalogue priced at zero or not at all.
+        const live = await getLivePrices(
+          ledger.balances.map((balance) => balance.assetId),
+        );
+        const priced = ledger.balances.map((b) =>
+          withLivePrice(
+            {
+              chain: "near",
+              network: "intents",
+              symbol: b.symbol,
+              name: b.symbol,
+              contractAddress: b.assetId,
+              decimals: b.decimals,
+              balance: b.balance,
+              rawBalance: b.rawBalance,
+              priceUsd: b.priceUsd,
+              valueUsd: b.valueUsd,
+              assetId: b.assetId,
+              ...(b.quantity !== undefined ? { quantity: b.quantity } : {}),
+              ...(b.priceAsOf !== undefined ? { priceAsOf: b.priceAsOf } : {}),
+            },
+            live,
+          ),
+        );
+
         const balances: TokenBalance[] = [];
-        for (const b of ledger.balances) {
+        for (const b of priced) {
           if (isPhishingToken(b.symbol, b.symbol)) continue;
           if (wantedSymbol && b.symbol.toLowerCase() !== wantedSymbol) continue;
           if (!allowZero && (!b.valueUsd || b.valueUsd <= 0)) continue;
-
-          balances.push({
-            chain: "near",
-            network: "intents",
-            symbol: b.symbol,
-            name: b.symbol,
-            contractAddress: b.assetId,
-            decimals: b.decimals,
-            balance: b.balance,
-            rawBalance: b.rawBalance,
-            priceUsd: b.priceUsd,
-            valueUsd: b.valueUsd,
-          });
+          balances.push(b);
         }
 
         const totalValueUsd = balances.reduce(
@@ -184,7 +262,7 @@ export function createWalletBalancesTool(context?: ToolContext) {
           wallet: { balances: [], totalValueUsd: 0 },
           settlementLedger: {
             balances,
-            totalValueUsd: ledger.totalValueUsd ?? 0,
+            totalValueUsd: Number.parseFloat(totalValueUsd.toFixed(2)),
             status: ledger.status,
             message: ledger.message,
           },
@@ -199,8 +277,51 @@ export function createWalletBalancesTool(context?: ToolContext) {
         };
       }
 
-      const targetAddress = address || context?.activeAddress;
       const targetChain = chain || context?.activeChain;
+
+      // A model-supplied address may be a name. It resolves server-side
+      // before any provider read, so the model never binds an address
+      // itself. Anything else keeps the raw path exactly as before.
+      let resolvedName: string | null = null;
+      let targetAddress = address || context?.activeAddress;
+      if (
+        address &&
+        (targetChain === "evm" || targetChain === "solana") &&
+        isNameLikeValue(address)
+      ) {
+        try {
+          const hit = await resolveInputAddress({
+            value: address,
+            scope: targetChain,
+            isDirectAddress: (value) =>
+              normalizeWatchedAddress(targetChain, value),
+          });
+          targetAddress = hit.address;
+          resolvedName = hit.name;
+        } catch (error) {
+          if (error instanceof NameInputError) {
+            if (error.reason === "unregistered") {
+              return {
+                source: "none" as const,
+                message:
+                  "That name is not registered. Ask the user for the full address.",
+              };
+            }
+            if (error.reason === "unavailable") {
+              return {
+                source: "none" as const,
+                message: "Name lookup is unavailable. Try again shortly.",
+              };
+            }
+            return {
+              source: "none" as const,
+              message:
+                "That name is not valid. Ask the user for the full address.",
+            };
+          }
+          throw error;
+        }
+      }
 
       if (!targetAddress || !targetChain) {
         return {
@@ -228,7 +349,18 @@ export function createWalletBalancesTool(context?: ToolContext) {
           : Promise.resolve(null),
       ]);
 
-      const allBalances: TokenBalance[] = [...walletRes.balances];
+      // One live read for everything this answer shows. Wallet rows carry an
+      // assetId from the balance layer; ledger rows already carry one. A
+      // quote overrides the stored price, and a missing quote leaves it.
+      const live = await getLivePrices([
+        ...pricedAssetIds(walletRes.balances),
+        ...(intentsRes?.balances ?? []).map((balance) => balance.assetId),
+      ]);
+
+      const walletBalances = walletRes.balances.map((balance) =>
+        withLivePrice(balance, live),
+      );
+      const allBalances: TokenBalance[] = [...walletBalances];
       // The ledger is a second section of the same answer, so it obeys the
       // same symbol filter. Otherwise a single-token check could pull every
       // ledger token into the result and turn the card back on.
@@ -237,22 +369,30 @@ export function createWalletBalancesTool(context?: ToolContext) {
       if (intentsRes?.balances) {
         const allowZero = Boolean(includeZeroValue || symbol);
         for (const b of intentsRes.balances) {
-          if (isPhishingToken(b.symbol, b.symbol)) continue;
-          if (wantedSymbol && b.symbol.toLowerCase() !== wantedSymbol) continue;
-          if (!allowZero && (!b.valueUsd || b.valueUsd <= 0)) continue;
+          const entry = withLivePrice(
+            {
+              chain: "near",
+              network: "intents",
+              symbol: b.symbol,
+              name: b.symbol,
+              contractAddress: b.assetId,
+              decimals: b.decimals,
+              balance: b.balance,
+              rawBalance: b.rawBalance,
+              priceUsd: b.priceUsd,
+              valueUsd: b.valueUsd,
+              assetId: b.assetId,
+              ...(b.quantity !== undefined ? { quantity: b.quantity } : {}),
+              ...(b.priceAsOf !== undefined ? { priceAsOf: b.priceAsOf } : {}),
+            },
+            live,
+          );
+          if (isPhishingToken(entry.symbol, entry.symbol)) continue;
+          if (wantedSymbol && entry.symbol.toLowerCase() !== wantedSymbol) {
+            continue;
+          }
+          if (!allowZero && (!entry.valueUsd || entry.valueUsd <= 0)) continue;
 
-          const entry: TokenBalance = {
-            chain: "near",
-            network: "intents",
-            symbol: b.symbol,
-            name: b.symbol,
-            contractAddress: b.assetId,
-            decimals: b.decimals,
-            balance: b.balance,
-            rawBalance: b.rawBalance,
-            priceUsd: b.priceUsd,
-            valueUsd: b.valueUsd,
-          };
           ledgerBalances.push(entry);
           allBalances.push(entry);
         }
@@ -301,6 +441,9 @@ export function createWalletBalancesTool(context?: ToolContext) {
         // the user's own holdings when it is someone else's.
         source: address ? "requested" : "session",
         address: targetAddress,
+        // The name the address resolved from, when the model passed one.
+        // The model already supplied it, so echoing it leaks nothing.
+        ...(resolvedName ? { resolvedName } : {}),
         chain: targetChain,
         title: suggestedTitle,
         showFilters,
@@ -311,8 +454,12 @@ export function createWalletBalancesTool(context?: ToolContext) {
         groups,
         showCard: !singleAssetCheck,
         wallet: {
-          balances: walletRes.balances.slice(0, 30),
-          totalValueUsd: walletRes.totalValueUsd,
+          balances: walletBalances.slice(0, 30),
+          totalValueUsd: Number.parseFloat(
+            walletBalances
+              .reduce((sum, balance) => sum + (balance.valueUsd ?? 0), 0)
+              .toFixed(2),
+          ),
           error: walletRes.error,
         },
         settlementLedger: intentsRes

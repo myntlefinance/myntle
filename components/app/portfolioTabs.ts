@@ -11,6 +11,14 @@ export const PORTFOLIO_TABS: readonly PortfolioTab[] = [
   "Watchlist",
 ] as const;
 
+/* A passkey account signs with a credential and holds no chain wallet, so
+ * the wallet tab does not exist for it. The confidential ledger and the
+ * watchlist are the whole portfolio, not a replacement for it. */
+export const PASSKEY_PORTFOLIO_TABS: readonly PortfolioTab[] = [
+  "Super account",
+  "Watchlist",
+] as const;
+
 /** The `?tab=` value a fresh visit — server or client — opens to. */
 export function parsePortfolioTab(raw: unknown): PortfolioTab {
   if (raw === "super") return "Super account";

@@ -11,13 +11,21 @@ const ctx = {
 describe("routeIntent", () => {
   it("falls back to the full set on ambiguous input", () => {
     expect(routeIntent("")).toEqual({
-      domains: ["trading", "portfolio", "news"],
-      toolDomains: ["portfolio", "trading", "assets", "news", "intents"],
+      domains: ["trading", "portfolio", "news", "names"],
+      toolDomains: [
+        "portfolio",
+        "trading",
+        "assets",
+        "news",
+        "intents",
+        "names",
+      ],
     });
     expect(routeIntent("hello").domains).toEqual([
       "trading",
       "portfolio",
       "news",
+      "names",
     ]);
   });
 

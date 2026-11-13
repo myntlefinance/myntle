@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { verifyWalletSignature } from "./signatures";
 
-const MESSAGE = `Approve trade on Myntle\n\nSend: 1000000 nep141:usdc\nReceive at least: 990000 nep141:wrap.near\nTo: 0x3259abcdef12345678901073abcdef12345678\nSlippage: 100 bps\nQuote expires: 2026-10-30T00:30:00.000Z\nRequested: 2026-10-30T00:00:00.000Z`;
+const MESSAGE = `Approve trade on Myntle\n\nSend: 1000000 nep141:usdc\nReceive at least: 990000 nep141:wrap.near\nTo: 0x3259abcdef12345678901073abcdef12345678\nSlippage: 100 bps\nQuote expires: 2026-11-03T00:30:00.000Z\nRequested: 2026-11-03T00:00:00.000Z`;
 
 describe("verifyWalletSignature (evm)", () => {
   it("accepts a signature from the session address", async () => {

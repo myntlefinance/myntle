@@ -3,6 +3,7 @@ import { convertToModelMessages } from "ai";
 import {
   backfillApprovedSwapOutputs,
   pruneHistoricalToolOutputs,
+  sanitizeHistoricalToolData,
 } from "./prune";
 import { createTools } from "@/lib/ai/tools/registry";
 
@@ -271,5 +272,245 @@ describe("pruneHistoricalToolOutputs", () => {
     const pruned = pruneHistoricalToolOutputs(messages);
 
     expect(pruned[1]).toBe(messages[1]);
+  });
+});
+
+describe("sanitizeHistoricalToolData", () => {
+  it("rewrites an old quote part without mutating the stored message", () => {
+    const messages = [
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-get_quote",
+            toolCallId: "call-old-quote",
+            state: "output-available",
+            input: {
+              fromAssetId: "nep141:usdc",
+              toAssetId: "nep141:wrap.near",
+              amount: "25000000",
+              funding: "confidential",
+              confidentiality: "public",
+            },
+            output: {
+              amountIn: "25",
+              amountOut: "10",
+              quoteId: "quote-old",
+              mode: "confidential-intents",
+            },
+          },
+        ],
+      },
+    ] as never;
+    const before = JSON.parse(JSON.stringify(messages));
+    const originalPart = (messages as unknown as { parts: unknown[] }[])[0]
+      .parts[0];
+
+    const sanitized = sanitizeHistoricalToolData(messages);
+    const part = sanitized[0].parts[0] as unknown as {
+      input: Record<string, unknown>;
+      output: Record<string, unknown>;
+    };
+
+    expect(part.input).toEqual({
+      fromAssetId: "nep141:usdc",
+      toAssetId: "nep141:wrap.near",
+      amount: "25000000",
+      funding: "account",
+    });
+    expect(part.output).toMatchObject({
+      amountIn: "25",
+      amountOut: "10",
+      quoteId: "quote-old",
+      route: "account",
+    });
+    expect(part.output).not.toHaveProperty("mode");
+    expect(JSON.stringify(sanitized).toLowerCase()).not.toContain("confidential");
+    // The display copy is untouched: same references and same values.
+    expect(messages[0]).not.toBe(sanitized[0]);
+    expect(originalPart).not.toBe(sanitized[0].parts[0]);
+    expect(messages).toEqual(before);
+  });
+
+  it("strips modes from legacy tool-invocation results", () => {
+    const messages = [
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-invocation",
+            toolInvocation: {
+              toolName: "prepare_deposit",
+              args: { assetId: "nep141:usdc", amount: "1000000" },
+              result: {
+                acknowledged: true,
+                action: "deposit",
+                mode: "confidential-external",
+              },
+            },
+          },
+          {
+            type: "tool-invocation",
+            toolInvocation: {
+              toolName: "prepare_withdrawal",
+              args: {
+                fromAssetId: "arb:usdc",
+                amount: "500000",
+                destinationAddress: "0xabc",
+              },
+              result: {
+                acknowledged: true,
+                action: "withdraw",
+                destination: "0xabc",
+                mode: "confidential-withdrawal",
+              },
+            },
+          },
+        ],
+      },
+    ] as never;
+    const before = JSON.parse(JSON.stringify(messages));
+
+    const sanitized = sanitizeHistoricalToolData(messages);
+    const parts = sanitized[0].parts as unknown as Array<{
+      toolInvocation: { result: Record<string, unknown> };
+    }>;
+
+    expect(parts[0].toolInvocation.result).toEqual({
+      acknowledged: true,
+      action: "deposit",
+    });
+    expect(parts[1].toolInvocation.result).toEqual({
+      acknowledged: true,
+      action: "withdraw",
+      destination: "0xabc",
+    });
+    expect(JSON.stringify(sanitized).toLowerCase()).not.toContain("confidential");
+    expect(messages).toEqual(before);
+  });
+
+  it("sanitises a dynamic-tool get_quote part", () => {
+    const messages = [
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "get_quote",
+            input: {
+              fromAssetId: "nep141:usdc",
+              toAssetId: "nep141:wrap.near",
+              amount: "25000000",
+              funding: "confidential",
+              confidentiality: "basic",
+            },
+            output: {
+              amountIn: "25",
+              amountOut: "10",
+              quoteId: "quote-old",
+              mode: "confidential-intents",
+            },
+          },
+        ],
+      },
+    ] as never;
+
+    const sanitized = sanitizeHistoricalToolData(messages);
+    const part = sanitized[0].parts[0] as unknown as {
+      input: Record<string, unknown>;
+      output: Record<string, unknown>;
+    };
+
+    expect(part.input).toMatchObject({ funding: "account" });
+    expect(part.input).not.toHaveProperty("confidentiality");
+    expect(part.output).toMatchObject({ route: "account" });
+    expect(part.output).not.toHaveProperty("mode");
+    expect(JSON.stringify(sanitized).toLowerCase()).not.toContain("confidential");
+  });
+
+  it("sanitises a legacy get_quote invocation's args and result", () => {
+    const messages = [
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-invocation",
+            toolInvocation: {
+              toolName: "get_quote",
+              args: {
+                fromAssetId: "nep141:usdc",
+                toAssetId: "nep141:wrap.near",
+                amount: "25000000",
+                funding: "confidential",
+                confidentiality: "advanced",
+              },
+              result: {
+                amountIn: "25",
+                amountOut: "10",
+                mode: "chain",
+              },
+            },
+          },
+        ],
+      },
+    ] as never;
+
+    const sanitized = sanitizeHistoricalToolData(messages);
+    const part = sanitized[0].parts[0] as unknown as {
+      toolInvocation: {
+        args: Record<string, unknown>;
+        result: Record<string, unknown>;
+      };
+    };
+
+    expect(part.toolInvocation.args).not.toHaveProperty("confidentiality");
+    expect(part.toolInvocation.args).toMatchObject({ funding: "account" });
+    expect(part.toolInvocation.result).toMatchObject({ route: "wallet" });
+    expect(part.toolInvocation.result).not.toHaveProperty("mode");
+    expect(JSON.stringify(sanitized).toLowerCase()).not.toContain("confidential");
+  });
+
+  it("sanitises a legacy withdrawal result without touching the message", () => {
+    const messages = [
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-invocation",
+            toolInvocation: {
+              toolName: "get_withdrawal_quote",
+              args: {
+                fromAssetId: "arb:usdc",
+                amount: "500000",
+                destinationAddress: "0xabc",
+              },
+              result: {
+                quoteId: "quote-w",
+                amountOut: "0.4894",
+                mode: "confidential-withdrawal",
+              },
+            },
+          },
+        ],
+      },
+    ] as never;
+    const before = JSON.parse(JSON.stringify(messages));
+
+    const sanitized = sanitizeHistoricalToolData(messages);
+    const part = sanitized[0].parts[0] as unknown as {
+      toolInvocation: { result: Record<string, unknown> };
+    };
+
+    expect(part.toolInvocation.result).toEqual({
+      quoteId: "quote-w",
+      amountOut: "0.4894",
+    });
+    expect(JSON.stringify(sanitized).toLowerCase()).not.toContain("confidential");
+    expect(messages).toEqual(before);
   });
 });

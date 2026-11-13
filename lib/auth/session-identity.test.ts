@@ -202,6 +202,45 @@ describe("sessionAccountFor", () => {
     });
   });
 
+  it("falls back to the saved wallet brand when nothing is connected", () => {
+    const account = sessionAccountFor(evm, null, {
+      kind: "evm",
+      address: evm.address,
+      walletName: "Ambire",
+      walletIcon: "https://example.com/ambire.png",
+    });
+
+    expect(account).toMatchObject({
+      address: evm.address,
+      walletName: "Ambire",
+      walletIcon: "https://example.com/ambire.png",
+    });
+  });
+
+  it("prefers the live connection over the saved brand", () => {
+    const account = sessionAccountFor(evm, actual, {
+      kind: "evm",
+      address: evm.address,
+      walletName: "Ambire",
+      walletIcon: "https://example.com/ambire.png",
+    });
+
+    expect(account?.walletName).toBe("MetaMask");
+    expect(account?.walletIcon).toBe("/wallets/metamask.webp");
+  });
+
+  it("ignores a saved brand for another account", () => {
+    const account = sessionAccountFor(evm, null, {
+      kind: "evm",
+      address: "0x1111111111111111111111111111111111111111",
+      walletName: "Ambire",
+      walletIcon: "https://example.com/ambire.png",
+    });
+
+    expect(account?.walletName).toBeUndefined();
+    expect(account?.walletIcon).toBeUndefined();
+  });
+
   it("does not invent an identity without a session", () => {
     expect(sessionAccountFor(null, actual)).toBe(actual);
   });

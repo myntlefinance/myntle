@@ -66,20 +66,31 @@ describe("HoldingsTable", () => {
     expect(html).toContain("Asset");
     expect(html).toContain("No assets found");
     expect(html).not.toContain("Try a different search");
+    // Nothing to filter: the network trigger stays for the row's shape,
+    // but it cannot open a menu of no networks.
+    expect(html).toContain("All networks");
+    expect(html).toContain('disabled=""');
   });
 
-  it("replays only the card entrance behind a body key", () => {
+  it("keeps the network filter usable when there are assets", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <HoldingsTable groups={GROUPS} />,
+    );
+    expect(html).toContain("All networks");
+    expect(html).not.toContain('disabled=""');
+  });
+
+  it("leaves the page entrance to the tab and keeps the toolbar still", () => {
     const keyed = ReactDOMServer.renderToStaticMarkup(
       <HoldingsTable groups={GROUPS} bodyKey="watch-1" />,
     );
-    // The rows' card replays the entrance; the toolbar above is untouched.
-    expect(keyed).toContain("animate-[fade-up");
+    // The tab owns the page entrance; a first mount never doubles it.
+    expect(keyed).not.toContain("animate-[fade-up");
     expect(keyed).toContain("Search assets");
 
     const plain = ReactDOMServer.renderToStaticMarkup(
       <HoldingsTable groups={GROUPS} />,
     );
-    // Everywhere else the whole table mounts as one, exactly as before.
     expect(plain).not.toContain("animate-[fade-up");
     expect(plain).toContain("Search assets");
   });

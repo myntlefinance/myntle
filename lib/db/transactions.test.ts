@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   updates: [] as Array<Record<string, unknown>>,
   rows: [] as Row[],
   missingColumn: true,
+  readError: null as null | { code?: string; message?: string },
 }));
 
 vi.mock("./client", () => ({
@@ -50,6 +51,12 @@ vi.mock("./client", () => ({
             }
             return Promise.resolve({ data: state.rows, error: null });
           },
+          limit: () =>
+            Promise.resolve(
+              state.readError
+                ? { data: null, error: state.readError }
+                : { data: state.rows.slice(0, 1), error: null },
+            ),
         };
         return query;
       },
@@ -102,6 +109,7 @@ beforeEach(() => {
   state.updates = [];
   state.rows = [row];
   state.missingColumn = true;
+  state.readError = null;
 });
 
 describe("a database before migration 007", () => {
@@ -145,5 +153,35 @@ describe("a database before migration 007", () => {
       },
       { state: "processing" },
     ]);
+  });
+});
+
+describe("the refusal guard read", () => {
+  it("reports a transaction for the proposal", async () => {
+    const { hasToolApprovalSettlement } = await import("./transactions");
+
+    await expect(
+      hasToolApprovalSettlement("user-1", "aitxt-1"),
+    ).resolves.toBe(true);
+  });
+
+  it("reports none when the proposal never produced a transaction", async () => {
+    state.rows = [];
+    const { hasToolApprovalSettlement } = await import("./transactions");
+
+    await expect(
+      hasToolApprovalSettlement("user-1", "aitxt-1"),
+    ).resolves.toBe(false);
+  });
+
+  it("throws instead of answering none when the read fails", async () => {
+    // A refusal may not be written over a deposit whose record we could not
+    // read, so the helper must not turn a database error into "no trade".
+    state.readError = { message: "connection failure" };
+    const { hasToolApprovalSettlement } = await import("./transactions");
+
+    await expect(
+      hasToolApprovalSettlement("user-1", "aitxt-1"),
+    ).rejects.toThrow("The settlement could not be read.");
   });
 });

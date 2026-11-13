@@ -4,13 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
 import { WatchedTab } from "./WatchedTab";
-import type { PortfolioSnapshot } from "./portfolioCache";
 import type { WatchlistEntry } from "./useWatchlist";
 
 vi.mock("skullet/react", () => ({
   // Mirrors the real binding: the ghost draws from the sample while
-  // data is missing, the error node wins once loading settles, and the
-  // children render the data itself once it lands.
+  // data is missing, and the children render the data once it lands.
   Skeleton: ({
     children,
     sample,
@@ -32,12 +30,11 @@ vi.mock("skullet/react", () => ({
 }));
 
 /**
- * The watchlist tab.
+ * The watchlist tab's cards and dialogs.
  *
- * Selection paints the selected account's public hero plus holdings, Remove
- * deletes without a gate, and the view never reads the private ledger: the
- * snapshot arrives through props from the public read, so there is no
- * unlock card to render and no private fetch to call.
+ * The selected account's detail lives in the shared portfolio chrome,
+ * so this section owns only the list: its loading, empty, and error
+ * shapes, the selection hint, and the delete gate.
  */
 
 const ENTRIES: WatchlistEntry[] = [
@@ -59,35 +56,6 @@ const ENTRIES: WatchlistEntry[] = [
   },
 ];
 
-const SNAPSHOT: PortfolioSnapshot = {
-  groups: [
-    {
-      id: "base",
-      name: "Base",
-      icon: "base",
-      items: [
-        {
-          id: "usdc",
-          symbol: "USDC",
-          name: "USD Coin",
-          amount: "10.00",
-          valueUsd: 10,
-          category: "stables",
-        },
-        {
-          id: "eth",
-          symbol: "ETH",
-          name: "Ether",
-          amount: "1.00",
-          valueUsd: 3000,
-          category: "native",
-        },
-      ],
-    },
-  ],
-  totalUsd: 3010,
-};
-
 function render(props: Partial<React.ComponentProps<typeof WatchedTab>> = {}) {
   return ReactDOMServer.renderToString(
     <WatchedTab
@@ -101,33 +69,26 @@ function render(props: Partial<React.ComponentProps<typeof WatchedTab>> = {}) {
       onEdit={() => {}}
       onTrack={() => {}}
       onSetDefault={() => {}}
-      snapshot={null}
-      isPending={false}
-      error={null}
-      refresh={() => {}}
       {...props}
     />,
   );
 }
 
 describe("WatchedTab", () => {
-  it("selecting a row paints its public hero and holdings", () => {
-    const html = render({ selected: ENTRIES[0], snapshot: SNAPSHOT });
+  it("renders the tracked cards", () => {
+    const html = render();
 
     expect(html).toContain("Vault");
-    expect(html).toContain(
-      "Watching Vault’s public holdings across 2 assets.",
-    );
-    expect(html).toContain("USDC");
-    expect(html).toContain("ETH");
+    expect(html).toContain("alice.near");
+    expect(html).toContain("Watch new");
   });
 
-  it("never renders the unlock card or the viewer's own money", () => {
-    const html = render({ selected: ENTRIES[0], snapshot: SNAPSHOT });
+  it("leaves the page entrance to the tab", () => {
+    const html = render();
 
-    expect(html).not.toContain("Unlock");
-    expect(html).not.toContain("Your wallet holds");
-    expect(html).not.toContain("Your super account holds");
+    // The keyed page wrapper owns the tab entrance; the list itself does
+    // not add a second slide when cards update or a card is selected.
+    expect(html).not.toContain("animate-[fade-up");
   });
 
   it("asks before deleting, trash-style", () => {
@@ -150,25 +111,6 @@ describe("WatchedTab", () => {
     expect(html).not.toContain("Watching");
   });
 
-  it("names the public scope when holdings are empty", () => {
-    const html = render({
-      selected: ENTRIES[0],
-      snapshot: { groups: [], totalUsd: 0 },
-    });
-
-    expect(html).toContain("No public holdings found.");
-  });
-
-  it("names a failed read with a retry", () => {
-    const html = render({
-      selected: ENTRIES[0],
-      error: new Error("Balances are unavailable."),
-    });
-
-    expect(html).toContain("Failed to read balances.");
-    expect(html).toContain("Refresh");
-  });
-
   it("asks to track when the list is empty", () => {
     const html = render({ entries: [], selected: null });
 
@@ -181,9 +123,9 @@ describe("WatchedTab", () => {
   it("holds the list's own shape while it lands", () => {
     const html = render({ entries: null, selected: null });
 
-    // The list lands first: its cards own the loading shape. The selected
-    // account's hero and holdings are a second, later reveal, so the tab
-    // never pretends to know a detail it has not read yet.
+    // The list lands first: its cards own the loading shape. The detail
+    // is a second, later reveal, so the tab never promises one before
+    // the list has even said whether there is an address to watch.
     expect(html).toContain("Vault");
     expect(html).toContain("alice.near");
     expect(html).toContain("Watch new");
@@ -238,7 +180,7 @@ describe("WatchedTab", () => {
   });
 
   it("clears the hint once an account is picked", () => {
-    const html = render({ selected: ENTRIES[0], snapshot: SNAPSHOT });
+    const html = render({ selected: ENTRIES[0] });
 
     expect(html).not.toContain("Select an address to view its public portfolio.");
   });

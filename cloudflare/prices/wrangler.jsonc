@@ -1,0 +1,17 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "myntle-prices",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "durable_objects": {
+    "bindings": [{ "name": "PRICE_DESK", "class_name": "PriceDesk" }]
+  },
+  // Declarative exports, not the legacy migrations array. See plans/price-service.md.
+  "exports": {
+    "PriceDesk": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "observability": { "enabled": true },
+  "vars": {
+    "APP_ORIGINS": "http://localhost:3000,https://myntle.xyz,https://www.myntle.xyz,https://app.myntle.xyz,https://myntle.vercel.app,https://myntle-*.vercel.app"
+  }
+}

@@ -110,18 +110,32 @@ function rateOf(amountIn: string, amountOut: string): string | null {
   return String(Number(rate.toPrecision(4)));
 }
 
+/**
+ * True when the quote is funded by the user's Near Account and the output
+ * lands back there. The copy then says "in Near Account" and omits the
+ * recipient, because the recipient is the account itself.
+ */
+function isAccountSwap(approval: ApprovalInfo): boolean {
+  return (
+    approval.route === "account" &&
+    approval.action !== "deposit" &&
+    approval.action !== "withdraw"
+  );
+}
+
 export function approvalToMarkdown(
   approval: ApprovalInfo,
   settlement?: SettlementSnapshot | null,
 ): string {
   const state = approvalCopyState(approval, settlement);
   const verb = actionTitle(approval.action);
+  const venue = isAccountSwap(approval) ? "in" : "on";
   const headline =
     approval.action === "deposit"
       ? `${verb} ${approval.amountIn} ${approval.fromSymbol} to Near Account [${state}]`
       : approval.action === "withdraw"
         ? `${verb} ${approval.amountIn} ${approval.fromSymbol} to ${approval.recipient} [${state}]`
-        : `${verb} ${approval.amountIn} ${approval.fromSymbol} for ${approval.amountOut} ${approval.toSymbol} on Near Account [${state}]`;
+        : `${verb} ${approval.amountIn} ${approval.fromSymbol} for ${approval.amountOut} ${approval.toSymbol} ${venue} Near Account [${state}]`;
   const lines = [`## ${headline}`];
   const fromLeg = approval.fromChain
     ? `${approval.fromSymbol} on ${approval.fromChain}`
@@ -135,7 +149,7 @@ export function approvalToMarkdown(
   if (approval.minAmountOut) {
     lines.push(`- Minimum received: ${approval.minAmountOut} ${approval.toSymbol}`);
   }
-  lines.push(`- Recipient: ${approval.recipient}`);
+  if (!isAccountSwap(approval)) lines.push(`- Recipient: ${approval.recipient}`);
   const rate =
     approval.action !== "deposit" && approval.action !== "withdraw"
       ? rateOf(approval.amountIn, approval.amountOut)
@@ -224,12 +238,13 @@ export function buildAgentCopyHtml(segments: AgentCopySegment[]): string {
       const approval = segment.approval;
       const state = approvalCopyState(approval, segment.settlement);
       const verb = actionTitle(approval.action);
+      const venue = isAccountSwap(approval) ? "in" : "on";
       const headline =
         approval.action === "deposit"
           ? `${verb} ${approval.amountIn} ${approval.fromSymbol} to Near Account [${state}]`
           : approval.action === "withdraw"
             ? `${verb} ${approval.amountIn} ${approval.fromSymbol} to ${approval.recipient} [${state}]`
-            : `${verb} ${approval.amountIn} ${approval.fromSymbol} for ${approval.amountOut} ${approval.toSymbol} on Near Account [${state}]`;
+            : `${verb} ${approval.amountIn} ${approval.fromSymbol} for ${approval.amountOut} ${approval.toSymbol} ${venue} Near Account [${state}]`;
       out.push(`<h3>${escapeHtml(headline)}</h3><ul>`);
       if (approval.action !== "deposit") {
         out.push(
@@ -246,7 +261,9 @@ export function buildAgentCopyHtml(segments: AgentCopySegment[]): string {
           `<li>Minimum received: ${escapeHtml(`${approval.minAmountOut} ${approval.toSymbol}`)}</li>`,
         );
       }
-      out.push(`<li>Recipient: ${escapeHtml(approval.recipient)}</li>`);
+      if (!isAccountSwap(approval)) {
+        out.push(`<li>Recipient: ${escapeHtml(approval.recipient)}</li>`);
+      }
       out.push(`<li>Slippage: ${escapeHtml(`${(approval.slippageBps / 100).toFixed(2)}%`)}</li>`);
       if (approval.expiresAt) {
         out.push(`<li>Price held until: ${escapeHtml(approval.expiresAt)}</li>`);

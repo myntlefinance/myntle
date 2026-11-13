@@ -4,11 +4,13 @@ const {
   requireSessionMock,
   conversationIdForUserMock,
   getQuoteMock,
+  hasToolApprovalSettlementMock,
   recordToolApprovalMock,
 } = vi.hoisted(() => ({
   requireSessionMock: vi.fn(),
   conversationIdForUserMock: vi.fn(),
   getQuoteMock: vi.fn(),
+  hasToolApprovalSettlementMock: vi.fn(),
   recordToolApprovalMock: vi.fn(),
 }));
 
@@ -27,6 +29,7 @@ vi.mock("@/lib/db/conversations", () => ({
 
 vi.mock("@/lib/db/transactions", () => ({
   getQuote: getQuoteMock,
+  hasToolApprovalSettlement: hasToolApprovalSettlementMock,
 }));
 
 vi.mock("@/lib/db/tool-approvals", () => ({
@@ -72,10 +75,11 @@ describe("/api/approvals/deny", () => {
     requireSessionMock.mockResolvedValue(session);
     conversationIdForUserMock.mockResolvedValue(CONVERSATION_ID);
     getQuoteMock.mockResolvedValue({ id: QUOTE_ID });
+    hasToolApprovalSettlementMock.mockResolvedValue(false);
     recordToolApprovalMock.mockResolvedValue({
       decision: "denied",
       toolName: "prepare_swap",
-      decidedAt: "2026-01-01T00:00:00.000Z",
+      decidedAt: "2026-11-01T00:00:00.000Z",
     });
   });
 
@@ -103,7 +107,7 @@ describe("/api/approvals/deny", () => {
     expect(await res.json()).toEqual({
       approvalId: "aitxt-1",
       decision: "denied",
-      decidedAt: "2026-01-01T00:00:00.000Z",
+      decidedAt: "2026-11-01T00:00:00.000Z",
     });
   });
 
@@ -124,7 +128,7 @@ describe("/api/approvals/deny", () => {
     recordToolApprovalMock.mockResolvedValue({
       decision: "approved",
       toolName: "prepare_swap",
-      decidedAt: "2026-01-01T00:00:00.000Z",
+      decidedAt: "2026-11-01T00:00:00.000Z",
     });
 
     const res = await POST(request(denialBody));
@@ -133,6 +137,89 @@ describe("/api/approvals/deny", () => {
     expect(await res.json()).toEqual(
       expect.objectContaining({ decision: "approved" }),
     );
+  });
+
+  it("never denies a proposal whose transaction already exists", async () => {
+    hasToolApprovalSettlementMock.mockResolvedValue(true);
+    recordToolApprovalMock.mockResolvedValue({
+      decision: "approved",
+      toolName: "prepare_swap",
+      decidedAt: "2026-11-01T00:00:00.000Z",
+    });
+
+    const res = await POST(request(denialBody));
+
+    expect(res.status).toBe(200);
+    // The read is the session's, by the one id being answered.
+    expect(hasToolApprovalSettlementMock).toHaveBeenCalledWith(
+      "user-1",
+      "aitxt-1",
+    );
+    // The effective decision is approved, and no denied write was attempted.
+    expect(recordToolApprovalMock).toHaveBeenCalledTimes(1);
+    expect(recordToolApprovalMock).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: "approved" }),
+    );
+    expect(recordToolApprovalMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ decision: "denied" }),
+    );
+    expect(await res.json()).toEqual({
+      approvalId: "aitxt-1",
+      decision: "approved",
+      decidedAt: "2026-11-01T00:00:00.000Z",
+    });
+  });
+
+  it("answers a started proposal approved even when its row was lost", async () => {
+    // The mint wrote no decision row; the trade is the fact that survives.
+    hasToolApprovalSettlementMock.mockResolvedValue(true);
+    recordToolApprovalMock.mockResolvedValue(null);
+
+    const res = await POST(request(denialBody));
+
+    expect(res.status).toBe(200);
+    expect(recordToolApprovalMock).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: "approved" }),
+    );
+    expect(await res.json()).toEqual({
+      approvalId: "aitxt-1",
+      decision: "approved",
+      decidedAt: null,
+    });
+  });
+
+  it("keeps a first recorded denial even after the trade exists", async () => {
+    // A denial that was written before the address is the first decision,
+    // and first-write-wins keeps it; the repair only fills a missing row.
+    hasToolApprovalSettlementMock.mockResolvedValue(true);
+    recordToolApprovalMock.mockResolvedValue({
+      decision: "denied",
+      toolName: "prepare_swap",
+      decidedAt: "2026-11-02T00:00:00.000Z",
+    });
+
+    const res = await POST(request(denialBody));
+
+    expect(res.status).toBe(200);
+    expect(recordToolApprovalMock).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: "approved" }),
+    );
+    expect(await res.json()).toEqual({
+      approvalId: "aitxt-1",
+      decision: "denied",
+      decidedAt: "2026-11-02T00:00:00.000Z",
+    });
+  });
+
+  it("writes nothing when the settlement read fails", async () => {
+    // Fail closed: a refusal must never be recorded while we cannot prove the
+    // action did not start.
+    hasToolApprovalSettlementMock.mockRejectedValue(new Error("db down"));
+
+    const res = await POST(request(denialBody));
+
+    expect(res.status).toBe(500);
+    expect(recordToolApprovalMock).not.toHaveBeenCalled();
   });
 
   it("rejects a tool that is not a money proposal", async () => {

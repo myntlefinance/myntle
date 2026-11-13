@@ -16,7 +16,16 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "icons": "node scripts/build-icon-manifest.mjs",
     "test": "vitest run",
+    "prices:dev": "wrangler dev --config cloudflare/prices/wrangler.jsonc",
+    "prices:deploy": "wrangler deploy --config cloudflare/prices/wrangler.jsonc",
+    "prices:dry-run": "wrangler deploy --dry-run --config cloudflare/prices/wrangler.jsonc",
+    "prices:typecheck": "tsc -p cloudflare/prices/tsconfig.json --noEmit",
+    "prices:test": "vitest run cloudflare/prices/test",
+    "prices:probe": "bun run scripts/prices-probe.ts",
+    "prices:load": "bun run scripts/prices-load.ts",
+    "prices:probe-sources": "bun run cloudflare/prices/scripts/probe-sources.ts",
     "workflow:web": "workflow web",
     "workflow:runs": "workflow inspect runs",
     "agentation": "npx -y agentation-mcp server",
@@ -70,6 +79,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261110.1",
     "@tailwindcss/postcss": "^4.1.8",
     "@types/node": "^22",
     "@types/react": "~19.2.18",
@@ -79,6 +89,7 @@
     "eslint-config-next": "16.4",
     "tailwindcss": "^4.1.8",
     "typescript": "^5",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "wrangler": "^4.160.0"
   }
 }

@@ -37,7 +37,9 @@ export function WalletPickerDialog({
   subtitle?: string;
   onClose: () => void;
   busy?: boolean;
-  /** Changing this key replays the body entrance and measures a new height. */
+  /** Changing this key re-measures the body and animates a new height.
+   * The body is never remounted: notices grow through their own grid
+   * rhythm, so typing (and its validation messages) must not cost focus. */
   contentKey: string;
   footer?: ReactNode;
   children: ReactNode;
@@ -171,10 +173,7 @@ export function WalletPickerDialog({
             el.style.height = "auto";
           }}
         >
-          <div
-            key={contentKey}
-            style={{ animation: "fade-in 180ms ease-out both" }}
-          >
+          <div style={{ animation: "fade-in 180ms ease-out both" }}>
             {children}
           </div>
         </div>

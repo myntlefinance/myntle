@@ -1,5 +1,7 @@
 import bs58 from "bs58";
 import { normalizeEvmAddress } from "@/lib/intents/destination";
+import { isNameResolutionError } from "@/lib/ports/names";
+import type { NameChain, ResolvedName } from "@/lib/ports/names";
 
 /**
  * The shared watch-address validators.
@@ -124,4 +126,126 @@ export function watchAddressError(
   if (chain === "evm") return "Enter a valid 0x address.";
   if (chain === "solana") return "Enter a valid Solana address.";
   return "Enter a valid NEAR account.";
+}
+
+/**
+ * Whether the input is an ENS name candidate on the EVM tab: anything that
+ * is not a `0x` address and ends in `.eth`, case-insensitive.
+ *
+ * The 128-character input cap stays as-is for names. Realistic `.eth` names
+ * are far shorter (registry labels run to 63 characters per label and full
+ * names in the wild stay well under 64), so 128 already admits every name
+ * a person would track while keeping the over-length guard. Bumping the cap
+ * toward the 253-character DNS maximum would widen stored input for no
+ * reachable user, so anything longer keeps the raw-path error instead.
+ */
+export function isEnsNameInput(chain: WatchChain, value: unknown): boolean {
+  if (chain !== "evm" || typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_WATCH_ADDRESS_LENGTH) return false;
+  if (trimmed.startsWith("0x") || trimmed.startsWith("0X")) return false;
+  return trimmed.toLowerCase().endsWith(".eth");
+}
+
+/**
+ * Whether the input is an SNS name candidate on the Solana tab: anything
+ * ending in `.sns`, case-insensitive. The mirror of `isEnsNameInput` —
+ * the same 128-character input cap admits every realistic `.sns` name,
+ * and a raw base58 address can never match because `.` sits outside the
+ * base58 alphabet.
+ *
+ * `*.sol` is deliberately not a candidate: the resolver holds `.sol` as
+ * unavailable during the registry transition (the load-bearing `.sol`
+ * rule in `lib/names/resolve.ts`), so a `.sol` input keeps the raw-path
+ * error instead of reading as a name.
+ */
+export function isSnsNameInput(chain: WatchChain, value: unknown): boolean {
+  if (chain !== "solana" || typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_WATCH_ADDRESS_LENGTH) return false;
+  return trimmed.toLowerCase().endsWith(".sns");
+}
+
+/** The outcome of reading one watch input, raw or named. */
+export type WatchInputResolution =
+  | {
+      ok: true;
+      address: string;
+      /** The normalized name when the input was one, else null. */
+      name: string | null;
+      /** Fresh ISO UTC from the read when the input was a name, else null. */
+      resolvedAt: string | null;
+    }
+  | { ok: false; reason: "invalid" | "unregistered" | "unavailable" };
+
+/**
+ * Reads one watch input to its storable form. A raw address takes the
+ * existing sync path untouched; a `.eth` candidate on EVM or a `.sns`
+ * candidate on Solana resolves through the injected reader, which is the
+ * debounced resolve route on the client and the name port on the server.
+ * The reader is injected so this module stays free of provider coupling:
+ * it never imports an adapter, an SDK client, or a key, and the boundary
+ * test keeps biting if any arrives.
+ *
+ * Well-formed but unregistered reads as `unregistered` (never thrown);
+ * anything the reader refuses with `invalid_input` reads as `invalid` and
+ * every other failure reads as `unavailable`.
+ */
+export async function resolveWatchInput(
+  chain: WatchChain,
+  value: unknown,
+  resolveName: (
+    chain: NameChain,
+    input: string,
+  ) => Promise<ResolvedName | null>,
+): Promise<WatchInputResolution> {
+  const direct = normalizeWatchedAddress(chain, value);
+  if (direct) {
+    return { ok: true, address: direct, name: null, resolvedAt: null };
+  }
+  // The name branch, per chain: EVM reads `.eth`, Solana reads `.sns`.
+  // Anything else (including `*.sol`, held unavailable at the resolver)
+  // is not a name candidate and reads as invalid, exactly as before.
+  const nameChain: NameChain | null =
+    chain === "evm" && isEnsNameInput(chain, value)
+      ? "evm"
+      : chain === "solana" && isSnsNameInput(chain, value)
+        ? "solana"
+        : null;
+  if (!nameChain) {
+    return { ok: false, reason: "invalid" };
+  }
+  const raw = (value as string).trim();
+  try {
+    const hit = await resolveName(nameChain, raw);
+    if (hit === null) return { ok: false, reason: "unregistered" };
+    return {
+      ok: true,
+      address: hit.address,
+      name: hit.name,
+      resolvedAt: hit.resolvedAt,
+    };
+  } catch (error) {
+    if (isNameResolutionError(error) && error.kind === "invalid_input") {
+      return { ok: false, reason: "invalid" };
+    }
+    return { ok: false, reason: "unavailable" };
+  }
+}
+
+/**
+ * The inline reason the Track dialog shows when a name fails to read.
+ * Each string reads as a complete sentence, in the existing
+ * `watchAddressError` voice.
+ */
+export function watchNameError(
+  reason: "invalid" | "unregistered" | "unavailable",
+): string {
+  if (reason === "unregistered") {
+    return "That name is not registered. Check the spelling and try again.";
+  }
+  if (reason === "unavailable") {
+    return "Name lookup is unavailable. Try again shortly.";
+  }
+  return "That name is not valid. Check it and try again.";
 }

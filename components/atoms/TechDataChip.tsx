@@ -309,7 +309,7 @@ export function TechDataChip({
         onBlur={handleBlur}
         aria-label={`Copy ${data.label ?? "address"}: ${data.raw}`}
         className={cn(
-          "mx-1 inline-flex max-w-full cursor-pointer select-none items-center rounded-[6px] bg-field text-left align-middle leading-tight text-ink transition-[background-color,transform] duration-75 hover:bg-hover active:scale-[0.99]",
+          "mr-1 inline-flex max-w-full cursor-pointer select-none items-center rounded-[6px] bg-field text-left align-middle leading-tight text-ink transition-[background-color,transform] duration-75 hover:bg-hover active:scale-[0.99]",
           CHIP_LAYOUT_TOKENS.paddingY,
           CHIP_LAYOUT_TOKENS.paddingX,
           CHIP_LAYOUT_TOKENS.gap,

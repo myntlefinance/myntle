@@ -59,7 +59,8 @@ export function createGetWithdrawalQuoteTool(context?: ToolContext) {
       "Price a withdrawal from the private balance to an external address. Call this after the " +
       "user names the asset, the amount, and the destination, and before prepare_withdrawal. " +
       "The server validates the destination against the destination asset's chain and stores " +
-      "the exact address it will bind. This call moves nothing and reads no balance.",
+      "the exact address it will bind. A destination may be a name such as vitalik.eth; pass " +
+      "it through unchanged. This call moves nothing and reads no balance.",
     inputSchema: getWithdrawalQuoteInputSchema,
     execute: async ({
       fromAssetId,
@@ -94,28 +95,15 @@ export function createGetWithdrawalQuoteTool(context?: ToolContext) {
         );
       }
 
-      const { checkDestinationForAsset } = await import(
-        "@/lib/intents/destination"
-      );
-      const destination = checkDestinationForAsset(
+      // A destination may be a name. It resolves server-side before pricing,
+      // and the stored quote binds the resolved address, never the string.
+      const validated = await validateWithdrawalDestination(
         toAsset.chain,
         destinationAddress,
       );
-      if (!destination.ok) {
-        if (destination.reason === "unsupported-chain") {
-          throw new Error(
-            `Withdrawals to ${toAsset.chain} are not available yet. Use an EVM destination.`,
-          );
-        }
-        if (destination.reason === "unknown-chain") {
-          throw new Error(
-            "The destination chain is not in the catalogue. Ask the user which chain to send to.",
-          );
-        }
-        throw new Error(
-          `The destination is not a valid address on ${toAsset.chain}. Ask the user for the full address.`,
-        );
-      }
+      const destination = validated.destination;
+      const destinationName = validated.name;
+      const destinationResolvedAt = validated.resolvedAt;
 
       const { quote } = await import("@/lib/intents/service");
       const priced = await quote({
@@ -154,6 +142,11 @@ export function createGetWithdrawalQuoteTool(context?: ToolContext) {
               refundType: "CONFIDENTIAL_INTENTS",
               destination: destination.address,
               destinationChain: toAsset.chain,
+              // The name the destination resolved from, when one was passed.
+              // The approve route re-resolves it fresh: a name can be
+              // re-pointed between pricing and approval.
+              destinationName,
+              destinationResolvedAt,
               accountKind: context?.accountKind ?? "wallet",
               intentsAccountId,
             },
@@ -174,7 +167,6 @@ export function createGetWithdrawalQuoteTool(context?: ToolContext) {
 
       return {
         engine: priced.engine,
-        mode: "confidential-withdrawal",
         quoteId,
         fromAssetId,
         toAssetId: destinationAssetId,
@@ -188,6 +180,9 @@ export function createGetWithdrawalQuoteTool(context?: ToolContext) {
         withdrawFeeFormatted: priced.withdrawFeeFormatted ?? null,
         destination: destination.address,
         destinationChain: toAsset.chain,
+        // Echoed when the destination was passed as a name; the model
+        // already supplied it, so this leaks nothing.
+        destinationName,
         expiresAt: priced.expiresAt,
       };
     },
@@ -195,3 +190,76 @@ export function createGetWithdrawalQuoteTool(context?: ToolContext) {
 }
 
 export const getWithdrawalQuote = createGetWithdrawalQuoteTool();
+
+/**
+ * Validates a withdrawal destination: a direct address takes the existing
+ * chain-aware check untouched, and a name resolves fresh through the port.
+ * Errors keep the existing voice: unregistered asks for the address, a
+ * lookup failure asks for a retry, anything else is the invalid-address
+ * sentence the tool already used.
+ */
+async function validateWithdrawalDestination(
+  chain: string,
+  destinationAddress: string,
+): Promise<{
+  destination: { address: string; chain: string };
+  name: string | null;
+  resolvedAt: string | null;
+}> {
+  const { checkDestinationForAsset } = await import(
+    "@/lib/intents/destination"
+  );
+  const direct = checkDestinationForAsset(chain, destinationAddress);
+  if (direct.ok) {
+    return { destination: direct, name: null, resolvedAt: null };
+  }
+  if (direct.reason === "unsupported-chain") {
+    throw new Error(
+      `Withdrawals to ${chain} are not available yet. Use an EVM destination.`,
+    );
+  }
+  if (direct.reason === "unknown-chain") {
+    throw new Error(
+      "The destination chain is not in the catalogue. Ask the user which chain to send to.",
+    );
+  }
+  const invalid = () =>
+    new Error(
+      `The destination is not a valid address on ${chain}. Ask the user for the full address.`,
+    );
+  const { isNameLikeValue } = await import("@/lib/names/detect");
+  if (!isNameLikeValue(destinationAddress)) throw invalid();
+  const { NameInputError, resolveInputAddress } = await import(
+    "@/lib/names/binding"
+  );
+  try {
+    const hit = await resolveInputAddress({
+      value: destinationAddress,
+      scope: "evm",
+      isDirectAddress: (value) => {
+        const checked = checkDestinationForAsset(chain, value);
+        return checked.ok ? checked.address : null;
+      },
+    });
+    const rechecked = checkDestinationForAsset(chain, hit.address);
+    if (!rechecked.ok) throw invalid();
+    return {
+      destination: rechecked,
+      name: hit.name,
+      resolvedAt: hit.resolvedAt,
+    };
+  } catch (error) {
+    if (error instanceof NameInputError) {
+      if (error.reason === "unregistered") {
+        throw new Error(
+          "That name is not registered. Ask the user for the full destination address.",
+        );
+      }
+      if (error.reason === "unavailable") {
+        throw new Error("Name lookup is unavailable. Try again shortly.");
+      }
+      throw invalid();
+    }
+    throw error;
+  }
+}

@@ -17,6 +17,7 @@ const {
   conversationIdForUserMock,
   getToolApprovalMock,
   recordToolApprovalMock,
+  resolveNameMock,
 } = vi.hoisted(() => ({
   requireSessionMock: vi.fn(),
   getQuoteMock: vi.fn(),
@@ -34,6 +35,7 @@ const {
   conversationIdForUserMock: vi.fn(),
   getToolApprovalMock: vi.fn(),
   recordToolApprovalMock: vi.fn(),
+  resolveNameMock: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -80,7 +82,12 @@ vi.mock("@/workflows/swap-lifecycle", () => ({
   swapLifecycle: swapLifecycleStub,
 }));
 
+vi.mock("@/lib/adapters/registry", () => ({
+  getNameResolverPort: () => ({ resolveName: resolveNameMock }),
+}));
+
 import { POST } from "./route";
+import { nameError } from "@/lib/ports/names";
 
 const QUOTE_ID = "11111111-1111-4111-8111-111111111111";
 const CONVERSATION_ID = "22222222-2222-4222-8222-222222222222";
@@ -497,6 +504,96 @@ describe("/api/intents/approve", () => {
       expect.objectContaining({ state: "awaiting_approval" }),
     );
     expect(startMock).not.toHaveBeenCalled();
+  });
+
+  it("re-resolves a stored destination name fresh at sign time", async () => {
+    getQuoteMock.mockResolvedValue(
+      withdrawalDryQuote({
+        destinationName: "vitalik.eth",
+        destinationResolvedAt: "2026-11-08T00:00:00.000Z",
+      }),
+    );
+    resolveNameMock.mockResolvedValue({
+      address: DESTINATION,
+      name: "vitalik.eth",
+      resolvedAt: new Date().toISOString(),
+    });
+    createExecutionQuoteMock.mockResolvedValue(withdrawalExecution);
+    createTransactionMock.mockResolvedValue({
+      id: TRANSACTION_ID,
+      expected_out: withdrawalExecution.amountOutFormatted,
+    });
+    generateIntentMock.mockResolvedValue({
+      standard: "webauthn",
+      payload: PAYLOAD,
+    });
+
+    const res = await POST(
+      request({
+        quoteId: QUOTE_ID,
+        action: "withdraw",
+        mode: "confidential-withdrawal",
+      }),
+    );
+
+    expect(resolveNameMock).toHaveBeenCalledWith("evm", "vitalik.eth");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ destination: DESTINATION });
+  });
+
+  it("refuses a withdrawal whose name was re-pointed since pricing", async () => {
+    getQuoteMock.mockResolvedValue(
+      withdrawalDryQuote({
+        destinationName: "vitalik.eth",
+        destinationResolvedAt: "2026-11-08T00:00:00.000Z",
+      }),
+    );
+    resolveNameMock.mockResolvedValue({
+      address: "0x0000000000000000000000000000000000000001",
+      name: "vitalik.eth",
+      resolvedAt: new Date().toISOString(),
+    });
+
+    const res = await POST(
+      request({
+        quoteId: QUOTE_ID,
+        action: "withdraw",
+        mode: "confidential-withdrawal",
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "stale",
+      message:
+        "The destination changed since it was priced. Please ask for a fresh quote.",
+    });
+    expect(createExecutionQuoteMock).not.toHaveBeenCalled();
+    expect(generateIntentMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the sign-time name read is unavailable", async () => {
+    getQuoteMock.mockResolvedValue(
+      withdrawalDryQuote({
+        destinationName: "vitalik.eth",
+        destinationResolvedAt: "2026-11-08T00:00:00.000Z",
+      }),
+    );
+    resolveNameMock.mockRejectedValue(
+      nameError("unavailable", "ens_rpc", "down"),
+    );
+
+    const res = await POST(
+      request({
+        quoteId: QUOTE_ID,
+        action: "withdraw",
+        mode: "confidential-withdrawal",
+      }),
+    );
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: "An error occurred." });
+    expect(createExecutionQuoteMock).not.toHaveBeenCalled();
   });
 
   it("refuses an action that does not match the withdrawal mode", async () => {

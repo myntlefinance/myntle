@@ -7,6 +7,7 @@ import {
   createIntentsDeposit,
   formatRawAmount,
 } from "./approval";
+import { WALLET_NOT_CONNECTED } from "./wallet-signer";
 
 /**
  * The three approval journeys, without a card.
@@ -84,22 +85,22 @@ function prepared(overrides: Record<string, unknown> = {}) {
 function swapFetch(
   order: string[],
   submit: (body: Record<string, unknown>) => Response,
+  preparedBody: Record<string, unknown> = {
+    transactionId: TRANSACTION_ID,
+    depositAddress: "0xdeposit",
+    intent: { standard: "webauthn", payload: SIGNED.payload },
+  },
 ): typeof fetch {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const body = bodyOf(init);
     if (url === "/api/intents/approve") {
       order.push("approve");
-      return jsonResponse({
-        transactionId: TRANSACTION_ID,
-        depositAddress: "0xdeposit",
-        intent: { standard: "webauthn", payload: SIGNED.payload },
-      });
+      return jsonResponse(preparedBody);
     }
     if (url === "/api/intents/submit") {
       order.push("submit");
       expect(body.transactionId).toBe(TRANSACTION_ID);
-      expect(body.signedData).toEqual(SIGNED);
       return submit(body);
     }
     throw new Error(`unexpected request ${url}`);
@@ -109,15 +110,27 @@ function swapFetch(
 describe("approveIntentsTrade", () => {
   it("approves, signs the returned payload, submits, then reports the trade", async () => {
     const order: string[] = [];
-    const sign = vi.fn(async (payload: string) => {
-      order.push("sign");
-      expect(payload).toBe(SIGNED.payload);
-      return { ...SIGNED, payload };
-    });
-    const onSubmitted = vi.fn(() => order.push("onApprove"));
-    const fetchImpl = swapFetch(order, () =>
-      jsonResponse({ transactionId: TRANSACTION_ID, intentHash: "hash" }),
+    const sign = vi.fn(
+      async (intent: {
+        standard: string;
+        payload: string | Record<string, unknown>;
+      }) => {
+        order.push("sign");
+        expect(intent).toEqual({
+          standard: "webauthn",
+          payload: SIGNED.payload,
+        });
+        return { ...SIGNED, payload: intent.payload };
+      },
     );
+    const onSubmitted = vi.fn(() => order.push("onApprove"));
+    const fetchImpl = swapFetch(order, (body) => {
+      expect(body.signedData).toEqual(SIGNED);
+      return jsonResponse({
+        transactionId: TRANSACTION_ID,
+        intentHash: "hash",
+      });
+    });
 
     const result = await approveIntentsTrade({
       quoteId: QUOTE_ID,
@@ -175,7 +188,12 @@ describe("approveIntentsTrade", () => {
 
   it("leaves the card retryable when the server rejects the signature", async () => {
     const order: string[] = [];
-    const sign = vi.fn(async (payload: string) => ({ ...SIGNED, payload }));
+    const sign = vi.fn(
+      async (intent: {
+        standard: string;
+        payload: string | Record<string, unknown>;
+      }) => ({ ...SIGNED, payload: intent.payload }),
+    );
     const onSubmitted = vi.fn();
 
     const rejected = await approveIntentsTrade({
@@ -278,6 +296,283 @@ describe("approveIntentsTrade", () => {
       reason: "signature",
       message: "Nothing was moved. The signature was not accepted.",
     });
+  });
+
+  it("accepts the ERC-191 standard a wallet session receives", async () => {
+    const payload = "the-exact-erc191-payload";
+    const signed = {
+      standard: "erc191",
+      payload,
+      signature: "secp256k1:signature",
+    };
+    const sign = vi.fn(
+      async (intent: {
+        standard: string;
+        payload: string | Record<string, unknown>;
+      }) => {
+        expect(intent).toEqual({ standard: "erc191", payload });
+        return signed;
+      },
+    );
+    const order: string[] = [];
+
+    const result = await approveIntentsTrade({
+      quoteId: QUOTE_ID,
+      sign,
+      fetchImpl: swapFetch(
+        order,
+        (body) => {
+          expect(body.signedData).toEqual(signed);
+          return jsonResponse({ intentHash: "hash" });
+        },
+        {
+          transactionId: TRANSACTION_ID,
+          depositAddress: "0xdeposit",
+          intent: { standard: "erc191", payload },
+        },
+      ),
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      transactionId: TRANSACTION_ID,
+      depositAddress: "0xdeposit",
+      intentHash: "hash",
+    });
+    expect(order).toEqual(["approve", "submit"]);
+  });
+
+  it("signs a NEP-413 envelope as an object and submits it", async () => {
+    const envelope = {
+      message: PAYLOAD,
+      recipient: "intents.far",
+      nonce: "stored-nonce",
+    };
+    const signed = {
+      standard: "nep413",
+      payload: envelope,
+      signature: "ed25519:signature",
+      public_key: "ed25519:key",
+    };
+    const sign = vi.fn(
+      async (intent: {
+        standard: string;
+        payload: string | Record<string, unknown>;
+      }) => {
+        expect(intent).toEqual({ standard: "nep413", payload: envelope });
+        return signed;
+      },
+    );
+
+    const result = await approveIntentsTrade({
+      quoteId: QUOTE_ID,
+      sign,
+      fetchImpl: swapFetch(
+        [],
+        (body) => {
+          expect(body.signedData).toEqual(signed);
+          return jsonResponse({ intentHash: "hash" });
+        },
+        {
+          transactionId: TRANSACTION_ID,
+          depositAddress: "0xdeposit",
+          intent: { standard: "nep413", payload: envelope },
+        },
+      ),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sign).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a NEP-413 envelope whose field changed before submit", async () => {
+    const envelope = {
+      message: PAYLOAD,
+      recipient: "intents.far",
+      nonce: "stored-nonce",
+    };
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/intents/approve") {
+        return jsonResponse({
+          transactionId: TRANSACTION_ID,
+          depositAddress: "0xdeposit",
+          intent: { standard: "nep413", payload: envelope },
+        });
+      }
+      throw new Error("submit must not be called");
+    }) as unknown as typeof fetch;
+
+    const result = await approveIntentsTrade({
+      quoteId: QUOTE_ID,
+      sign: async () => ({
+        standard: "nep413",
+        payload: { ...envelope, recipient: "someone-else.near" },
+        signature: "ed25519:signature",
+        public_key: "ed25519:key",
+      }),
+      fetchImpl,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "signature",
+      message: "Nothing was moved. The signature was not accepted.",
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces only the wallet's own rejection sentence", async () => {
+    const rejected = await approveIntentsTrade({
+      quoteId: QUOTE_ID,
+      sign: async () => {
+        throw new Error(
+          "The wallet did not sign this transfer. Nothing was moved.",
+        );
+      },
+      fetchImpl: swapFetch([], () => {
+        throw new Error("submit must not be called");
+      }),
+    });
+    expect(rejected).toEqual({
+      ok: false,
+      reason: "signature",
+      message: "The wallet did not sign this transfer. Nothing was moved.",
+    });
+
+    const opaque = await approveIntentsTrade({
+      quoteId: QUOTE_ID,
+      sign: async () => {
+        throw new Error("provider stack text");
+      },
+      fetchImpl: swapFetch([], () => {
+        throw new Error("submit must not be called");
+      }),
+    });
+    expect(opaque).toEqual({
+      ok: false,
+      reason: "signature",
+      message: "Nothing was moved. The signature was not accepted.",
+    });
+  });
+
+  it("tells the reader to connect a wallet instead of blaming the signature", async () => {
+    const result = await approveIntentsTrade({
+      quoteId: QUOTE_ID,
+      sign: async () => {
+        throw new Error(WALLET_NOT_CONNECTED);
+      },
+      fetchImpl: swapFetch([], () => {
+        throw new Error("submit must not be called");
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "signature",
+      message: "Connect a wallet first.",
+    });
+  });
+
+  it("accepts the raw Ed25519 standard a Solana session receives", async () => {
+    const payload = "the-exact-ed25519-payload";
+    const signed = {
+      standard: "raw_ed25519",
+      payload,
+      signature: "ed25519:signature",
+      public_key: "ed25519:key",
+    };
+    const sign = vi.fn(
+      async (intent: {
+        standard: string;
+        payload: string | Record<string, unknown>;
+      }) => {
+        expect(intent).toEqual({ standard: "raw_ed25519", payload });
+        return signed;
+      },
+    );
+
+    const result = await approveIntentsTrade({
+      quoteId: QUOTE_ID,
+      sign,
+      fetchImpl: swapFetch(
+        [],
+        (body) => {
+          expect(body.signedData).toEqual(signed);
+          return jsonResponse({ intentHash: "hash" });
+        },
+        {
+          transactionId: TRANSACTION_ID,
+          depositAddress: "0xdeposit",
+          intent: { standard: "raw_ed25519", payload },
+        },
+      ),
+    });
+
+    expect(result).toMatchObject({ ok: true, intentHash: "hash" });
+    expect(sign).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a NEP-413 envelope whose message changed before submit", async () => {
+    const envelope = {
+      message: PAYLOAD,
+      recipient: "intents.far",
+      nonce: "stored-nonce",
+    };
+    const result = await approveIntentsTrade({
+      quoteId: QUOTE_ID,
+      sign: async () => ({
+        standard: "nep413",
+        payload: { ...envelope, message: PAYLOAD + "tampered" },
+        signature: "ed25519:signature",
+        public_key: "ed25519:key",
+      }),
+      fetchImpl: swapFetch(
+        [],
+        () => {
+          throw new Error("submit must not be called");
+        },
+        {
+          transactionId: TRANSACTION_ID,
+          depositAddress: "0xdeposit",
+          intent: { standard: "nep413", payload: envelope },
+        },
+      ),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "signature",
+      message: "Nothing was moved. The signature was not accepted.",
+    });
+  });
+
+  it.each([
+    ["an empty string", ""],
+    ["an empty envelope", {}],
+  ])("refuses %s before asking the signer", async (_label, payload) => {
+    const sign = vi.fn(async () => ({ payload }));
+    const result = await approveIntentsTrade({
+      quoteId: QUOTE_ID,
+      sign,
+      fetchImpl: swapFetch(
+        [],
+        () => {
+          throw new Error("submit must not be called");
+        },
+        {
+          transactionId: TRANSACTION_ID,
+          depositAddress: "0xdeposit",
+          intent: { standard: "webauthn", payload },
+        },
+      ),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "unavailable",
+      message: "The trade could not be prepared. Nothing was moved.",
+    });
+    expect(sign).not.toHaveBeenCalled();
   });
 });
 
@@ -437,6 +732,49 @@ describe("approveIntentsWithdrawal", () => {
       ok: false,
       reason: "quote",
       message: "The quote is no longer available. Ask for a fresh one.",
+    });
+  });
+
+  it.each([
+    ["an empty string", ""],
+    ["an empty envelope", {}],
+  ])("refuses %s before asking the signer", async (_label, payload) => {
+    const sign = vi.fn(async () => ({ payload }));
+    const result = await approveIntentsWithdrawal({
+      quoteId: QUOTE_ID,
+      sign,
+      fetchImpl: withdrawFetch(
+        [],
+        () => {
+          throw new Error("submit must not be called");
+        },
+        prepared({ intent: { standard: "webauthn", payload } }),
+      ),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "unavailable",
+      message: "The withdrawal could not be prepared. Nothing was moved.",
+    });
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("tells the reader to connect a wallet instead of blaming the signature", async () => {
+    const result = await approveIntentsWithdrawal({
+      quoteId: QUOTE_ID,
+      sign: async () => {
+        throw new Error(WALLET_NOT_CONNECTED);
+      },
+      fetchImpl: withdrawFetch([], () => {
+        throw new Error("submit must not be called");
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "signature",
+      message: "Connect a wallet first.",
     });
   });
 

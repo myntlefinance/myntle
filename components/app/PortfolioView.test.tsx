@@ -69,6 +69,13 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("@/components/app/portfolioQueries", () => ({
   usePortfolio: state.usePortfolio,
   useWatchedPortfolio: state.useWatchedPortfolio,
+  useSuperPrivateBalances: () => ({
+    status: "pending",
+    snapshot: null,
+    isPending: true,
+    isRefreshing: false,
+    refresh: vi.fn(),
+  }),
 }));
 
 vi.mock("@/components/app/useWatchlist", () => ({
@@ -124,7 +131,7 @@ const WALLET_SNAPSHOT: PortfolioSnapshot = {
     },
     {
       id: "settlement",
-      name: "Settlement Ledger",
+      name: "Near Intents",
       icon: "near",
       items: [
         {
@@ -161,7 +168,7 @@ const WALLET_SNAPSHOT: PortfolioSnapshot = {
   superGroups: [
     {
       id: "settlement",
-      name: "Settlement Ledger",
+      name: "Near Intents",
       icon: "near",
       items: [
         {
@@ -232,6 +239,14 @@ describe("PortfolioView branches", () => {
     expect(html).toContain("Search assets");
     expect(html).not.toContain("passkey-portfolio");
     expect(state.usePortfolio).toHaveBeenCalledWith("evm", WALLET, true);
+    // The section names its address, with the copy mark beside it and
+    // the Deposit action at the far edge.
+    expect(html).toContain(WALLET);
+    expect(html).toContain("Copy address");
+    expect(html).toContain("Deposit");
+    expect(html).toContain("Refresh balances");
+    // Switching between the account layouts replays one page entrance.
+    expect(html).toContain("animate-[fade-up");
   });
 
   it("reads no wallet balance for a passkey account", () => {

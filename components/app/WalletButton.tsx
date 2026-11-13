@@ -2,7 +2,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { IconChartBar, IconCheck, IconChevronDown, IconChevronRight, IconCopy, IconFingerprint, IconLoader2, IconLockFilled, IconLockOpen, IconLogout, IconUser, IconUserCircle, IconWallet, IconX } from "@tabler/icons-react";
+import { IconChevronDown, IconChevronRight, IconFingerprint, IconLoader2, IconLockFilled, IconLockOpen, IconLogout, IconUser, IconUserCircle, IconWallet, IconX } from "@tabler/icons-react";
+import { CopyAddressButton } from "@/components/app/CopyAddressButton";
 import { Button } from "@/components/atoms/Button";
 import { ThemeToggle } from "@/components/site/ThemeToggle";
 import {
@@ -45,11 +46,9 @@ import type { WalletValue } from "@/lib/wallet/registry";
  */
 export function WalletButton({
   onProfile,
-  onUsage,
   compact = false,
 }: {
   onProfile?: () => void;
-  onUsage?: () => void;
   /** icon-only rail control for the collapsed sidebar */
   compact?: boolean;
 } = {}) {
@@ -142,7 +141,7 @@ export function WalletButton({
       variant="secondary"
       size="md"
       disabled
-      className="w-full font-mono text-[12px]"
+      className="w-full text-[12px]"
     >
       <IconLoader2 size={14} stroke={1.8} className="shrink-0 animate-spin text-ink-3" />
       <span className="min-w-0 flex-1 truncate text-left">
@@ -166,7 +165,6 @@ export function WalletButton({
         onClose={() => setMenuOpen(false)}
         onDisconnect={() => void signOut()}
         onProfile={onProfile}
-        onUsage={onUsage}
         onUnlock={() => {
           setSuperSource(null);
           setSuperOpen(true);
@@ -257,7 +255,6 @@ export function AccountMenu({
   onClose,
   onDisconnect,
   onProfile,
-  onUsage,
   onUnlock,
   onLock,
   superUnlocked,
@@ -270,7 +267,6 @@ export function AccountMenu({
   onClose: () => void;
   onDisconnect: () => void;
   onProfile?: () => void;
-  onUsage?: () => void;
   onUnlock?: () => void;
   onLock?: () => void;
   superUnlocked?: boolean | null;
@@ -281,7 +277,6 @@ export function AccountMenu({
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const [copied, setCopied] = useState(false);
   const [armedSignOut, setArmedSignOut] = useState(false);
   // The sidebar clips anything drawn outside its shell, so the rail menu is
   // portalled and pinned to the trigger's edge instead of the rail's.
@@ -338,23 +333,6 @@ export function AccountMenu({
     onToggle();
   };
 
-  useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 1500);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
-
-  const copyAddress = () => {
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(address);
-        setCopied(true);
-      } catch {
-        /* clipboard unavailable — leave the row unchanged */
-      }
-    })();
-  };
-
   const itemClass =
     "flex h-9 w-full items-center gap-1.5 rounded-[8px] px-2 text-left text-[13.5px] text-ink hover:bg-hover-2 active:scale-[0.97] transition-[background-color,color,transform] duration-150 ease-out";
 
@@ -401,75 +379,7 @@ export function AccountMenu({
   const items = (
     <>
       {superItem}
-          <button
-            type="button"
-            role="menuitem"
-            className={itemClass}
-            onClick={copyAddress}
-          >
-            <span className="relative flex size-5 shrink-0 items-center justify-center">
-              <span
-                aria-hidden={copied}
-                className="absolute inset-0 flex items-center justify-center text-ink-2"
-                style={{
-                  opacity: copied ? 0 : 1,
-                  filter: copied ? "blur(2.5px)" : "blur(0px)",
-                  transform: copied ? "scale(0.85)" : "scale(1)",
-                  pointerEvents: copied ? "none" : "auto",
-                  transition:
-                    "opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms cubic-bezier(0.16, 1, 0.3, 1), transform 240ms cubic-bezier(0.16, 1, 0.3, 1)",
-                  willChange: "transform, opacity, filter",
-                }}
-              >
-                <IconCopy size={16} stroke={1.8} strokeWidth={1.8} />
-              </span>
-              <span
-                aria-hidden={!copied}
-                className="absolute inset-0 flex items-center justify-center text-green"
-                style={{
-                  opacity: copied ? 1 : 0,
-                  filter: copied ? "blur(0px)" : "blur(2.5px)",
-                  transform: copied ? "scale(1)" : "scale(0.85)",
-                  pointerEvents: copied ? "auto" : "none",
-                  transition:
-                    "opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms cubic-bezier(0.16, 1, 0.3, 1), transform 240ms cubic-bezier(0.16, 1, 0.3, 1)",
-                  willChange: "transform, opacity, filter",
-                }}
-              >
-                <IconCheck size={16} stroke={2.6} strokeWidth={2.6} />
-              </span>
-            </span>
-            <span className="relative min-w-0 flex-1 h-5 overflow-hidden">
-              <span
-                aria-hidden={copied}
-                className="absolute inset-0 flex items-center"
-                style={{
-                  opacity: copied ? 0 : 1,
-                  filter: copied ? "blur(2px)" : "blur(0px)",
-                  pointerEvents: copied ? "none" : "auto",
-                  transition:
-                    "opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms cubic-bezier(0.16, 1, 0.3, 1)",
-                  willChange: "opacity, filter",
-                }}
-              >
-                <span className="truncate">Copy address</span>
-              </span>
-              <span
-                aria-hidden={!copied}
-                className="absolute inset-0 flex items-center text-green font-medium"
-                style={{
-                  opacity: copied ? 1 : 0,
-                  filter: copied ? "blur(0px)" : "blur(2px)",
-                  pointerEvents: copied ? "auto" : "none",
-                  transition:
-                    "opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), filter 240ms cubic-bezier(0.16, 1, 0.3, 1)",
-                  willChange: "opacity, filter",
-                }}
-              >
-                <span className="truncate">Copied</span>
-              </span>
-            </span>
-          </button>
+      <CopyAddressButton value={address} />
           <button
             type="button"
             role="menuitem"
@@ -483,20 +393,6 @@ export function AccountMenu({
               <IconUser size={16} stroke={1.8} />
             </span>
             <span className="min-w-0 flex-1 truncate">Profile</span>
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className={itemClass}
-            onClick={() => {
-              onClose();
-              onUsage?.();
-            }}
-          >
-            <span className="flex size-5 shrink-0 items-center justify-center text-ink-2">
-              <IconChartBar size={16} stroke={1.8} />
-            </span>
-            <span className="min-w-0 flex-1 truncate">Usage</span>
           </button>
           <div role="group" aria-label="Theme" className="flex h-9 w-full items-center gap-1.5 px-2 text-[13.5px] text-ink">
             <span className="flex size-5 shrink-0 items-center justify-center text-ink-2">
@@ -615,7 +511,7 @@ export function AccountMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={toggle}
-        className="relative w-full font-mono text-[12px] active:scale-[0.99]"
+        className="relative w-full text-[12px] active:scale-[0.99]"
       >
         <IconUser size={14} stroke={1.8} className="shrink-0 text-ink-3" />
         <span className="min-w-0 flex-1 truncate text-left">

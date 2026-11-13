@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useId, useMemo } from "react";
+import { NETWORK_FILES } from "./iconFiles";
 import { UPLOADED_NETWORKS } from "./uploadedSvgs";
 
 export type NetworkIconProps = {
@@ -12,48 +13,52 @@ export type NetworkIconProps = {
 };
 
 export const NETWORK_ALIASES: Record<string, string> = {
+  /* Ethereum and the EVM chains 1Click names with short slugs. */
   arb: "arbitrum",
   "arb-mainnet": "arbitrum",
+  "arbitrum-one": "arbitrum",
   arbitrum: "arbitrum",
+  "arb-nova": "arbitrumnova",
+  "arbitrum-nova": "arbitrumnova",
   base: "base",
   "base-mainnet": "base",
   eth: "ethereum",
   "eth-mainnet": "ethereum",
+  "ethereum-mainnet": "ethereum",
   ethereum: "ethereum",
   mainnet: "ethereum",
-  sol: "solana",
-  "solana-mainnet": "solana",
-  solana: "solana",
-  near: "near",
-  "near-mainnet": "near",
   opt: "optimism",
   "opt-mainnet": "optimism",
+  "optimism-mainnet": "optimism",
   optimism: "optimism",
   op: "optimism",
   pol: "polygon",
+  "pol-mainnet": "polygon",
   polygon: "polygon",
   "polygon-mainnet": "polygon",
+  "polygon-pos": "polygon",
   matic: "polygon",
-  hl: "hyperliquid",
-  hyperliquid: "hyperliquid",
-  btc: "bitcoin",
-  bitcoin: "bitcoin",
+  "matic-mainnet": "polygon",
+  bsc: "bnb",
   bnb: "bnb",
   binance: "bnb",
-  bsc: "bnb",
+  "binance-smart-chain": "bnb",
   "bnb-mainnet": "bnb",
   avax: "avalanche",
   avalanche: "avalanche",
   "avax-mainnet": "avalanche",
+  "avalanche-mainnet": "avalanche",
   gnosis: "gnosis",
   "gnosis-mainnet": "gnosis",
   gno: "gnosis",
+  xdai: "gnosis",
   linea: "linea",
   "linea-mainnet": "linea",
   scroll: "scroll",
   "scroll-mainnet": "scroll",
   zksync: "zksync",
   "zksync-mainnet": "zksync",
+  "zksync-era": "zksync",
   blast: "blast",
   "blast-mainnet": "blast",
   mantle: "mantle",
@@ -64,22 +69,126 @@ export const NETWORK_ALIASES: Record<string, string> = {
   "unichain-mainnet": "unichain",
   soneium: "soneium",
   "soneium-mainnet": "soneium",
-  sui: "sui",
-  aptos: "aptos",
+
+  /* The long tail of EVM chains, by the other names each goes by. */
+  abs: "abstract",
+  "abstract-chain": "abstract",
+  aca: "acala",
+  adi: "adichain",
+  "adi-chain": "adichain",
+  ape: "apechain",
+  astr: "astar",
+  cfx: "conflux",
+  frax: "fraxtal",
+  /* HyperCore is the Hyperliquid L1; HyperEVM is its separate EVM. */
+  hypercore: "hyperliquid",
+  "hyperliquid-l1": "hyperliquid",
+  "hyper-evm": "hyperevm",
+  hl: "hyperliquid",
+  hyperliquid: "hyperliquid",
+  hood: "robinhood",
+  imx: "immutable",
+  "immutable-zkevm": "immutable",
+  inkonchain: "ink",
+  kar: "karura",
+  kardiachain: "kardia",
+  klaytn: "kaia",
+  klay: "kaia",
+  manta: "mantapacific",
+  "manta-pacific": "mantapacific",
+  neon: "neonevm",
+  "neon-evm": "neonevm",
+  pls: "pulsechain",
+  shimmer: "shimmerevm",
+  "shimmer-evm": "shimmerevm",
+  "taiko-alethia": "taiko",
+  tlos: "telos",
+  tomo: "viction",
+  worldchain: "world",
+  "world-chain": "world",
+  "x-layer": "xlayer",
+  "zero-network": "zeronetwork",
+
+  /* Non-EVM chains, and the identifiers the catalogue and users use. */
+  sol: "solana",
+  "solana-mainnet": "solana",
+  solana: "solana",
+  near: "near",
+  "near-mainnet": "near",
+  // Intents assets settle on NEAR, so they carry the NEAR mark in the UI.
+  intents: "near",
   apt: "aptos",
+  aptos: "aptos",
+  "aptos-mainnet": "aptos",
+  sui: "sui",
+  "sui-mainnet": "sui",
   ton: "ton",
+  "ton-mainnet": "ton",
   tron: "tron",
   trx: "tron",
-  berachain: "berachain",
-  bera: "berachain",
-  starknet: "starknet",
+  "tron-mainnet": "tron",
+  btc: "bitcoin",
+  bitcoin: "bitcoin",
+  "bitcoin-mainnet": "bitcoin",
+  bch: "bch",
+  "bitcoin-cash": "bch",
+  dash: "dash",
+  doge: "doge",
+  dogecoin: "doge",
+  cardano: "cardano",
+  ada: "cardano",
+  ltc: "litecoin",
+  litecoin: "litecoin",
+  xrp: "xrp",
+  "xrp-ledger": "xrp",
+  prl: "pearl",
+  qtc: "quantus",
+  quantus: "quantus",
+  zec: "zcash",
+  zcash: "zcash",
   stellar: "stellar",
+  "stellar-mainnet": "stellar",
   xlm: "stellar",
   flow: "flow",
   sei: "sei",
+  "sei-mainnet": "sei",
   algorand: "algorand",
   algo: "algorand",
+  starknet: "starknet",
+  strk: "starknet",
+  bera: "berachain",
+  berachain: "berachain",
+  osmosis: "osmosis",
+  osmo: "osmosis",
+  injective: "injective",
+  inj: "injective",
+  tao: "tao",
+  bittensor: "tao",
+  tia: "tia",
+  celestia: "tia",
+  stacks: "stacks",
+  stx: "stacks",
+  tezos: "xtz",
+  oasis: "rose",
+  icp: "icp",
+  "internet-computer": "icp",
+  xinfin: "xdc",
+  proton: "xpr",
+  terra: "luna",
+  "terra-classic": "terraclassic",
+  lunc: "terraclassic",
+  iota: "iotaevm",
+  "iota-evm": "iotaevm",
 };
+
+const NETWORK_FILE_SET = new Set<string>(NETWORK_FILES);
+
+/* Dark vectors on a transparent field need a clean white backing disc. */
+function networkPaddingClass(canonical: string): string {
+  return canonical === "ethereum" || canonical === "stellar"
+    ? "bg-white p-[2px]"
+    : "";
+}
 
 /**
  * Namespaces def ids per inline instance so two copies of the same
@@ -111,15 +220,9 @@ export function resolveUploadedNetwork(network: string): {
   const svg = UPLOADED_NETWORKS[canonical];
   if (!svg) return null;
 
-  // Dark vectors with transparent backgrounds need a clean white backing circle
-  let paddingClass = "";
-  if (canonical === "ethereum" || canonical === "stellar") {
-    paddingClass = "bg-white p-[2px]";
-  }
-
   return {
     svg,
-    paddingClass,
+    paddingClass: networkPaddingClass(canonical),
   };
 }
 
@@ -180,6 +283,29 @@ export function NetworkIcon({
         title={label}
         dangerouslySetInnerHTML={{ __html: svg }}
       />
+    );
+  }
+
+  /* The curated marks above are inlined so the first screen paints without
+   * a request. The long tail is served from public/networks as a static
+   * vector, which keeps the client bundle from carrying every chain. */
+  if (NETWORK_FILE_SET.has(canonical)) {
+    return (
+      <span
+        className={`inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden select-none ${networkPaddingClass(canonical)} ${className}`}
+        style={{ width: size, height: size }}
+        title={label}
+      >
+        <img
+          src={`/networks/${canonical}.svg`}
+          alt=""
+          width={size}
+          height={size}
+          loading="lazy"
+          draggable={false}
+          className="block h-full w-full object-contain"
+        />
+      </span>
     );
   }
 

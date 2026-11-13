@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
 import { resetApprovalStore } from "@/components/app/approvalStore";
+import { normalizeEvmAddress } from "@/lib/intents/destination";
 import type { TradeAction } from "@/lib/trade/action";
 import type { SentenceApproval } from "./sentence-approval";
 
@@ -386,6 +387,19 @@ describe("passkey withdrawal on the sentence card", () => {
     expect(html).toContain(">Approve<");
   });
 
+  it("shows a resolved name beside its truncated address", () => {
+    const html = render(
+      <SentenceTradeCard {...withdrawCard} recipientName="vitalik.eth" />,
+    );
+
+    // The sentence names the destination; the drawer pairs the name with
+    // the truncated address. The whole address stays one copy away.
+    expect(sentenceOf(html)).toContain("vitalik.eth");
+    expect(html).toContain("vitalik.eth · 0xc8aE…3148");
+    expect(html).toContain(`title="${DESTINATION}"`);
+    expect(html).not.toContain(`>${DESTINATION}<`);
+  });
+
   it("marks each amount with its token and names the transaction it settled", () => {
     const html = render(
       <SentenceTradeCard
@@ -550,6 +564,34 @@ describe("passkey withdrawal on the sentence card", () => {
     ).not.toContain(">Approved<");
   });
 
+  it("offers sign in instead of a dead pending pill when the card is blocked", () => {
+    const html = render(
+      <SentenceTradeCard
+        {...withdrawCard}
+        disabled
+        blocked="sign-in"
+        onSignIn={() => {}}
+      />,
+    );
+
+    expect(html).toContain(">Sign in<");
+    expect(html).not.toContain("Pending Approval");
+  });
+
+  it("offers a fresh quote when the card has no stored quote", () => {
+    const html = render(
+      <SentenceTradeCard
+        {...withdrawCard}
+        disabled
+        blocked="quote"
+        onPrompt={() => {}}
+      />,
+    );
+
+    expect(html).toContain(">New quote<");
+    expect(html).not.toContain("Pending Approval");
+  });
+
   it("keeps a waiting deposit waiting and a submitted withdrawal submitted", () => {
     expect(polledState("submitted", "deposit", true)).toBe("waiting");
     expect(polledState("pending", "deposit", true)).toBe("waiting");
@@ -601,10 +643,10 @@ describe("passkey swap on the sentence card", () => {
     })) satisfies SentenceApproval,
   };
 
-  it("is the existing swap sentence, not a new design", () => {
+  it("reads an account-funded swap as money moving inside Near Account", () => {
     const html = render(<SentenceTradeCard {...swapCard} />);
     expect(sentenceText(html)).toBe(
-      "Swap 14.44 USDC for 14.17 USDT on Near Account",
+      "Swap 14.44 USDC for 14.17 USDT in your Near Account",
     );
   });
 
@@ -692,6 +734,7 @@ describe("the wallet branch under the same card", () => {
       amount: "55000000",
       recipient: EVM_ACCOUNT,
       slippageBps: 100,
+      quoteId: "11111111-1111-4111-8111-111111111111",
     },
   };
 
@@ -705,24 +748,26 @@ describe("the wallet branch under the same card", () => {
     };
     state.signMessage.mockResolvedValue(new Uint8Array([1, 2, 3]));
     state.sendDeposit.mockResolvedValue({ txHash: "0xdeposit-hash" });
-    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === "/api/approve") {
-        return jsonResponse({
-          transactionId: "tx-wallet-1",
-          depositAddress: "0xone-time-address",
-          amountIn: "55",
-          tokenContract: "0xtoken",
-          originChain: "arb",
-          originChainId: 42161,
-          originChainName: "Arbitrum",
-        });
-      }
-      if (url === "/api/tx/tx-wallet-1/deposit") {
-        return jsonResponse({ ok: true });
-      }
-      throw new Error(`unexpected request ${url}`);
-    });
+    const fetchSpy = vi.fn(
+      async (input: RequestInfo | URL, _init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/approve") {
+          return jsonResponse({
+            transactionId: "tx-wallet-1",
+            depositAddress: "0xone-time-address",
+            amountIn: "55",
+            tokenContract: "0xtoken",
+            originChain: "arb",
+            originChainId: 42161,
+            originChainName: "Arbitrum",
+          });
+        }
+        if (url === "/api/tx/tx-wallet-1/deposit") {
+          return jsonResponse({ ok: true });
+        }
+        throw new Error(`unexpected request ${url}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchSpy);
     const onApprove = vi.fn();
 
@@ -737,6 +782,14 @@ describe("the wallet branch under the same card", () => {
     const urls = fetchSpy.mock.calls.map(([input]) => String(input));
     expect(urls[0]).toBe("/api/approve");
     expect(urls).toContain("/api/tx/tx-wallet-1/deposit");
+    // The body names the preview it was priced against, and the signed
+    // message and the body share one approval birth.
+    const posted = JSON.parse(
+      String((fetchSpy.mock.calls[0][1] as RequestInit).body),
+    ) as Record<string, unknown>;
+    expect(posted.quoteId).toBe(walletSwap.swapInput.quoteId);
+    expect(posted.requestedAt).toBe(walletSwap.requestedAt);
+    expect(posted.message).toContain(`Requested: ${walletSwap.requestedAt}`);
     expect(state.signMessage).toHaveBeenCalledTimes(1);
     expect(state.sendDeposit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -750,6 +803,39 @@ describe("the wallet branch under the same card", () => {
       transactionId: "tx-wallet-1",
       depositAddress: "0xone-time-address",
     });
+  });
+
+  it("signs the EIP-55 refund when the card defaults to a lowercase account", async () => {
+    const lower = "0x32596df10ff2ac5acde8406e6adcc8d047921073";
+    const canonical = normalizeEvmAddress(lower) as string;
+    expect(canonical).not.toBe(lower);
+
+    state.account = {
+      kind: "evm",
+      standard: "erc191",
+      address: lower,
+      signerId: lower,
+      publicKey: "",
+    };
+    state.signMessage.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ error: "unavailable", message: "no" }, 400),
+      ),
+    );
+
+    render(<SentenceTradeCard {...walletSwap} />);
+    const approve = button("Approve");
+    expect(approve).toBeTruthy();
+
+    await approve?.onClick?.();
+
+    expect(state.signMessage).toHaveBeenCalledTimes(1);
+    const signedBytes = state.signMessage.mock.calls[0][0] as Uint8Array;
+    const message = new TextDecoder().decode(signedBytes);
+    expect(message).toContain(`Refund to: ${canonical}`);
+    expect(message).not.toContain(`Refund to: ${lower}`);
   });
 
   it("keeps the wallet drawer's rows and copy", () => {
@@ -786,6 +872,19 @@ describe("the wallet branch under the same card", () => {
     );
     expect(html).toContain("Expired");
     expect(html).not.toContain(">Approve<");
+  });
+
+  it("expires a wallet card at the quote deadline before the request window", () => {
+    const html = render(
+      <SentenceTradeCard
+        {...walletSwap}
+        requestedAt={new Date().toISOString()}
+        expiresAt="2020-01-01T00:00:00.000Z"
+      />,
+    );
+    expect(html).toContain("Expired");
+    expect(html).not.toContain(">Approve<");
+    expect(html).not.toContain(">Reject<");
   });
 });
 

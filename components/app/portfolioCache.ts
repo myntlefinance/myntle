@@ -1,5 +1,7 @@
 import {
+  INTENTS_GROUP_NAME,
   groupBalancesByNetwork,
+  isIntentsGroupName,
   type AssetGroup,
   type TokenBalance,
 } from "@/lib/wallet/balances";
@@ -98,7 +100,7 @@ export const SAMPLE_PORTFOLIO: PortfolioSnapshot = {
     },
     {
       id: "settlement",
-      name: "Settlement Ledger",
+      name: INTENTS_GROUP_NAME,
       icon: "near",
       items: [
         {
@@ -221,7 +223,7 @@ export const SAMPLE_PORTFOLIO: PortfolioSnapshot = {
   superGroups: [
     {
       id: "settlement",
-      name: "Settlement Ledger",
+      name: INTENTS_GROUP_NAME,
       icon: "near",
       items: [
         {
@@ -283,6 +285,8 @@ type LedgerItem = {
   rawBalance: string;
   priceUsd?: number;
   valueUsd?: number;
+  quantity?: number;
+  priceAsOf?: number;
 };
 
 type BalancesReply = {
@@ -313,33 +317,44 @@ function validSnapshot(value: unknown): value is PortfolioSnapshot {
   );
 }
 
+/* A cached snapshot from before the rename still carries the old group
+ * name; migrate it on read so the filter and the table never show it. */
+function renameIntentsGroup(group: AssetGroup): AssetGroup {
+  if (group.name !== "Settlement Ledger") return group;
+  return { ...group, name: INTENTS_GROUP_NAME };
+}
+
 function normalizeSnapshot(snapshot: PortfolioSnapshot): PortfolioSnapshot {
+  const groups = snapshot.groups.map(renameIntentsGroup);
+  const walletGroups = snapshot.walletGroups?.map(renameIntentsGroup);
+  const superGroups = snapshot.superGroups?.map(renameIntentsGroup);
   if (
-    Array.isArray(snapshot.walletGroups) &&
-    Array.isArray(snapshot.superGroups) &&
+    Array.isArray(walletGroups) &&
+    Array.isArray(superGroups) &&
     Number.isFinite(snapshot.walletUsd) &&
     Number.isFinite(snapshot.superUsd)
   ) {
-    return snapshot;
+    return { ...snapshot, groups, walletGroups, superGroups };
   }
-  const superGroups = snapshot.groups.filter(
-    (group) => group.name === "Settlement Ledger",
+  const splitSuperGroups = groups.filter((group) =>
+    isIntentsGroupName(group.name),
   );
-  const walletGroups = snapshot.groups.filter(
-    (group) => group.name !== "Settlement Ledger",
+  const splitWalletGroups = groups.filter(
+    (group) => !isIntentsGroupName(group.name),
   );
-  const sum = (groups: typeof snapshot.groups) =>
-    groups.reduce(
+  const sum = (list: typeof groups) =>
+    list.reduce(
       (total, group) =>
         total + group.items.reduce((sub, item) => sub + item.valueUsd, 0),
       0,
     );
   return {
     ...snapshot,
-    walletGroups,
-    superGroups,
-    walletUsd: Number.parseFloat(sum(walletGroups).toFixed(2)),
-    superUsd: Number.parseFloat(sum(superGroups).toFixed(2)),
+    groups,
+    walletGroups: splitWalletGroups,
+    superGroups: splitSuperGroups,
+    walletUsd: Number.parseFloat(sum(splitWalletGroups).toFixed(2)),
+    superUsd: Number.parseFloat(sum(splitSuperGroups).toFixed(2)),
   };
 }
 
@@ -538,6 +553,13 @@ export async function fetchPortfolio(
       rawBalance: balance.rawBalance,
       priceUsd: balance.priceUsd,
       valueUsd: balance.valueUsd,
+      ...(balance.assetId ? { assetId: balance.assetId } : {}),
+      ...(balance.quantity !== undefined
+        ? { quantity: balance.quantity }
+        : {}),
+      ...(balance.priceAsOf !== undefined
+        ? { priceAsOf: balance.priceAsOf }
+        : {}),
     }),
   );
   const walletBalances = body?.wallet?.balances ?? [];
@@ -559,10 +581,10 @@ export async function fetchPortfolio(
 
 /**
  * The full EVM read in progressive chunks. Mirrors
- * ALL_EVM_PORTFOLIO_NETWORKS in `lib/wallet/balances.ts` (16 slugs in
- * chunks of 5), translated to the SupportedNetwork names the balances
- * route accepts. Hardcoded here so this client module never imports the
- * server balance reader.
+ * ALL_EVM_PORTFOLIO_NETWORKS in `lib/adapters/alchemy/balances.ts`
+ * (16 slugs in chunks of 5), translated to the SupportedNetwork names
+ * the balances route accepts. Hardcoded here so this client module
+ * never imports the server balance reader.
  */
 export const FULL_NETWORK_GROUPS: string[] = [
   "ethereum,base,arbitrum,optimism,polygon",
@@ -570,8 +592,6 @@ export const FULL_NETWORK_GROUPS: string[] = [
   "zksync,blast,mantle,celo,unichain",
   "soneium",
 ];
-
-const SETTLEMENT_LEDGER_GROUP = "Settlement Ledger";
 
 function mergeGroupLists(lists: AssetGroup[][]): AssetGroup[] {
   const merged = new Map<string, AssetGroup>();
@@ -624,13 +644,13 @@ export function mergePortfolioSnapshots(
     parts.map((part) => part.walletGroups ?? []),
   );
   const superGroups = richest.superGroups ?? [];
-  const ledgerGroups = (richest.groups ?? []).filter(
-    (group) => group.name === SETTLEMENT_LEDGER_GROUP,
+  const ledgerGroups = (richest.groups ?? []).filter((group) =>
+    isIntentsGroupName(group.name),
   );
   const mergedWalletGroups = mergeGroupLists(
     parts.map((part) =>
       (part.groups ?? []).filter(
-        (group) => group.name !== SETTLEMENT_LEDGER_GROUP,
+        (group) => !isIntentsGroupName(group.name),
       ),
     ),
   );

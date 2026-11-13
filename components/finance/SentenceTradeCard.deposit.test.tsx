@@ -3,6 +3,7 @@ import React from "react";
 import ReactDOMServer from "react-dom/server";
 import { resetApprovalStore, rememberApprovalTx } from "@/components/app/approvalStore";
 import type { DepositMetadata } from "@/lib/intents/deposit-metadata";
+import { FRESH_DEPOSIT_PROMPT } from "@/lib/intents/deposit-status";
 import type { SentenceApproval } from "./sentence-approval";
 import { depositQrValue } from "./DepositQr";
 
@@ -84,6 +85,7 @@ vi.mock("@/components/atoms/Button", async () => {
 
 import SentenceTradeCard, {
   approveThroughAdapter,
+  cardStateAfterDeny,
   CARD_WATCH_BEAT_MS,
   CARD_WATCH_MS,
   CARD_WATCH_RECENT_MS,
@@ -97,7 +99,6 @@ import SentenceTradeCard, {
 import type { FundingConnection } from "@/lib/wallet/funding";
 
 const DEPOSIT = "0x1111111111111111111111111111111111111111";
-const FRESH_DEPOSIT = "0x2222222222222222222222222222222222222222";
 const TOKEN = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
 const NEAR_ACCOUNT = "0xb0b14cd82e1f0e6ee391ae3a31a0173aff8373b1";
 const VALID = "2099-01-01T00:00:00.000Z";
@@ -490,14 +491,18 @@ describe("funding the address from a wallet", () => {
 });
 
 describe("the deposit status table", () => {
-  it("shows a detected deposit and fades the QR", () => {
+  it("withdraws the address once the deposit is detected", () => {
     const html = render(waitingCard({ state: "processing" }));
 
     expect(html).toContain("Deposit detected. Processing…");
-    expect(html).toContain("pointer-events-none opacity-40");
     expect(html).toContain("Processing");
-    // The address is still readable for a record of where the money went.
-    expect(html).toContain(DEPOSIT);
+    // A detected address is not funded again, so the QR, the address, and
+    // the send control leave the card instead of fading behind it.
+    expect(html).not.toContain(DEPOSIT);
+    expect(html).not.toContain("Deposit address QR code");
+    expect(walletCta(html)).toBeNull();
+    // The record's own figures stay readable.
+    expect(html).toContain("Token");
   });
 
   it("reports success without ageing the record out", () => {
@@ -537,9 +542,13 @@ describe("the deposit status table", () => {
   it("expires a pending address on its stored deadline", () => {
     const html = render(waitingCard({ expiresAt: PAST }));
 
-    expect(html).toContain("Expired. Please generate a fresh deposit address.");
-    expect(button("New address")).toBeTruthy();
-    expect(walletCta(html)).toBe("closed");
+    expect(html).toContain("Expired.");
+    expect(button("New address")).toBeUndefined();
+    // A dead address is never drawn: nobody may copy it into a transfer
+    // that will not be credited.
+    expect(html).not.toContain(DEPOSIT);
+    expect(html).not.toContain("Deposit address QR code");
+    expect(walletCta(html)).toBeNull();
   });
 });
 
@@ -547,7 +556,10 @@ describe("a revisited deposit", () => {
   it("starts collapsed instead of reopening the address panel", () => {
     const html = render(waitingCard());
 
-    expect(html).toContain("grid-template-rows:0fr;opacity:0");
+    expect(html).toContain("height:0px");
+    expect(html).toContain("opacity:0");
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).toContain("inert");
     expect(button("Details")?.disabled).not.toBe(true);
   });
 
@@ -606,8 +618,8 @@ describe("a revisited deposit", () => {
 
     expect(html).toContain("Expired");
     expect(html).not.toContain("Waiting");
-    expect(button("New address")).toBeTruthy();
-    expect(walletCta(html)).toBe("closed");
+    expect(html).not.toContain(DEPOSIT);
+    expect(walletCta(html)).toBeNull();
   });
 
   it("bounds the active watch to one beat every six seconds for two minutes", () => {
@@ -636,22 +648,8 @@ describe("a revisited deposit", () => {
   });
 });
 
-describe("a fresh address", () => {
-  const freshApproval: SentenceApproval = async () => ({
-    ok: true,
-    transactionId: "tx-deposit-2",
-    depositAddress: FRESH_DEPOSIT,
-    depositMemo: null,
-    amountIn: "2",
-    expiresAt: VALID,
-    deposit: {
-      ...arbitrumUsdc,
-      address: FRESH_DEPOSIT,
-      memo: null,
-    },
-  });
-
-  it("offers New address on every terminal state", () => {
+describe("a dead deposit address", () => {
+  it("offers one prompt sentence on every terminal state", () => {
     for (const terminal of [
       "expired",
       "failed",
@@ -659,44 +657,117 @@ describe("a fresh address", () => {
       "incomplete",
     ] as const) {
       state.buttons = [];
-      render(waitingCard({ state: terminal, runApproval: freshApproval }));
-      expect(button("New address"), terminal).toBeTruthy();
-    }
-    for (const live of ["waiting", "processing", "settled"] as const) {
-      state.buttons = [];
-      render(waitingCard({ state: live, runApproval: freshApproval }));
-      expect(button("New address"), live).toBeUndefined();
+      const html = render(
+        waitingCard({ state: terminal, onPrompt: () => {} }),
+      );
+      expect(html, terminal).toContain(FRESH_DEPOSIT_PROMPT);
+      // The sentence is the action: dashed underline, arrow, no button chrome.
+      expect(html, terminal).toContain("border-dashed");
+      expect(button("New address"), terminal).toBeUndefined();
     }
   });
 
-  it("mints a different address and records it without re-approving", async () => {
-    const runApproval = vi.fn(freshApproval);
-    const onApprove = vi.fn();
-    const onRecord = vi.fn();
-    render(
-      waitingCard({
-        state: "failed",
-        runApproval,
-        onApprove,
-        onRecord,
-      }),
-    );
-    const mint = button("New address");
-    expect(mint).toBeTruthy();
+  it("keeps the prompt off a live card", () => {
+    for (const live of ["waiting", "processing", "settled"] as const) {
+      const html = render(waitingCard({ state: live, onPrompt: () => {} }));
+      expect(html, live).not.toContain(FRESH_DEPOSIT_PROMPT);
+    }
+  });
 
-    await mint?.onClick?.();
+  it("says only what happened when there is no composer", () => {
+    const html = render(waitingCard({ state: "expired" }));
 
-    expect(runApproval).toHaveBeenCalledTimes(1);
-    // The old address is abandoned, never relabelled as the new one.
-    expect(onRecord).toHaveBeenCalledWith({
-      transactionId: "tx-deposit-2",
-      depositAddress: FRESH_DEPOSIT,
-    });
-    expect(onRecord).not.toHaveBeenCalledWith(
-      expect.objectContaining({ depositAddress: DEPOSIT }),
+    expect(html).toContain("Expired.");
+    expect(html).not.toContain(FRESH_DEPOSIT_PROMPT);
+  });
+
+  it("withdraws the address on every state that cannot fund it", () => {
+    for (const dead of [
+      "expired",
+      "failed",
+      "refunded",
+      "incomplete",
+      "processing",
+      "settled",
+    ] as const) {
+      const html = render(
+        waitingCard({ state: dead, onPrompt: () => {} }),
+      );
+      expect(html, dead).not.toContain(DEPOSIT);
+      expect(html, dead).not.toContain("Deposit address QR code");
+      expect(html, dead).not.toContain("Fund from wallet");
+      expect(walletCta(html), dead).toBeNull();
+    }
+  });
+
+  it("keeps the waiting address fundable", () => {
+    const html = render(waitingCard({ onPrompt: () => {} }));
+
+    expect(html).toContain(DEPOSIT);
+    expect(html).toContain("Deposit address QR code");
+    expect(walletCta(html)).toBe("open");
+  });
+});
+
+describe("a refused deposit", () => {
+  it("withdraws the funding panel and keeps the record's own rows", () => {
+    const html = render(waitingCard({ state: "denied" }));
+
+    expect(html).toContain("Rejected");
+    // The address belonged to a proposal that was refused: no QR, no address,
+    // no copy control, and no funding CTA.
+    expect(html).not.toContain(DEPOSIT);
+    expect(html).not.toContain("Deposit address QR code");
+    expect(html).not.toContain('aria-label="Copy"');
+    expect(html).not.toContain("Fund from wallet");
+    expect(walletCta(html)).toBeNull();
+    // The terms the address was issued under stay readable.
+    expect(html).toContain("Token");
+    expect(html).toContain("Contract address");
+    expect(html).toContain("Network");
+    expect(html).toContain("Arbitrum");
+    expect(html).toContain("memo-1");
+    expect(html).toContain("Valid until");
+  });
+
+  it("paints Waiting when an address seeded from the store arrives awaiting", () => {
+    // A reload seeds the address from the approval store before the host's
+    // state catches up. Start and Reject must not be offered for a deposit
+    // that already minted its address.
+    const html = render(waitingCard({ state: "awaiting" }));
+
+    expect(html).toContain("Waiting");
+    expect(html).not.toContain("Pending Approval");
+    expect(button("Start")).toBeUndefined();
+    expect(button("Reject")).toBeUndefined();
+    expect(html).toContain(DEPOSIT);
+    expect(html).not.toContain("Click Start to begin");
+  });
+
+  it("still ages a seeded address into Expired", () => {
+    const html = render(waitingCard({ state: "awaiting", expiresAt: PAST }));
+
+    expect(html).toContain("Expired");
+    expect(html).not.toContain("Waiting");
+    expect(button("Start")).toBeUndefined();
+    expect(button("Reject")).toBeUndefined();
+    expect(html).not.toContain(DEPOSIT);
+  });
+
+  it("maps the host's answer, not the gesture, to the painted state", () => {
+    // Without a DOM the state write cannot be observed after a click, so the
+    // mapping handleDeny calls is covered directly. `approved` is the guard
+    // answering for a proposal that already started; it must never paint
+    // Rejected over the address that exists.
+    expect(cardStateAfterDeny("approved", { hasDeposit: true })).toBe(
+      "waiting",
     );
-    // A fresh address resets the decided card; it does not answer the
-    // approval a second time.
-    expect(onApprove).not.toHaveBeenCalled();
+    expect(cardStateAfterDeny("approved", { hasDeposit: false })).toBe(
+      "awaiting",
+    );
+    expect(cardStateAfterDeny("denied", { hasDeposit: true })).toBe("denied");
+    expect(cardStateAfterDeny(undefined, { hasDeposit: false })).toBe(
+      "denied",
+    );
   });
 });

@@ -1,29 +1,49 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createSuperBalancesTool,
   type SuperBalancesResult,
 } from "./balances";
 
-vi.mock("@/lib/intents/service", () => ({
-  getAssets: async () => [
-    {
-      assetId: "nep141:wrap.near",
-      symbol: "wNEAR",
-      decimals: 24,
-      chain: "near",
-      price: 2,
-      contractAddress: "wrap.near",
-    },
-    {
-      assetId: "nep141:usdc.near",
-      symbol: "USDC",
-      decimals: 6,
-      chain: "near",
-      price: 1,
-      contractAddress: "usdc.near",
-    },
-  ],
+const { getAssetsMock, getLivePricesMock } = vi.hoisted(() => ({
+  getAssetsMock: vi.fn(),
+  getLivePricesMock: vi.fn(),
 }));
+
+vi.mock("@/lib/prices/server", () => ({
+  getLivePrices: getLivePricesMock,
+}));
+
+vi.mock("@/lib/intents/service", () => ({
+  getAssets: getAssetsMock,
+}));
+
+const CATALOGUE = [
+  {
+    assetId: "nep141:wrap.near",
+    symbol: "wNEAR",
+    decimals: 24,
+    chain: "near",
+    price: 2,
+    priceUpdatedAt: 1_762_760_000_000,
+    contractAddress: "wrap.near",
+  },
+  {
+    assetId: "nep141:usdc.near",
+    symbol: "USDC",
+    decimals: 6,
+    chain: "near",
+    price: 1,
+    priceUpdatedAt: 1_762_760_060_000,
+    contractAddress: "usdc.near",
+  },
+];
+
+beforeEach(() => {
+  getAssetsMock.mockReset();
+  getAssetsMock.mockResolvedValue(CATALOGUE);
+  getLivePricesMock.mockReset();
+  getLivePricesMock.mockResolvedValue(new Map());
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -108,6 +128,7 @@ describe("get_super_balances", () => {
       symbol: "wNEAR",
       amount: "2",
       rawAmount: "2000000000000000000000000",
+      priceAsOf: 1_762_760_000_000,
       valueUsd: 4,
     });
     expect(result.balances[1]).toMatchObject({
@@ -151,5 +172,146 @@ describe("get_super_balances", () => {
     const result = await run("live");
     expect(result).toMatchObject({ status: "error", balances: [] });
     expect(result.message).toBe("The private balance could not be read.");
+  });
+
+  it("never echoes an upstream balance source label", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          balances: [
+            {
+              tokenId: "nep141:usdc.near",
+              available: "1500000",
+              source: "confidential-account",
+            },
+          ],
+        }),
+      })),
+    );
+
+    const result = await run("live");
+
+    expect(result.balances[0]).toMatchObject({ source: "private" });
+    expect(JSON.stringify(result).toLowerCase()).not.toContain("confidential");
+  });
+
+  it("prices a held balance from the live feed over the catalogue", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          balances: [
+            {
+              tokenId: "nep141:wrap.near",
+              available: "2000000000000000000000000",
+              source: "private",
+            },
+          ],
+        }),
+      })),
+    );
+    getLivePricesMock.mockResolvedValue(
+      new Map([
+        [
+          "nep141:wrap.near",
+          { usd: 3, asOf: 1_762_800_000_000, source: "binance", stale: false },
+        ],
+      ]),
+    );
+
+    const result = await run("live");
+
+    expect(getLivePricesMock).toHaveBeenCalledWith(["nep141:wrap.near"]);
+    expect(result.balances[0]).toMatchObject({
+      priceUsd: 3,
+      valueUsd: 6,
+      priceAsOf: 1_762_800_000_000,
+    });
+    expect(result.totalValueUsd).toBe(6);
+  });
+
+  it("does not apply a live quote without catalogue metadata", async () => {
+    getAssetsMock.mockRejectedValue(new Error("catalogue down"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          balances: [
+            {
+              tokenId: "nep141:usdc.near",
+              available: "1500000",
+              source: "private",
+            },
+          ],
+        }),
+      })),
+    );
+    getLivePricesMock.mockResolvedValue(
+      new Map([
+        [
+          "nep141:usdc.near",
+          { usd: 1, asOf: 1_762_800_000_000, source: "binance", stale: false },
+        ],
+      ]),
+    );
+
+    const result = await run("live");
+
+    // No metadata means no live read for that id, and the 6-decimal token
+    // must not be priced at the 18-decimal amount.
+    expect(getLivePricesMock).toHaveBeenCalledWith([]);
+    expect(result.balances[0]).toMatchObject({
+      tokenId: "nep141:usdc.near",
+      symbol: "UNKNOWN",
+      decimals: 18,
+    });
+    expect(result.balances[0].priceUsd).toBeUndefined();
+    expect(result.balances[0].valueUsd).toBeUndefined();
+    expect("priceAsOf" in result.balances[0]).toBe(false);
+  });
+
+  it("does not write an infinite value from an overflowing quote", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          balances: [
+            {
+              tokenId: "nep141:usdc.near",
+              available: `1${"0".repeat(306)}`,
+              source: "private",
+            },
+          ],
+        }),
+      })),
+    );
+    getLivePricesMock.mockResolvedValue(
+      new Map([
+        [
+          "nep141:usdc.near",
+          {
+            usd: 1e300,
+            asOf: 1_762_800_000_000,
+            source: "binance",
+            stale: false,
+          },
+        ],
+      ]),
+    );
+
+    const result = await run("live");
+
+    expect(result.balances[0].priceUsd).toBe(1e300);
+    expect(result.balances[0].valueUsd).toBeUndefined();
+    expect(Number.isFinite(result.totalValueUsd)).toBe(true);
   });
 });

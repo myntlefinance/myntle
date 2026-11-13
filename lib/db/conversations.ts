@@ -84,6 +84,70 @@ export async function ensureConversation(args: {
   throw new Error("The conversation could not start.");
 }
 
+/**
+ * Records the durable run that owns the turn just started.
+ *
+ * The reconnect route looks a run up through this column, never through an id
+ * supplied by the browser, so a run can only be read by the session that owns
+ * the chat. A new turn replaces the pointer; an old run that finishes late
+ * cannot clear the new turn because the clear is guarded by the run id.
+ */
+export async function setConversationRun(
+  userId: string,
+  conversationId: string,
+  runId: string,
+): Promise<void> {
+  const sb = getSupabaseAdmin();
+  const { error } = await sb
+    .from("conversations")
+    .update({
+      active_run_id: runId,
+      active_run_started_at: new Date().toISOString(),
+      active_run_finished_at: null,
+    })
+    .eq("id", conversationId)
+    .eq("user_id", userId);
+  if (error) throw new Error("The chat run could not be recorded.");
+}
+
+/** Marks the turn over. Late callbacks from an older run cannot match. */
+export async function markConversationRunFinished(
+  conversationId: string,
+  runId: string,
+): Promise<void> {
+  const sb = getSupabaseAdmin();
+  // Best effort: the marker only decides whether a page offers to resume.
+  // A missing column before migration 011 must not fail a turn that already
+  // generated and saved its answer.
+  await sb
+    .from("conversations")
+    .update({ active_run_finished_at: new Date().toISOString() })
+    .eq("id", conversationId)
+    .eq("active_run_id", runId);
+}
+
+/**
+ * The run a reconnect may read, resolved from the chat the session owns.
+ * Returns null when the chat is missing or has never had a run.
+ */
+export async function getConversationRun(
+  userId: string,
+  conversationIdOrSlug: string,
+): Promise<{ id: string; activeRunId: string | null } | null> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from("conversations")
+    .select("id, active_run_id")
+    .eq("user_id", userId)
+    .is("deleted_at", null)
+    .or(conversationFilter(conversationIdOrSlug))
+    .maybeSingle();
+  // Before migration 011 there is no run column and no resume.
+  if (error || !data) return null;
+  const row = data as { id: string; active_run_id: string | null };
+  return { id: row.id, activeRunId: row.active_run_id };
+}
+
 export async function saveUIMessage(
   conversationId: string,
   message: UIMessage,
@@ -385,29 +449,80 @@ export async function getConversationMessages(
   title: string | null;
   hasMore: boolean;
   oldestSeq?: number;
+  /**
+   * The durable run that owns this chat's current turn. A page load reads
+   * these to decide whether the client should reconnect to that run instead
+   * of showing the last saved snapshot.
+   */
+  activeRunId: string | null;
+  activeRunStartedAt: string | null;
+  activeRunFinishedAt: string | null;
 }> {
   const sb = getSupabaseAdmin();
-  const { data: conv } = await sb
+  // The run columns arrive with migration 011. A deployment that lands
+  // before the migration must still read its chats, so a missing-column
+  // error falls back to the old shape and simply disables resume.
+  const full = await sb
     .from("conversations")
-    .select("id, title")
+    .select("id, title, active_run_id, active_run_started_at, active_run_finished_at")
     .eq("user_id", userId)
     .is("deleted_at", null)
     .or(conversationFilter(conversationIdOrSlug))
     .single();
-  if (!conv) return { messages: [], title: null, hasMore: false };
-  const title = ((conv as { title: string | null }).title ?? null) as string | null;
+  let row = full.data as
+    | {
+        id: string;
+        title: string | null;
+        active_run_id?: string | null;
+        active_run_started_at?: string | null;
+        active_run_finished_at?: string | null;
+      }
+    | null;
+  if (!row && full.error) {
+    const fallback = await sb
+      .from("conversations")
+      .select("id, title")
+      .eq("user_id", userId)
+      .is("deleted_at", null)
+      .or(conversationFilter(conversationIdOrSlug))
+      .single();
+    row = fallback.data as { id: string; title: string | null } | null;
+  }
+  if (!row) {
+    return {
+      messages: [],
+      title: null,
+      hasMore: false,
+      activeRunId: null,
+      activeRunStartedAt: null,
+      activeRunFinishedAt: null,
+    };
+  }
+  const title = row.title ?? null;
+  const activeRunId = row.active_run_id ?? null;
+  const activeRunStartedAt = row.active_run_started_at ?? null;
+  const activeRunFinishedAt = row.active_run_finished_at ?? null;
 
   let q = sb
     .from("messages")
     .select("role, parts, client_msg_id, seq, created_at")
-    .eq("conversation_id", (conv as { id: string }).id);
+    .eq("conversation_id", row.id);
 
   if (beforeSeq !== undefined) {
     q = q.lt("seq", beforeSeq);
   }
 
   const { data } = await q.order("seq", { ascending: false }).limit(limit + 1);
-  if (!data) return { messages: [], title, hasMore: false };
+  if (!data) {
+    return {
+      messages: [],
+      title,
+      hasMore: false,
+      activeRunId,
+      activeRunStartedAt,
+      activeRunFinishedAt,
+    };
+  }
 
   const hasMore = data.length > limit;
   const items = hasMore ? data.slice(0, limit) : data;
@@ -427,5 +542,8 @@ export async function getConversationMessages(
     title,
     hasMore,
     oldestSeq,
+    activeRunId,
+    activeRunStartedAt,
+    activeRunFinishedAt,
   };
 }

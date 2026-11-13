@@ -24,6 +24,10 @@ export type ToolDetailLine = { text: string; tone?: "add" };
 
 export type ToolStep = {
   icon: string;
+  /** The present-tense name the live activity line shows while the call runs. */
+  liveLabel?: string;
+  /** The past-tense name the line keeps when a turn ends on tool work. */
+  doneLabel?: string;
   label: string;
   chip: string;
   mono: boolean;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import {
   IconCheck,
   IconCircleCheck,
@@ -10,8 +11,10 @@ import {
   IconLoader2,
   IconPencil,
   IconPlus,
+  IconQrcode,
   IconTrash,
 } from "@tabler/icons-react";
+import { AddressQrDialog } from "@/components/app/AddressQrDialog";
 import { truncateTechData } from "@/components/atoms/TechDataChip";
 import NetworkIcon from "@/components/finance/NetworkIcon";
 import type { WatchChain } from "@/lib/wallet/addresses";
@@ -49,6 +52,10 @@ export type WatchedCardEntry = {
   label: string | null;
   /** The default a fresh visit opens to; at most one per list. */
   isDefault: boolean;
+  /** The normalized name the row was tracked from, if any. */
+  resolvedName?: string | null;
+  /** Fresh ISO UTC from the read that stored the name, if any. */
+  resolvedAt?: string | null;
 };
 
 const CHAIN_ICON: Record<WatchChain, string> = {
@@ -58,7 +65,11 @@ const CHAIN_ICON: Record<WatchChain, string> = {
 };
 
 function entryLabel(entry: WatchedCardEntry): string {
-  return entry.label ?? truncateTechData(entry.address, entry.chain);
+  return (
+    entry.label ??
+    entry.resolvedName ??
+    truncateTechData(entry.address, entry.chain)
+  );
 }
 
 /* Clipboard with a legacy fallback: `navigator.clipboard` is undefined
@@ -149,6 +160,13 @@ export function WatchedCards({
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const closeMenu = () => setMenu(null);
+
+  // The QR dialog rides beside the menu, like the delete dialog rides
+  // beside the cards in the tab: the menu only asks, the dialog shows.
+  const [qrId, setQrId] = useState<string | null>(null);
+  const qrEntry = qrId
+    ? (entries.find((candidate) => candidate.id === qrId) ?? null)
+    : null;
 
   // The set-default write stays inside the open menu through its states:
   // check → spinner while the PATCH is in flight → blue filled check
@@ -273,6 +291,13 @@ export function WatchedCards({
       {entries.map((entry) => {
         const active = entry.id === selectedId;
         const label = entryLabel(entry);
+        // A renamed row keeps its name on a second line, so the tracked
+        // name is never lost behind a custom label. When the label is the
+        // name (or there is none), the title already says it.
+        const nameLine =
+          entry.resolvedName && entry.resolvedName !== label
+            ? entry.resolvedName
+            : null;
         return (
           <div
             key={entry.id}
@@ -326,6 +351,14 @@ export function WatchedCards({
                 <IconDots size={16} stroke={1.9} aria-hidden />
               </button>
             </div>
+            {nameLine ? (
+              <p
+                className="mt-0.5 min-w-0 truncate text-[12px] leading-relaxed text-ink-3"
+                title={nameLine}
+              >
+                {nameLine}
+              </p>
+            ) : null}
             <div className="mt-2 min-w-0">
               <span
                 className="inline-flex h-7 max-w-full items-center gap-1 rounded-full bg-inset px-2 text-[12px] font-medium text-ink-2 shadow-btn"
@@ -367,6 +400,18 @@ export function WatchedCards({
             closeMenu();
             onDeleteRequest(entry);
           }}
+          onShowQr={(entry) => {
+            closeMenu();
+            setQrId(entry.id);
+          }}
+        />
+      ) : null}
+      {qrEntry ? (
+        <AddressQrDialog
+          address={qrEntry.address}
+          chain={qrEntry.chain}
+          title={entryLabel(qrEntry)}
+          onClose={() => setQrId(null)}
         />
       ) : null}
     </div>
@@ -381,6 +426,7 @@ function MenuBody({
   onEdit,
   onSetDefault,
   onDelete,
+  onShowQr,
 }: {
   menu: { id: string; top: number; left: number; above: boolean; side: "right" | "below" };
   entries: WatchedCardEntry[];
@@ -390,6 +436,7 @@ function MenuBody({
   onEdit: (entry: WatchedCardEntry, event?: React.MouseEvent) => void;
   onSetDefault: (entry: WatchedCardEntry) => void;
   onDelete: (entry: WatchedCardEntry) => void;
+  onShowQr: (entry: WatchedCardEntry) => void;
 }) {
   const entry = entries.find((candidate) => candidate.id === menu.id);
   if (!entry) return null;
@@ -400,7 +447,10 @@ function MenuBody({
   const saving = pendingDefaultId === entry.id && !entry.isDefault;
   const defaulted = entry.isDefault;
   const defaultDisabled = defaulted || saving;
-  return (
+  // Portal it: the cards sit inside the portfolio's entrance wrapper, and
+  // a transformed ancestor turns `fixed` into coordinates relative to
+  // itself — which parked the menu far from the kebab that opened it.
+  return createPortal(
     <div
       className="fixed z-50"
       style={{
@@ -470,6 +520,18 @@ function MenuBody({
         <button
           type="button"
           role="menuitem"
+          aria-label={`Show QR code for ${entryLabel(entry)}`}
+          onClick={() => onShowQr(entry)}
+          className={CARD_MENU_ITEM}
+        >
+          <span className="flex size-5 shrink-0 items-center justify-center text-ink-2">
+            <IconQrcode size={15} stroke={1.8} aria-hidden />
+          </span>
+          <span className="min-w-0 flex-1 truncate">Show QR</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
           aria-label={`Delete ${entryLabel(entry)}`}
           onClick={() => onDelete(entry)}
           className={`${CARD_MENU_ITEM} text-red hover:bg-hover-2`}
@@ -480,7 +542,8 @@ function MenuBody({
           <span className="min-w-0 flex-1 truncate">Delete</span>
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

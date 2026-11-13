@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, type UIMessage } from "ai";
+import { WorkflowChatTransport } from "@ai-sdk/workflow/client";
+import type { UIMessage } from "ai";
 import Harness from "@/components/site/Harness";
 import { AccountControl } from "@/components/app/AccountControl";
-import { MODELS, DEFAULT_MODEL } from "@/lib/ai/provider";
+import { DEFAULT_MODEL } from "@/lib/ai/provider";
 import {
   SUPER_CONTINUE_PROMPT,
   withoutSuperContinueMessages,
@@ -75,6 +76,10 @@ export type InitialThread = {
   title: string | null;
   hasMore: boolean;
   oldestSeq?: number;
+  /** The durable run that owns the turn, when a turn is in flight. */
+  activeRunId?: string | null;
+  activeRunStartedAt?: string | null;
+  activeRunFinishedAt?: string | null;
 };
 
 /** No card is waiting: every card on screen has a known record. */
@@ -115,7 +120,7 @@ export default function ChatView({
   const sessionAuthenticated = sessionStatus === "signed-in";
   const { data: threads = [] } = useThreads(sessionAuthenticated);
   const { data: trashed = [] } = useTrashed(50, sessionAuthenticated);
-  const [model, setModel] = useState(DEFAULT_MODEL);
+  const model = DEFAULT_MODEL;
   // Chats require a signed-in session, not merely a connected wallet. A
   // connected-but-unsigned visitor queues prompts exactly like a
   // disconnected one; the gate offers the signature instead of a send.
@@ -159,6 +164,10 @@ export default function ChatView({
   );
   const conversationIdRef = useRef<string | null>(conversationId);
   conversationIdRef.current = conversationId;
+  // Chats this tab has generated in, with when the turn started. Switching
+  // back within the window reconnects to the durable run instead of showing
+  // the partial cached at the moment of leaving.
+  const liveRunsRef = useRef<Map<string, number>>(new Map());
 
   const [title, setTitle] = useState<string | null>(() =>
     initialThread
@@ -205,7 +214,25 @@ export default function ChatView({
     }
   }, [initialConversationId, router]);
 
-  const { messages, sendMessage, setMessages, status, clearError, regenerate, addToolApprovalResponse } = useChat({
+  // Decided once on mount: the run the server named is live, not a marker
+  // left behind by a dead one, and the chat should reconnect to it. Kept out
+  // of render so the clock does not make the resume decision flicker.
+  const [resumeInterruptedTurn] = useState(() =>
+    Boolean(
+      initialThread?.activeRunId &&
+        !initialThread.activeRunFinishedAt &&
+        initialThread.activeRunStartedAt &&
+        Date.now() - new Date(initialThread.activeRunStartedAt).getTime() <
+          6 * 60_000,
+    ),
+  );
+
+  const { messages, sendMessage, setMessages, status, clearError, regenerate, addToolApprovalResponse, stop, resumeStream } = useChat({
+    // A turn is a durable workflow run now. When the page loads with an
+    // unfinished run, the chat reconnects to its stream and replays from the
+    // first chunk, so a reload mid-answer comes back to the same answer
+    // instead of the snapshot that happened to be saved.
+    resume: resumeInterruptedTurn,
     // Seed first paint from cache so a thread route never flashes the
     // composer. useChat only reads this once; later switches go through
     // setMessages in switchConversation.
@@ -214,31 +241,100 @@ export default function ChatView({
       : initialConversationId
         ? (getCachedMessages(initialConversationId) ?? [])
         : [],
-    transport: new DefaultChatTransport({
+    transport: new WorkflowChatTransport({
       api: "/api/chat",
-      // A fresh access token per request, refreshed silently from the
-      // browser-held refresh token. The server borrows it for the turn. A
-      // passkey session is keyed by its account, not by a wallet.
-      headers: async (): Promise<Record<string, string>> =>
-        chatRequestHeaders({
-          identity: identityRef.current,
-          account: accountRef.current,
-        }),
-      body: () => ({
-        model,
-        conversationId: conversationIdRef.current,
-        title: titleRef.current,
-        walletAddress: accountRef.current?.address,
-        walletChain: accountRef.current?.kind,
-        superUnlocked: chatSuperUnlocked({
-          identity: identityRef.current,
-          account: accountRef.current,
-        }),
+      // The workflow transport does not take transport-level headers/body,
+      // so the per-turn ones are prepared here. A fresh access token is
+      // refreshed silently from the browser-held refresh token; the server
+      // seals it for the run. A passkey session is keyed by its account.
+      prepareSendMessagesRequest: async ({
+        messages: sentMessages,
+        body,
+        trigger,
+        messageId,
+      }) => ({
+        api: "/api/chat",
+        headers: {
+          "content-type": "application/json",
+          ...(await chatRequestHeaders({
+            identity: identityRef.current,
+            account: accountRef.current,
+          })),
+        },
+        body: {
+          messages: sentMessages,
+          model,
+          conversationId: conversationIdRef.current,
+          title: titleRef.current,
+          walletAddress: accountRef.current?.address,
+          walletChain: accountRef.current?.kind,
+          superUnlocked: chatSuperUnlocked({
+            identity: identityRef.current,
+            account: accountRef.current,
+          }),
+          trigger,
+          messageId,
+          ...(body ?? {}),
+        },
       }),
+      // A run is looked up through the chat it belongs to, never through a
+      // run id the browser could invent. The chat page has the slug; a fresh
+      // composer adopts it from the response headers below.
+      prepareReconnectToStreamRequest: ({ api }) => {
+        const slug = conversationIdRef.current;
+        // A finished turn is replayed at a readable pace on the server. The
+        // one case that should not animate is a reader who asked for less
+        // motion.
+        const reducedMotion =
+          typeof window !== "undefined" &&
+          window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        const headers = reducedMotion
+          ? { "x-chat-replay-pace": "off" }
+          : undefined;
+        if (!slug) return { api, headers };
+        return { api: `/api/chat/${encodeURIComponent(slug)}/stream`, headers };
+      },
+      // The server names the chat before the first token. Adopting it now,
+      // rather than after the turn, is what makes a reload mid-answer land
+      // on the chat's own page with a run to resume.
+      onChatSendMessage: (response) => {
+        const slug = response.headers.get("x-conversation-slug");
+        if (!slug) return;
+        // Remember this tab's live turn so switching back reconnects to the
+        // run instead of showing the snapshot from the moment we left.
+        liveRunsRef.current.set(slug, Date.now());
+        if (conversationIdRef.current === slug) return;
+        conversationIdRef.current = slug;
+        // The thread loader must not fetch the half-saved history over the
+        // stream that is currently being written.
+        lastLoadedConvRef.current = slug;
+        setConversationId(slug);
+        // The conversation row and its first message now exist, so the
+        // sidebar can show this chat while the answer streams.
+        void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
+        try {
+          localStorage.setItem("myntle-conv", slug);
+        } catch {
+          // Ignore.
+        }
+        try {
+          window.history.replaceState(
+            null,
+            "",
+            `/chat/${encodeURIComponent(slug)}`,
+          );
+        } catch {
+          // Ignore.
+        }
+      },
     }),
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+  // A switch handler reads the live status without being rebuilt on every
+  // token, so the listeners that use it stay registered once.
+  const statusRef = useRef(status);
+  statusRef.current = status;
   // The continuation turn is a transport instruction, not something the
   // person typed. It stays out of the transcript so it cannot render a user
   // bubble or count as a newer message that expires an unlock card.
@@ -311,6 +407,7 @@ export default function ChatView({
       setHasMoreOlder(false);
       setLoadingOlder(false);
       lastLoadedConvRef.current = null;
+      liveRunsRef.current.clear();
       router.replace("/");
       clearThreadCache();
       // Allow the reverse cascade exit animation in the sidebar to play smoothly
@@ -353,7 +450,17 @@ export default function ChatView({
     const wasBusy = prevStatusRef.current === "submitted" || prevStatusRef.current === "streaming";
     prevStatusRef.current = status;
     if (wasBusy && status === "ready" && messages.length > 0) {
+      // The turn in the chat on screen is over; a switch back no longer
+      // needs to replay it.
+      const slug = conversationIdRef.current;
+      if (slug) liveRunsRef.current.delete(slug);
       void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
+      // The title is generated after the stream closes, in its own workflow
+      // step, so one delayed refresh lets the row pick it up.
+      const timer = setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: THREADS_QUERY_KEY });
+      }, 2500);
+      return () => clearTimeout(timer);
     }
   }, [status, messages.length, queryClient]);
 
@@ -497,6 +604,15 @@ export default function ChatView({
       if (conversationIdRef.current && messagesRef.current.length > 0) {
         setCachedMessages(conversationIdRef.current, messagesRef.current);
       }
+      // An active client stream belongs to the chat being left. Stop this
+      // reader so its chunks cannot land in the transcript now on screen;
+      // the durable run keeps generating and is reconnected when that chat
+      // is opened again. stop() rejects with the transport's AbortError, so
+      // its rejection is expected and must not surface as an uncaught error.
+      let stopPromise: Promise<void> | null = null;
+      if (statusRef.current === "submitted" || statusRef.current === "streaming") {
+        stopPromise = stop().catch(() => {});
+      }
 
       // Cancel any pending rename retry state on switch.
       titleDirtyRef.current = false;
@@ -518,6 +634,16 @@ export default function ChatView({
         setTitle(threadLabel);
 
         const cached = getCachedMessages(targetId);
+        const liveStartedAt = liveRunsRef.current.get(targetId);
+        // A chat this tab was generating in, reopened inside the resume
+        // window. Reconnect rather than let the thread loader replace the
+        // live transcript with the snapshot saved when we left.
+        const resumeLiveRun =
+          Boolean(cached && cached.length > 0) &&
+          liveStartedAt !== undefined &&
+          Date.now() - liveStartedAt < 6 * 60_000;
+        if (resumeLiveRun) lastLoadedConvRef.current = targetId;
+
         if (cached && cached.length > 0) {
           setMessages(cached);
           setLoadingThread(false);
@@ -532,6 +658,17 @@ export default function ChatView({
         // card whose record is already known without a request.
         setReadApprovalIds(new Set());
         readApprovalIdsRef.current = new Set();
+
+        if (resumeLiveRun) {
+          const resume = () => {
+            if (conversationIdRef.current !== targetId) return;
+            void resumeStream().catch(() => {});
+          };
+          // Wait for the reader we just aborted to settle, so resuming never
+          // races the stop from the chat we left.
+          if (stopPromise) void stopPromise.then(resume);
+          else resume();
+        }
 
         try {
           localStorage.setItem("myntle-conv", targetId);
@@ -571,7 +708,7 @@ export default function ChatView({
         }
       }
     },
-    [setMessages],
+    [setMessages, stop, resumeStream],
   );
 
   const onPickThread = useCallback(
@@ -1064,14 +1201,14 @@ export default function ChatView({
       approvalId: string,
       approved: boolean,
       context: ApprovalDecisionContext,
-    ) => {
+    ): Promise<"approved" | "denied"> => {
       if (approved) {
         // The money route already wrote the decision before this host was
         // told; the part is only the transcript, so a failure here cannot
         // undo the record and must not surface as one.
         void addToolApprovalResponse({ id: approvalId, approved: true });
         rememberDecision(approvalId, "approved");
-        return;
+        return "approved";
       }
       // A refusal is written before the card may call it one. The route
       // answers with the decision actually on record, so a second device that
@@ -1104,13 +1241,14 @@ export default function ChatView({
         } catch {
           // The transcript catches up on the next read.
         }
-        return;
+        return decision;
       }
       try {
         await addToolApprovalResponse({ id: approvalId, approved: false });
       } catch {
         // The transcript catches up on the next read.
       }
+      return "denied";
     },
     [addToolApprovalResponse, signedIn, rememberDecision],
   );
@@ -1245,8 +1383,6 @@ export default function ChatView({
       loadingOlder={loadingOlder}
       footer={<AccountControl />}
       footerCompact={<AccountControl compact />}
-      models={MODELS}
-      onModelChange={setModel}
     />
   );
 }

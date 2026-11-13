@@ -110,6 +110,12 @@ export function buildPasskeySnapshot(
       contractAddress: entry.tokenId,
       chain: "near",
       network: "intents",
+      assetId: entry.tokenId,
+      ...(Number.isFinite(numeric) ? { quantity: numeric } : {}),
+      ...(priceUsd !== undefined ? { priceUsd } : {}),
+      ...(resolved?.priceAsOf !== undefined
+        ? { priceAsOf: resolved.priceAsOf }
+        : {}),
     });
   }
 

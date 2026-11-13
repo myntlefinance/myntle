@@ -79,6 +79,8 @@ const EVM_NETWORKS = [
 function canonicalNetwork(raw?: string | null): string {
   const norm = (raw ?? "").trim().toLowerCase();
   if (!norm) return "unknown";
+  // Intents shares the NEAR mark, but stays its own filter option.
+  if (norm === "intents") return norm;
   return NETWORK_ALIASES[norm] ?? norm;
 }
 
@@ -138,6 +140,9 @@ export function HoldingsTable({
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   const all = useMemo(() => flattenGroups(groups), [groups]);
+  // Nothing to filter when the account holds nothing: the control stays in
+  // the toolbar for the shape of the row, but it no longer opens.
+  const noAssets = all.length === 0;
 
   const networkOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -184,6 +189,14 @@ export function HoldingsTable({
     else evmIds.forEach((id) => next.add(id));
     setSelected([...next]);
   };
+
+  /* A read that lands empty closes the open filter: it can no longer
+   * offer a network, so leaving it open would be a dead menu. */
+  /* eslint-disable react-hooks/set-state-in-effect -- empty table: the trigger is disabled */
+  useEffect(() => {
+    if (noAssets) setFilterOpen(false);
+  }, [noAssets]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   /* Dismissal matches the sidebar chat search: outside press, Escape with
    * focus back on the trigger, or any scroll or resize. */
@@ -300,20 +313,39 @@ export function HoldingsTable({
     );
   };
 
-  /* Watched rows only: the card replays its entrance when the account
-   * changes while the toolbar above stays put. Everywhere else the
-   * table mounts as one, exactly as before. */
-  const wrapBody = (node: ReactNode) =>
-    bodyKey === undefined ? (
-      node
-    ) : (
-      <div
-        key={bodyKey}
-        className="animate-[fade-up_250ms_cubic-bezier(0.23,1,0.32,1)]"
-      >
-        {node}
-      </div>
-    );
+  /* Within a mounted table the body replays when `bodyKey` changes — a
+   * wallet/super switch or a watched card switch. On first mount the
+   * page-level layout entrance owns the motion, so the body does not
+   * double-animate. */
+  const [animatedKey, setAnimatedKey] = useState<string | undefined>(
+    undefined,
+  );
+  const mounted = useRef(false);
+  const lastBodyKey = useRef(bodyKey);
+  useIsomorphicLayoutEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      lastBodyKey.current = bodyKey;
+      return;
+    }
+    if (bodyKey !== lastBodyKey.current) {
+      lastBodyKey.current = bodyKey;
+      setAnimatedKey(bodyKey);
+    }
+  }, [bodyKey]);
+  const bodyEntrance = bodyKey !== undefined && animatedKey === bodyKey;
+  const wrapBody = (node: ReactNode) => (
+    <div
+      key={bodyKey}
+      className={
+        bodyEntrance
+          ? "animate-[fade-up_300ms_cubic-bezier(0.23,1,0.32,1)_both]"
+          : undefined
+      }
+    >
+      {node}
+    </div>
+  );
 
   return (
     <div className="mt-1">
@@ -352,10 +384,14 @@ export function HoldingsTable({
               ref={triggerRef}
               type="button"
               aria-haspopup="menu"
-              aria-expanded={filterOpen}
+              aria-expanded={filterOpen && !noAssets}
               aria-label="Filter by network"
-              onClick={() => setFilterOpen((open) => !open)}
-              className="flex h-8 min-w-0 items-center gap-1.5 rounded-[8px] bg-field px-2.5 text-[13px] font-medium text-ink shadow-hairline"
+              disabled={noAssets}
+              onClick={() => {
+                if (noAssets) return;
+                setFilterOpen((open) => !open);
+              }}
+              className="flex h-8 min-w-0 items-center gap-1.5 rounded-[8px] bg-field px-2.5 text-[13px] font-medium text-ink shadow-hairline disabled:pointer-events-none disabled:opacity-40"
             >
               <IconWorld size={15} aria-hidden className="shrink-0 text-ink-3" />
               <span className="truncate">{triggerLabel}</span>
@@ -365,7 +401,7 @@ export function HoldingsTable({
                 className={`shrink-0 text-ink-3 transition-transform duration-150 ${filterOpen ? "rotate-180" : ""}`}
               />
             </button>
-            {filterOpen ? (
+            {filterOpen && !noAssets ? (
               <div
                 role="menu"
                 aria-label="Filter by network"

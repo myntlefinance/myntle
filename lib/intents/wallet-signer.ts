@@ -51,7 +51,22 @@ export type WalletSignedIntent =
       public_key: string;
     };
 
-const FAILED = "The wallet did not sign this transfer. Nothing was moved.";
+/**
+ * The one safe sentence a wallet rejection may surface. Anything else the
+ * wallet throws stays inside this module: the approval code may echo this
+ * exact message, never arbitrary provider text.
+ */
+export const WALLET_SIGNATURE_FAILED =
+  "The wallet did not sign this transfer. Nothing was moved.";
+
+/**
+ * The fixed sentence for a session that has no connected wallet. It lives
+ * beside the wallet signer, not in the client signer module, so the approval
+ * helper and the signer can share it without importing the browser layer.
+ */
+export const WALLET_NOT_CONNECTED = "Connect a wallet first.";
+
+const FAILED = WALLET_SIGNATURE_FAILED;
 
 /** Decodes a NEP-413 nonce the way the server verifier reads it. */
 export function decodeNep413Nonce(value: string): Uint8Array | null {

@@ -55,7 +55,6 @@ export function createPrepareDepositTool(_context?: ToolContext) {
         action: "deposit",
         assetId: input.assetId,
         amount: input.amount,
-        mode: "confidential-external",
         note: "The interface will show the exact deposit address.",
       };
     },

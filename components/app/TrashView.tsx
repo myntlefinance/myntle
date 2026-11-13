@@ -8,6 +8,7 @@ import { TrashSample } from "@/components/app/TrashSample";
 import {
   IconArrowBackUp,
   IconChevronLeft,
+  IconLoader2,
   IconSearch,
   IconTrash,
   IconX,
@@ -332,8 +333,17 @@ export function ConfirmDialog({
         style={{ animation: "dialog-in 240ms var(--ease-out-strong) both" }}
       >
         <div className="primitive-card-pad">
-          <div title={title} className="truncate text-[14px] font-medium text-ink">
-            {title}
+          <div
+            title={title}
+            className="flex items-center gap-1.5 truncate text-[14px] font-medium text-ink"
+          >
+            <IconTrash
+              size={14}
+              stroke={2}
+              className="shrink-0 text-red"
+              aria-hidden
+            />
+            <span className="truncate">{title}</span>
           </div>
           <p className="mt-2 text-[13px] leading-relaxed text-ink-2">{body}</p>
         </div>
@@ -380,19 +390,15 @@ export function ConfirmDialog({
               disabled={busy}
             >
               {busy ? (
-                <svg
-                  width={13}
-                  height={13}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2.5}
-                  strokeLinecap="round"
-                  aria-label="Working"
-                  style={{ animation: "spin 1s linear infinite" }}
-                >
-                  <path d="M21 12a9 9 0 1 1-6.2-8.56" />
-                </svg>
+                <span className="inline-flex items-center gap-1.5">
+                  <IconLoader2
+                    size={14}
+                    stroke={2}
+                    className="animate-spin"
+                    aria-hidden
+                  />
+                  {confirmLabel}
+                </span>
               ) : (
                 confirmLabel
               )}

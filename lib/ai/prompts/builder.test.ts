@@ -20,7 +20,7 @@ describe("buildSystemPrompt account kind", () => {
     expect(prompt).toContain("0x4f3a000000000000000000000000000000000001");
     expect(prompt).toContain("NEAR Intents account signed with a passkey");
     expect(prompt).toContain("Never ask the user to connect a wallet");
-    expect(prompt).toContain("The balance is confidential");
+    expect(prompt).toContain("The balance is private");
     expect(prompt).toContain("get_wallet_balances");
     expect(prompt).toContain("get_super_balances");
     expect(prompt).toContain(
@@ -32,6 +32,8 @@ describe("buildSystemPrompt account kind", () => {
     // The wallet context would claim a connected wallet at the account
     // address, which a passkey account does not have.
     expect(prompt).not.toContain("Connected wallet:");
+    // The mechanism is internal: the model never receives its name.
+    expect(prompt.toLowerCase()).not.toContain("confidential");
   });
 
   it("leaves the wallet prompt unchanged", () => {
@@ -62,5 +64,35 @@ describe("buildSystemPrompt account kind", () => {
     });
 
     expect(prompt).not.toContain("Passkey account:");
+  });
+
+  it("tells the model that names resolve server-side", () => {
+    for (const accountKind of ["wallet", "passkey"] as const) {
+      const prompt = buildSystemPrompt({ accountKind });
+      expect(prompt).toContain(
+        "a name such as vitalik.eth or example.sns may be passed through unchanged",
+      );
+    }
+  });
+
+  it("keeps the disclosure rules under a SYSTEM_INSTRUCTIONS override", () => {
+    process.env.SYSTEM_INSTRUCTIONS = "You are a helpful assistant.";
+    try {
+      const prompt = buildSystemPrompt({
+        accountKind: "wallet",
+        activeAddress: "0x32596df10ff2ac5acde8406e6adcc8d047921073",
+        activeChain: "evm",
+      });
+
+      expect(prompt).toContain("You are a helpful assistant.");
+      expect(prompt).toContain(
+        "Never show a contract ID or full asset id unless the user explicitly asks",
+      );
+      expect(prompt).toContain("from your Near Account");
+      expect(prompt).toContain("Connected wallet:");
+      expect(prompt.toLowerCase()).not.toContain("confidential");
+    } finally {
+      delete process.env.SYSTEM_INSTRUCTIONS;
+    }
   });
 });

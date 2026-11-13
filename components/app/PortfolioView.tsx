@@ -8,6 +8,7 @@ import { IconChevronLeft, IconWallet } from "@tabler/icons-react";
 import { Button } from "@/components/atoms/Button";
 import { SegmentedControl } from "@/components/atoms/SegmentedControl";
 import {
+  PASSKEY_PORTFOLIO_TABS,
   PORTFOLIO_TABS,
   portfolioTabIcons,
   type PortfolioTab,
@@ -15,13 +16,12 @@ import {
 import SidebarNav from "@/components/primitives/SidebarNav";
 import { AccountControl } from "@/components/app/AccountControl";
 import { openWalletPicker } from "@/components/app/ConnectGate";
-import { PasskeyPortfolio } from "@/components/app/PasskeyPortfolio";
-import { PortfolioHero, BalancesTitleRow, type AllocationGroup } from "@/components/finance/PortfolioHero";
+import { PortfolioChrome } from "@/components/app/PortfolioChrome";
+import type { AllocationGroup } from "@/components/finance/PortfolioHero";
 import {
   HoldingsTable,
   flattenGroups,
 } from "@/components/finance/HoldingsTable";
-import { SuperAccountTab } from "@/components/app/SuperAccountTab";
 import { WatchedTab } from "@/components/app/WatchedTab";
 import type { WatchedCardEntry } from "@/components/finance/WatchedCards";
 import { TrackDialog } from "@/components/app/TrackDialog";
@@ -54,6 +54,8 @@ import {
   usePortfolio,
   useWatchedPortfolio,
 } from "./portfolioQueries";
+import { useSuperAccountView } from "./useSuperAccountView";
+import { useWatchedDetailView } from "./useWatchedDetailView";
 import { useWatchlist, type WatchlistEntry } from "./useWatchlist";
 import {
   SAMPLE_PORTFOLIO,
@@ -63,6 +65,8 @@ import {
   sampleGroupsWithRows,
   type PortfolioSnapshot,
 } from "./portfolioCache";
+import { isIntentsGroupName } from "@/lib/wallet/balances";
+import type { ChainKind } from "@/lib/wallet/types";
 
 /* ─────────────────────────────────────────────────────────
  * PORTFOLIO
@@ -114,88 +118,6 @@ export type WatchControls = {
   isRefreshing?: boolean;
 };
 
-/* The wallet side owns its own skeleton: the switcher above it never
- * unmounts, so the tab the user picked keeps its real control while the
- * rows arrive. One stable id means a returning visit paints the account's
- * last real shape instead of the sample's five rows. */
-function WalletPanel({
-  snapshot,
-  rows,
-  group,
-  onToggleGroup,
-  onRefresh,
-  refreshing = false,
-}: {
-  snapshot: PortfolioSnapshot | null;
-  /** The last read's row count, so a cold skeleton matches this table. */
-  rows: number | null;
-  group: AllocationGroup | null;
-  onToggleGroup: (next: AllocationGroup) => void;
-  onRefresh: () => void;
-  refreshing?: boolean;
-}) {
-  const pending = snapshot === null;
-  const sample = useMemo(() => {
-    if (!pending) return SAMPLE_PORTFOLIO;
-    const walletGroups = sampleGroupsWithRows(
-      SAMPLE_PORTFOLIO.walletGroups ?? [],
-      rows,
-    );
-    return {
-      ...SAMPLE_PORTFOLIO,
-      groups: walletGroups,
-      walletGroups,
-    };
-  }, [pending, rows]);
-
-  return (
-    <Skeleton
-      id="portfolio:wallet"
-      data={snapshot}
-      sample={sample}
-      label="Reading your balances."
-    >
-      {(loaded) => {
-        const groups =
-          loaded.walletGroups ??
-          loaded.groups.filter((entry) => entry.name !== "Settlement Ledger");
-        const items = flattenGroups(groups);
-        const total =
-          loaded.walletUsd ??
-          Number.parseFloat(
-            groups
-              .reduce(
-                (sum, entry) =>
-                  sum +
-                  entry.items.reduce((sub, item) => sub + item.valueUsd, 0),
-                0,
-              )
-              .toFixed(2),
-          );
-        return (
-          <div className="flex flex-col gap-3">
-            <BalancesTitleRow onRefresh={onRefresh} refreshing={refreshing} />
-            <PortfolioHero
-              total={total}
-              count={items.length}
-              scope="wallet"
-              items={items}
-              selected={group}
-              onSelect={onToggleGroup}
-              animate={!pending}
-            />
-            <HoldingsTable
-              groups={groups}
-              group={group}
-              animate={!pending}
-            />
-          </div>
-        );
-      }}
-    </Skeleton>
-  );
-}
-
 function PortfolioBody({
   snapshot,
   walletIcon,
@@ -209,7 +131,7 @@ function PortfolioBody({
 }: {
   snapshot: PortfolioSnapshot | null;
   walletIcon?: string;
-  chain: string | null;
+  chain: ChainKind | null;
   address: string | null;
   tab: PortfolioTab;
   onTabChange: (next: PortfolioTab) => void;
@@ -222,6 +144,8 @@ function PortfolioBody({
   // Bar selection doubles as the table filter; null shows everything.
   // Switching tabs keeps the group — stables are stables on either side.
   const [group, setGroup] = useState<AllocationGroup | null>(null);
+  const toggleGroup = (next: AllocationGroup) =>
+    setGroup((prev) => (prev === next ? null : next));
   const scope = chain && address ? portfolioScope(chain, address) : null;
   // The last settled row counts are read even when the public snapshot is
   // present: the super account's private read can still be pending, and
@@ -235,8 +159,88 @@ function PortfolioBody({
   const tabReady =
     tab === "Watchlist" ? watch.entries !== null : snapshot !== null;
 
+  const walletGroups = useMemo(() => {
+    if (snapshot) {
+      return (
+        snapshot.walletGroups ??
+        snapshot.groups.filter((entry) => !isIntentsGroupName(entry.name))
+      );
+    }
+    return sampleGroupsWithRows(SAMPLE_PORTFOLIO.walletGroups ?? [], walletRows);
+  }, [snapshot, walletRows]);
+  const walletSample = useMemo(() => {
+    const groups = sampleGroupsWithRows(
+      SAMPLE_PORTFOLIO.walletGroups ?? [],
+      walletRows,
+    );
+    return {
+      groups,
+      totalUsd: SAMPLE_PORTFOLIO.walletUsd ?? 0,
+    };
+  }, [walletRows]);
+  const walletItems = useMemo(() => flattenGroups(walletGroups), [walletGroups]);
+  const walletTotal =
+    snapshot?.walletUsd ??
+    (snapshot
+      ? Number.parseFloat(
+          walletItems
+            .reduce((sum, item) => sum + item.valueUsd, 0)
+            .toFixed(2),
+        )
+      : (SAMPLE_PORTFOLIO.walletUsd ?? 0));
+  const walletData = snapshot
+    ? { groups: walletGroups, totalUsd: walletTotal }
+    : null;
+
+  // The super read stays mounted so the private gate and its reads do not
+  // restart every time the tab is opened; it only reads while the tab is
+  // visible, so opening the portfolio never touches the private ledger.
+  const superView = useSuperAccountView({
+    chain,
+    address,
+    publicGroups: snapshot?.superGroups ?? [],
+    publicPending: snapshot === null,
+    publicRefreshing: isRefreshing,
+    sampleRows: superRows,
+    onRefresh,
+    active: tab === "Super account",
+  });
+
+  // The watched detail is shaped for the same chrome. Keeping the hook
+  // mounted across tabs lets the address and total morph into the watched
+  // account instead of remounting the section.
+  const watchedView = useWatchedDetailView({
+    entry: watch.selected,
+    snapshot: watch.snapshot,
+    isPending: watch.snapshotPending,
+    error: watch.snapshotError,
+    refresh: watch.refreshSnapshot,
+    isRefreshing: watch.isRefreshing,
+  });
+
+  const isSuper = tab === "Super account";
+  const isWatch = tab === "Watchlist";
+
+  // The bar filter belongs to the account on screen, so a new watched
+  // account starts clean. Entering or leaving the tab keeps it.
+  const watchedId = watchedView?.entry.id ?? null;
+  const [filterFor, setFilterFor] = useState<string | null>(null);
+  if (watchedId && filterFor === null) {
+    setFilterFor(watchedId);
+  } else if (watchedId && filterFor !== watchedId) {
+    setFilterFor(watchedId);
+    setGroup(null);
+  }
+
+  const chromeVisible = !isWatch || watchedView !== null;
+  // Wallet and super share one layout, so torph carries the address,
+  // total, sentence, and pills across that switch. The watchlist is its
+  // own layout; crossing either boundary remounts the target page and
+  // replays the one entrance.
+  const layoutKey = isWatch ? "watchlist" : "accounts";
+
   return (
-    <div className="flex flex-col gap-3">
+    <div className={`flex flex-col ${isWatch ? "gap-6" : "gap-8"}`}>
       <SegmentedControl
         options={PORTFOLIO_TABS}
         value={tab}
@@ -245,39 +249,13 @@ function PortfolioBody({
         className="self-start"
         showSelection={tabReady}
       />
-      {/* This wrapper mounts once with the table, and again only when the
-        * tab key changes. Data landing under it never remounts it, so the
-        * reveal is skullet's alone instead of a second fade-up. */}
+      {/* Same layout: stays mounted so torph can morph. Layout change:
+        * remounts the target and replays the page entrance. */}
       <div
-        key={tab}
-        className="flex flex-col gap-3 animate-[fade-up_250ms_cubic-bezier(0.23,1,0.32,1)]"
+        key={layoutKey}
+        className="flex flex-col gap-6 animate-[fade-up_380ms_cubic-bezier(0.23,1,0.32,1)_both]"
       >
-        {tab === "Your wallet" ? (
-          <WalletPanel
-            snapshot={snapshot}
-            rows={walletRows}
-            group={group}
-            onToggleGroup={(next) =>
-              setGroup((prev) => (prev === next ? null : next))
-            }
-            onRefresh={onRefresh}
-            refreshing={isRefreshing}
-          />
-        ) : tab === "Super account" ? (
-          <SuperAccountTab
-            chain={chain}
-            address={address}
-            publicGroups={snapshot?.superGroups ?? []}
-            publicPending={snapshot === null}
-            publicRefreshing={isRefreshing}
-            sampleRows={superRows}
-            group={group}
-            onToggleGroup={(next) =>
-              setGroup((prev) => (prev === next ? null : next))
-            }
-            onRefresh={onRefresh}
-          />
-        ) : (
+        {isWatch ? (
           <WatchedTab
             entries={watch.entries}
             listError={watch.listError}
@@ -289,14 +267,139 @@ function PortfolioBody({
             onEdit={watch.onEdit}
             onTrack={watch.onTrack}
             onSetDefault={watch.onSetDefault}
-            snapshot={watch.snapshot}
-            isPending={watch.snapshotPending}
-            error={watch.snapshotError}
-            refresh={watch.refreshSnapshot}
             atLimit={watch.atLimit}
-            isRefreshing={watch.isRefreshing}
           />
-        )}
+        ) : null}
+      {chromeVisible ? (
+        /* Within the watchlist tab this stays mounted across card
+         * changes, so torph can morph the identity and totals. */
+        <Skeleton
+          id="portfolio:content"
+          data={
+            isWatch
+              ? (watchedView?.data ?? null)
+              : isSuper
+                ? superView.skeletonData
+                : walletData
+          }
+          sample={
+            isWatch
+              ? (watchedView?.sample ?? walletSample)
+              : isSuper
+                ? superView.sample
+                : walletSample
+          }
+          label={
+            isWatch
+              ? (watchedView?.label ?? "Reading public balances.")
+              : isSuper
+                ? superView.label
+                : "Reading your balances."
+          }
+        >
+          {(loaded) => {
+            // While the watched sample is on the ghost, measure its rows;
+            // once the snapshot is real, the queued hero trails the table.
+            const watchLive = isWatch && watchedView?.data != null;
+            const heroGroups =
+              watchLive && watchedView
+                ? watchedView.heroGroups
+                : loaded.groups;
+            const total =
+              watchLive && watchedView
+                ? watchedView.total
+                : loaded.totalUsd;
+            return (
+              <PortfolioChrome
+                address={isWatch ? (watchedView?.address ?? address) : address}
+                // The subject names a watched card; wallet and super use
+                // the account the user is already looking at.
+                chain={
+                  isWatch
+                    ? (watchedView?.entry.chain ?? "evm")
+                    : (chain ?? "evm")
+                }
+                qrTitle={
+                  isWatch
+                    ? (watchedView?.subject ?? "Watchlist")
+                    : isSuper
+                      ? "Super account"
+                      : "Your wallet"
+                }
+                scope={isWatch ? "watched" : isSuper ? "super" : "wallet"}
+                subject={isWatch ? watchedView?.subject : undefined}
+                groups={loaded.groups}
+                heroGroups={heroGroups}
+                total={total}
+                masked={isSuper ? superView.showLock : undefined}
+                heroAnimate={
+                  isWatch
+                    ? (watchedView?.heroAnimate ?? false)
+                    : isSuper
+                      ? !superView.pending
+                      : snapshot !== null
+                }
+                tableAnimate={
+                  isWatch
+                    ? (watchedView?.tableAnimate ?? false)
+                    : isSuper
+                      ? !superView.pending
+                      : snapshot !== null
+                }
+                refreshing={
+                  isWatch
+                    ? watchedView?.refreshing
+                    : isSuper
+                      ? superView.refreshing
+                      : isRefreshing
+                }
+                onRefresh={
+                  isWatch
+                    ? watchedView?.refresh
+                    : isSuper
+                      ? superView.refreshAll
+                      : onRefresh
+                }
+                bodyKey={
+                  isWatch
+                    ? `watched:${watchedView?.bodyKey ?? ""}`
+                    : isSuper
+                      ? "super"
+                      : "wallet"
+                }
+                emptyTitle={
+                  isWatch ? "No public holdings found." : undefined
+                }
+                error={
+                  isWatch
+                    ? watchedView?.failed
+                    : isSuper
+                      ? superView.failed
+                      : undefined
+                }
+                onRetry={
+                  isWatch
+                    ? watchedView?.refresh
+                    : isSuper
+                      ? superView.retryPrivate
+                      : undefined
+                }
+                gate={
+                  isSuper && superView.showLock
+                    ? { forceLocked: superView.forceLocked }
+                    : null
+                }
+                dimmed={isWatch ? watchedView?.stale : undefined}
+                morphDuration={
+                  isWatch ? watchedView?.morphDuration : undefined
+                }
+                group={group}
+                onSelectGroup={toggleGroup}
+              />
+            );
+          }}
+        </Skeleton>
+      ) : null}
       </div>
     </div>
   );
@@ -411,7 +514,7 @@ export default function PortfolioView({
           void queryClient.prefetchQuery({
             queryKey: [...PORTFOLIO_QUERY_KEY, scope],
             queryFn: () => fetchPortfolio(entry.address, entry.chain),
-            staleTime: 60_000,
+            staleTime: 300_000,
           });
         }
       };
@@ -450,10 +553,12 @@ export default function PortfolioView({
 
   const removeWatch = (id: string) => {
     // The rows left after this one become the fallback, so the detail
-    // keeps a default instead of emptying on every delete.
+    // keeps a default instead of emptying on every delete. Returns the
+    // write so the confirm dialog can ride check → spinner → notice
+    // instead of closing before the list settles.
     const remaining =
       watchlist.entries?.filter((entry) => entry.id !== id) ?? null;
-    void watchlist.remove(id).then(() => {
+    return watchlist.remove(id).then(() => {
       // The detail unmounts with its row; anything left keeps the list.
       if (watchSelected === id) {
         const next = remaining?.[0] ?? null;
@@ -491,16 +596,21 @@ export default function PortfolioView({
     setEditEntry(entry);
   };
 
-  const trackEntry = (input: {
+  // The tracked row is already in the cached list when add resolves, so
+  // the card paints under the open dialog. Selecting it now starts its
+  // detail read; the dialog then holds through one list re-read, so the
+  // close reveals the card and its skeleton rather than the empty state.
+  const trackEntry = async (input: {
     chain: WatchlistEntry["chain"];
     address: string;
     label?: string;
-  }) =>
-    watchlist.add(input).then((entry) => {
-      setWatchSelected(entry.id);
-      writeTabParams("Watchlist");
-      return entry;
-    });
+  }) => {
+    const entry = await watchlist.add(input);
+    setWatchSelected(entry.id);
+    writeTabParams("Watchlist");
+    await watchlist.refresh();
+    return entry;
+  };
 
   // Edit saves through the same dialog, prefilled: the label, the
   // address, or both may have changed. A blanked label keeps the old

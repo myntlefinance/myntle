@@ -155,6 +155,14 @@ describe("quote modes", () => {
     });
   });
 
+  it("never sends a public confidentiality even when a caller asks for it", async () => {
+    const { requests } = installFetch(() => quoteResponse());
+
+    await quote({ ...QUOTE_PARAMS, confidentiality: "public" });
+
+    expect(requestBody(requests, "/v0/quote").confidentiality).toBe("basic");
+  });
+
   it("sends CONFIDENTIAL_INTENTS for deposit, recipient, and refund", async () => {
     const { requests } = installFetch(() => quoteResponse());
 

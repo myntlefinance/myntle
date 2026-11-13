@@ -5,7 +5,11 @@ import { TokenChip } from "@/components/finance/TokenChip";
 import { ChipHover } from "@/components/finance/ChipHover";
 import { TokenPopup } from "@/components/finance/TokenPopup";
 import { prefetchSymbolPrice } from "@/components/app/useAssetPrice";
-import { resolveUploadedToken } from "@/components/finance/TokenAvatar";
+import { prefetchTokenSeriesForSymbol } from "@/components/app/useTokenSeries";
+import {
+  resolveTokenFile,
+  resolveUploadedToken,
+} from "@/components/finance/TokenAvatar";
 import { extractChildrenText } from "@/components/app/markdownText";
 
 type AssetPillProps = {
@@ -61,7 +65,9 @@ export function AssetPill({ children, symbol, chain }: AssetPillProps) {
     const split = splitLabel(raw);
     if (!split) return <>{children ?? raw}</>;
     const candidate = split.ticker.toUpperCase();
-    const known = resolveUploadedToken(split.ticker) != null;
+    const known =
+      resolveUploadedToken(split.ticker) != null ||
+      resolveTokenFile(split.ticker) != null;
     const looksLikeTicker =
       TICKER.test(candidate) &&
       (split.ticker === split.ticker.toUpperCase() || known);
@@ -82,7 +88,12 @@ export function AssetPill({ children, symbol, chain }: AssetPillProps) {
         label={`${ticker} details`}
         height={220}
         content={<TokenPopup symbol={ticker} chain={badge} />}
-        onIntent={() => prefetchSymbolPrice(ticker, badge)}
+        onIntent={() => {
+          prefetchSymbolPrice(ticker, badge);
+          // The chart is not part of the price path, so it warms in parallel
+          // and the popup opens with both a figure and a line.
+          void prefetchTokenSeriesForSymbol(ticker, badge);
+        }}
       >
         <TokenChip symbol={ticker} badge={badge} />
       </ChipHover>

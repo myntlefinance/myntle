@@ -200,6 +200,18 @@ export function depositTransitionForStatus(
   }
 }
 
+/**
+ * The sentence a dead deposit address offers in place of the address.
+ *
+ * The card draws it as the action after its status sentence — "Expired.
+ * Please generate a fresh deposit address." — and a click sends the same
+ * words as a chat prompt. A fresh address is a new request through the
+ * conversation that issued the old one, never a second mint behind the
+ * reader's back, and the dead address leaves the card the moment it can no
+ * longer be funded.
+ */
+export const FRESH_DEPOSIT_PROMPT = "Please generate a fresh deposit address.";
+
 const MESSAGE: Record<
   Exclude<DepositPhase, "awaiting" | "waiting">,
   string
@@ -209,7 +221,10 @@ const MESSAGE: Record<
   incomplete: "The deposit was below the required amount.",
   refunded: "The deposit was refunded.",
   failed: "The deposit did not settle. The record has the details.",
-  expired: "Expired. Please generate a fresh deposit address.",
+  // The invitation to replace the address is the action the card draws
+  // beside this sentence, not part of it: the same words are sent as the
+  // prompt, and a surface with no composer says only what happened.
+  expired: "Expired.",
 };
 
 /** The one sentence a phase adds, or nothing while the address waits. */

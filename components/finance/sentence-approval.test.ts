@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PasskeyError } from "@/lib/auth/passkey-client";
 import type { PasskeySignedIntent } from "@/lib/auth/passkey-signer";
 import {
   depositApproval,
@@ -81,10 +82,16 @@ describe("swapApproval", () => {
     vi.stubGlobal("fetch", fetchSpy);
 
     const phases: string[] = [];
-    const sign = vi.fn(async (payload: string) => {
-      expect(payload).toBe(SIGNED.payload);
-      return { ...SIGNED, payload };
-    });
+    const sign = vi.fn(
+      async (intent: {
+        standard: string;
+        payload: string | Record<string, unknown>;
+      }) => {
+        expect(intent.standard).toBe("webauthn");
+        expect(intent.payload).toBe(SIGNED.payload);
+        return { ...SIGNED, payload: intent.payload };
+      },
+    );
     const run = swapApproval({
       quoteId: QUOTE_ID,
       approvalId: "aitxt-swap-1",
@@ -158,13 +165,15 @@ describe("swapApproval", () => {
     const result = await swapApproval({
       quoteId: QUOTE_ID,
       sign: async () => {
-        throw new Error("The passkey prompt was cancelled. Nothing was moved.");
+        throw new PasskeyError(
+          "The passkey prompt was cancelled. Nothing was moved.",
+        );
       },
     })({ onPhase: () => {} });
 
     expect(result).toEqual({
       ok: false,
-      message: "The passkey did not sign this trade. Nothing was moved.",
+      message: "The passkey prompt was cancelled. Nothing was moved.",
     });
   });
 });

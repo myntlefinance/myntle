@@ -3,14 +3,17 @@
 import { useState, type ReactNode } from "react";
 import { IconEye, IconLock, IconWallet } from "@tabler/icons-react";
 import { SegmentedControl } from "@/components/atoms/SegmentedControl";
-import { PortfolioHero, BalancesTitleRow, type AllocationGroup } from "@/components/finance/PortfolioHero";
+import { PortfolioHero, type AllocationGroup } from "@/components/finance/PortfolioHero";
 import {
   HoldingsTable,
   flattenGroups,
 } from "@/components/finance/HoldingsTable";
+import { WalletAddressRow } from "@/components/app/WalletAddressRow";
 import { WatchedSkeletonSample } from "@/components/app/WatchedTab";
+import { isIntentsGroupName } from "@/lib/wallet/balances";
 import type { PortfolioSnapshot } from "./portfolioCache";
 import {
+  PASSKEY_PORTFOLIO_TABS,
   PORTFOLIO_TABS,
   type PortfolioTab,
 } from "@/components/app/portfolioTabs";
@@ -25,7 +28,7 @@ import {
  * ───────────────────────────────────────────────────────── */
 
 export type { PortfolioTab };
-export { PORTFOLIO_TABS };
+export { PASSKEY_PORTFOLIO_TABS, PORTFOLIO_TABS };
 
 /* The tab marks name the account, not the network: the connected wallet's
  * brand mark from the sentence chips, and the Myntle mark for the super
@@ -86,10 +89,10 @@ export function PortfolioSkeletonBody({
 }) {
   const walletGroups =
     snapshot.walletGroups ??
-    snapshot.groups.filter((group) => group.name !== "Settlement Ledger");
+    snapshot.groups.filter((group) => !isIntentsGroupName(group.name));
   const superGroups =
     snapshot.superGroups ??
-    snapshot.groups.filter((group) => group.name === "Settlement Ledger");
+    snapshot.groups.filter((group) => isIntentsGroupName(group.name));
   const sumGroups = (groups: typeof walletGroups) =>
     groups.reduce(
       (total, group) =>
@@ -105,9 +108,12 @@ export function PortfolioSkeletonBody({
   );
   const activeItems = flattenGroups(activeGroups);
   const locked = tab === "Super account" && superLocked;
+  // The shell has no session yet, so the address row draws its shape from
+  // a realistic address; Skullet turns the text into bones either way.
+  const sampleAddress = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className={`flex flex-col ${tab === "Watchlist" ? "gap-6" : "gap-8"}`}>
       <SegmentedControl
         options={PORTFOLIO_TABS}
         value={tab}
@@ -121,7 +127,17 @@ export function PortfolioSkeletonBody({
         <WatchedSkeletonSample />
       ) : (
         <div className="flex flex-col gap-3">
-          <BalancesTitleRow onRefresh={() => {}} />
+          <WalletAddressRow
+            address={sampleAddress}
+            chain="evm"
+            qrTitle={
+              tab === "Super account" ? "Super account" : "Your wallet"
+            }
+            onRefresh={() => {}}
+            total={activeUsd}
+            masked={locked}
+            animate={false}
+          />
           <PortfolioHero
             total={activeUsd}
             count={activeItems.length}
@@ -131,6 +147,7 @@ export function PortfolioSkeletonBody({
             onSelect={() => {}}
             masked={locked}
             animate={false}
+            hideTotal
           />
           {locked ? (
             <div className="relative min-h-[50vh]">

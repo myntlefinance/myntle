@@ -159,6 +159,47 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "An error occurred." }, { status: 400 });
   }
 
+  // A stored destination name resolves fresh at sign time. Names can be
+  // re-pointed between pricing and approval, so the stored `resolvedAt`
+  // is never consulted: only the same address proceeds. TTL 0 by
+  // construction.
+  if (mode === "confidential-withdrawal") {
+    const storedName = (stored.request as Record<string, unknown>)
+      .destinationName;
+    if (typeof storedName === "string" && storedName.length > 0) {
+      const { reverifyNameBinding } = await import("@/lib/names/binding");
+      const { nameChainForInput } = await import("@/lib/names/detect");
+      const check = await reverifyNameBinding({
+        chain: nameChainForInput(storedName) ?? "evm",
+        name: storedName,
+        address: params.recipient,
+      });
+      if (!check.ok) {
+        if (check.reason === "unavailable") {
+          console.error("[intents/approve] destination re-resolve failed", {
+            quoteId: stored.id,
+          });
+          return NextResponse.json(
+            { error: "An error occurred." },
+            { status: 502 },
+          );
+        }
+        console.error("[intents/approve] destination name changed", {
+          quoteId: stored.id,
+          reason: check.reason,
+        });
+        return NextResponse.json(
+          {
+            error: "stale",
+            message:
+              "The destination changed since it was priced. Please ask for a fresh quote.",
+          },
+          { status: 400 },
+        );
+      }
+    }
+  }
+
   let execution: Awaited<ReturnType<typeof createExecutionQuote>>;
   try {
     execution = await createExecutionQuote({

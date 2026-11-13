@@ -26,6 +26,7 @@ import {
   PasskeyError,
 } from "@/lib/auth/passkey-client";
 import type { ConnectedWallet } from "@/lib/wallet/types";
+import { readLastWallet } from "@/lib/wallet/last-wallet";
 
 /**
  * The single source of truth for who is using the app.
@@ -274,8 +275,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [apply, wallet]);
 
   const actualAccount = wallet.account;
+  // Brand falls back to the wallet the session was signed in with when
+  // the connection is gone (reload without auto-reconnect): the record
+  // only ever stands in for its own account, checked inside.
   const account = useMemo(
-    () => sessionAccountFor(state.identity, actualAccount),
+    () =>
+      sessionAccountFor(state.identity, actualAccount, readLastWallet()),
     [state.identity, actualAccount],
   );
   // A session stays signed in while the browser wallet is used for something
