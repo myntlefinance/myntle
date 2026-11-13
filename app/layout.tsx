@@ -21,14 +21,15 @@ const themeScript = `(function(){try{var t=localStorage.getItem("bui-theme");var
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono-face" });
 
-/* No production origin is committed anywhere, so the canonical origin comes
- * from the deployment: an explicit override, else Vercel's own project URL.
- * Absolute preview URLs resolve once one of them is set. */
+/* A social card is only useful with an absolute URL, and a build with no
+ * origin would otherwise publish localhost as every preview image. Vercel
+ * supplies the project's own production domain, and the product domain is
+ * the last resort for a build that has neither. */
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
   (process.env.VERCEL_PROJECT_PRODUCTION_URL
     ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-    : undefined);
+    : "https://myntle.xyz");
 
 /* One sentence for the card, and a different one for the image, so a preview
  * does not show the same words twice. The image itself lives in
@@ -39,11 +40,11 @@ const description =
 const shareTitle = "Ask for a trade and watch it settle";
 
 export const metadata: Metadata = {
-  ...(siteUrl ? { metadataBase: new URL(siteUrl) } : {}),
+  metadataBase: new URL(siteUrl),
   title: { default: "Myntle — chat-first finance", template: "%s — Myntle" },
   description,
   applicationName: "Myntle",
-  ...(siteUrl ? { alternates: { canonical: "/" } } : {}),
+  alternates: { canonical: "/" },
   openGraph: {
     type: "website",
     siteName: "Myntle",
