@@ -21,6 +21,7 @@ import {
   prefetchThread,
   prefetchTrashedThread,
   readTrashedCache,
+  newestTranscript,
   threadReadRecently,
   trashedMessageCache,
   writeTrashedCache,
@@ -208,5 +209,43 @@ describe("threadCache", () => {
     clearThreadCache();
 
     expect(hasTrashedCache()).toBe(false);
+  });
+});
+
+describe("newestTranscript", () => {
+  const message = (id: string): UIMessage => ({
+    id,
+    role: "assistant",
+    parts: [{ type: "text", text: id }],
+  });
+  const list = (...ids: string[]) => ids.map(message);
+
+  it("keeps the server seed when it carries a turn the cache has not seen", () => {
+    const seeded = list("a", "b", "c");
+    const cached = list("a", "b");
+
+    expect(newestTranscript(seeded, cached)).toBe(seeded);
+  });
+
+  it("keeps a cached reply the server seed predates", () => {
+    const seeded = list("a", "b");
+    const cached = list("a", "b", "c");
+
+    expect(newestTranscript(seeded, cached)).toBe(cached);
+  });
+
+  it("keeps the seed when both sides end on the same turn", () => {
+    // Same tail: either copy is equally fresh, so the server's page wins and
+    // pagination refills the older pages on demand.
+    const seeded = list("c", "d", "e");
+    const cached = list("a", "b", "c", "d", "e");
+
+    expect(newestTranscript(seeded, cached)).toBe(seeded);
+  });
+
+  it("falls back to whichever side exists", () => {
+    expect(newestTranscript(undefined, list("a"))?.length).toBe(1);
+    expect(newestTranscript(list("a"), undefined)?.length).toBe(1);
+    expect(newestTranscript(undefined, undefined)).toEqual([]);
   });
 });

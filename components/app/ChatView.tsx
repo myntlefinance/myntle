@@ -31,6 +31,7 @@ import {
   deleteCachedMessages,
   findThreadLabel,
   getCachedMessages,
+  newestTranscript,
   loadThreadMessages,
   markThreadRead,
   prefetchThread,
@@ -227,20 +228,27 @@ export default function ChatView({
     ),
   );
 
+  // The first render's transcript, chosen once: a later render must not swap
+  // the seed under a live `useChat` instance.
+  const [initialSeed] = useState(() =>
+    newestTranscript(
+      initialThread?.messages,
+      initialConversationId
+        ? getCachedMessages(initialConversationId)
+        : undefined,
+    ),
+  );
+
   const { messages, sendMessage, setMessages, status, clearError, regenerate, addToolApprovalResponse, stop, resumeStream } = useChat({
     // A turn is a durable workflow run now. When the page loads with an
     // unfinished run, the chat reconnects to its stream and replays from the
     // first chunk, so a reload mid-answer comes back to the same answer
     // instead of the snapshot that happened to be saved.
     resume: resumeInterruptedTurn,
-    // Seed first paint from cache so a thread route never flashes the
-    // composer. useChat only reads this once; later switches go through
-    // setMessages in switchConversation.
-    messages: initialThread?.messages.length
-      ? initialThread.messages
-      : initialConversationId
-        ? (getCachedMessages(initialConversationId) ?? [])
-        : [],
+    // Seed first paint from the newer of the server read and this tab's
+    // persisted copy, so a route payload the router cached before the last
+    // turn can never hide a message that is already on screen somewhere.
+    messages: initialSeed,
     transport: new WorkflowChatTransport({
       api: "/api/chat",
       // The workflow transport does not take transport-level headers/body,

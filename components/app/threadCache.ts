@@ -51,6 +51,26 @@ export const trashedMessageCache = new Map<string, UIMessage[]>();
 const trashedLoads = new Map<string, Promise<TrashedMessagesLoad>>();
 export const threadPagination = new Map<string, { hasMore: boolean; oldestSeq?: number }>();
 
+/**
+ * The server seed and the copy this tab persisted can disagree when the
+ * router hands back a payload it rendered before the last turn. Both lists
+ * are chronological and share a prefix, so the one whose tail the other does
+ * not contain is the newer read. The server wins a genuine divergence, and a
+ * cached reply that is simply older never replaces a newer server read.
+ */
+export function newestTranscript(
+  seeded: UIMessage[] | undefined,
+  cached: UIMessage[] | undefined,
+): UIMessage[] {
+  if (!seeded?.length) return cached ?? [];
+  if (!cached?.length) return seeded;
+  const seededLast = seeded[seeded.length - 1].id;
+  const cachedLast = cached[cached.length - 1].id;
+  if (seededLast === cachedLast) return seeded;
+  if (cached.some((message) => message.id === seededLast)) return cached;
+  return seeded;
+}
+
 export function getCachedMessages(slug: string): UIMessage[] | undefined {
   const mem = messageCache.get(slug);
   if (mem && mem.length > 0) return mem;
