@@ -2,7 +2,6 @@
 
 import {
   useMemo,
-  useRef,
   Children,
   createContext,
   useContext,
@@ -15,6 +14,10 @@ import dynamic from "next/dynamic";
 import { Streamdown, type Components, type CustomRenderer, type MathPlugin } from "streamdown";
 import { defaultRemarkPlugins } from "streamdown";
 import { remarkMark } from "@/components/app/remarkMark";
+import {
+  buildTableTitleMap,
+  tableContentKey,
+} from "@/components/app/remarkTableTitles";
 import { cn } from "@/lib/utils";
 import { MarkdownLink } from "@/components/app/MarkdownLink";
 import { MarkdownCode } from "@/components/app/MarkdownCode";
@@ -32,14 +35,16 @@ const PeleDiagramLazy = dynamic(
   { ssr: false, loading: () => null },
 );
 
+/* Titles keyed by table content, derived once per render from the
+ * source. The map is read-only: components look titles up, never write. */
+const TableTitleMapContext = createContext<ReadonlyMap<string, string>>(
+  new Map(),
+);
+
 const peleRenderer: CustomRenderer = {
   language: "mermaid",
   component: PeleDiagramLazy as unknown as CustomRenderer["component"],
 };
-
-const TableTitleContext = createContext<{ current: string | null }>({
-  current: null,
-});
 
 function createHeadingComponent(Tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
   return function HeadingComponent({
@@ -47,9 +52,7 @@ function createHeadingComponent(Tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
     node: _node,
     ...props
   }: HTMLAttributes<HTMLHeadingElement> & { node?: unknown }) {
-    const ctx = useContext(TableTitleContext);
-    const text = extractChildrenText(children).trim();
-    if (ctx && text) ctx.current = text;
+    void _node;
     return (
       <Tag data-table-title="" {...props}>
         {children}
@@ -63,7 +66,7 @@ function TableParagraphComponent({
   node: _node,
   ...props
 }: HTMLAttributes<HTMLParagraphElement> & { node?: unknown }) {
-  const ctx = useContext(TableTitleContext);
+  void _node;
   const text = extractChildrenText(children).trim();
   const tablePrefixMatch = text.match(
     /^(?:table\s*[:\-]\s*|\[)(.+?)(?:\])?$/i,
@@ -76,7 +79,6 @@ function TableParagraphComponent({
     (children[0] as { type?: string }).type === "strong";
 
   if (tablePrefixMatch) {
-    if (ctx) ctx.current = tablePrefixMatch[1].trim();
     return (
       <p data-table-title="" {...props}>
         {children}
@@ -84,14 +86,12 @@ function TableParagraphComponent({
     );
   }
   if (isBoldOnly && text.length > 0 && text.length < 80) {
-    if (ctx) ctx.current = text;
     return (
       <p data-table-title="" {...props}>
         {children}
       </p>
     );
   }
-  if (ctx) ctx.current = null;
   return <p {...props}>{children}</p>;
 }
 
@@ -108,9 +108,12 @@ function MarkdownMark({
 }
 
 function TableWrapper(props: MarkdownTableProps) {
-  const ctx = useContext(TableTitleContext);
-  const title = props.title || ctx?.current || undefined;
-  if (ctx) ctx.current = null;
+  const titleMap = useContext(TableTitleMapContext);
+  const contentTitle = useMemo(() => {
+    if (!props.node) return undefined;
+    return titleMap.get(tableContentKey(props.node));
+  }, [props.node, titleMap]);
+  const title = props.title || contentTitle || undefined;
   return <MarkdownTable {...props} title={title} />;
 }
 
@@ -123,6 +126,7 @@ type ListItemProps = HTMLAttributes<HTMLLIElement> & { node?: unknown };
  * is list-inside, which puts the marker inline and leaves continuation
  * lines with no indent. The padding lives on the list, not the item. */
 function MarkdownUl({ children, className, node: _node, ...props }: ListProps) {
+  void _node;
   return (
     <ul
       data-streamdown="unordered-list"
@@ -143,6 +147,7 @@ function MarkdownOl({
   node: _node,
   ...props
 }: OrderedListProps) {
+  void _node;
   return (
     <ol
       data-streamdown="ordered-list"
@@ -163,6 +168,7 @@ function MarkdownLi({
   node: _node,
   ...props
 }: ListItemProps) {
+  void _node;
   const isTaskItem =
     typeof className === "string" && className.includes("task-list-item");
   if (isTaskItem) {
@@ -253,6 +259,7 @@ function MarkdownInput({
   node: _node,
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & { node?: unknown }) {
+  void _node;
   if (type === "checkbox") {
     const isChecked = checked === true;
     return (
@@ -312,8 +319,6 @@ export function MarkdownBody({
   components,
   math,
 }: MarkdownBodyProps) {
-  const titleRef = useRef<string | null>(null);
-
   const remarkPlugins = useMemo(
     () => [...Object.values(defaultRemarkPlugins), remarkMark],
     [],
@@ -323,6 +328,10 @@ export function MarkdownBody({
     () => (math ? { math, renderers: [peleRenderer] } : { renderers: [peleRenderer] }),
     [math],
   );
+
+  /* Titles keyed by table content, parsed from the same source Streamdown
+   * renders. Read-only: TableWrapper looks titles up, never writes. */
+  const titleMap = useMemo(() => buildTableTitleMap(children), [children]);
 
   const mergedComponents = useMemo(
     () => ({
@@ -350,7 +359,7 @@ export function MarkdownBody({
   );
 
   return (
-    <TableTitleContext.Provider value={titleRef}>
+    <TableTitleMapContext.Provider value={titleMap}>
       <Streamdown
         plugins={streamdownPlugins}
         remarkPlugins={remarkPlugins}
@@ -369,6 +378,6 @@ export function MarkdownBody({
       >
         {children}
       </Streamdown>
-    </TableTitleContext.Provider>
+    </TableTitleMapContext.Provider>
   );
 }

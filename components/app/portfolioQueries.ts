@@ -259,10 +259,13 @@ export function useWatchedPortfolio(
     [chain, address],
   );
   const [manualRefreshing, setManualRefreshing] = useState(false);
-
-  useEffect(() => {
-    setManualRefreshing(false);
-  }, [scope]);
+  // A new watched address starts unrefreshed. Derived during render so no
+  // effect syncs the scope into state.
+  const [prevScope, setPrevScope] = useState(scope);
+  if (prevScope !== scope) {
+    setPrevScope(scope);
+    if (manualRefreshing) setManualRefreshing(false);
+  }
 
   const fast = useQuery<PortfolioSnapshot>({
     queryKey: [...PORTFOLIO_QUERY_KEY, scope ?? "watched:anonymous", "fast"],

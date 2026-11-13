@@ -42,6 +42,7 @@ export default async function ChatPage({
           // The payload can be reused from the client cache. The read time
           // travels with the messages so the view can tell a fresh seed from
           // one rendered minutes ago and revalidate the old one.
+          // eslint-disable-next-line react-hooks/purity -- server read time: this RSC runs once per request, so Date.now() is the seed's read time, not render impurity.
           seededAt: Date.now(),
           activeRunId: thread.activeRunId,
           activeRunStartedAt: thread.activeRunStartedAt,

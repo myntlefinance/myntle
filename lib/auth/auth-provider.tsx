@@ -194,7 +194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // account can sign in on this browser. `signOut` reloads itself; this
     // covers the expiry path.
     if (wasSignedIn && reply.status === "signed-out") {
-      window.location.assign("/");
+      window.location.replace("/");
     }
     return reply.status;
   }, [apply]);
@@ -287,7 +287,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // the next account on this browser cannot reach the previous one's
     // screens with the back button. The logout above has already settled, so
     // the cookie a reload reads is gone.
-    window.location.assign("/");
+    window.location.replace("/");
   }, [apply, wallet]);
 
   const actualAccount = wallet.account;

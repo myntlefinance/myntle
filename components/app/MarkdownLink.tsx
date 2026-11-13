@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useState,
+  useSyncExternalStore,
   type AnchorHTMLAttributes,
 } from "react";
 import { createPortal } from "react-dom";
@@ -145,11 +146,13 @@ export function MarkdownLink({
   ...props
 }: AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown }) {
   const [modalOpen, setModalOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  // Portal target only exists in the browser. Read from the store instead
+  // of syncing a flag in an effect.
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
   // Incomplete streamdown links while streaming.
   if (href === "streamdown:incomplete-link") {

@@ -458,35 +458,54 @@ export default function TrashView() {
   );
   const hoverIntent = useHoverIntent(hoverTrash);
 
+  // Applying a fetched pair paints synchronously in callbacks only;
+  // the mount effect below fetches in the same shape so its own body
+  // never calls state setters directly.
+  const applyRefresh = useCallback(
+    (nextItems: TrashedItem[], nextThreads: ThreadItem[]) => {
+      queryClient.setQueryData(TRASHED_QUERY_KEY, nextItems);
+      queryClient.setQueryData(THREADS_QUERY_KEY, nextThreads);
+      setItems(nextItems);
+      setThreads(nextThreads);
+      const alive = new Set(nextItems.map((item) => item.id));
+      setSelected((current) => {
+        if ([...current].every((id) => alive.has(id))) return current;
+        return new Set([...current].filter((id) => alive.has(id)));
+      });
+      setExiting((current) => {
+        if ([...current].every((id) => !alive.has(id))) return current;
+        return new Set([...current].filter((id) => alive.has(id)));
+      });
+      setLockedHeights((current) => {
+        const next: Record<string, number> = {};
+        for (const id of Object.keys(current)) if (alive.has(id)) next[id] = current[id];
+        return next;
+      });
+      setLoaded(true);
+    },
+    [queryClient],
+  );
+
   const refresh = useCallback(async () => {
     const [nextItems, nextThreads] = await Promise.all([
       fetchTrashed(),
       fetchThreads(),
     ]);
-    queryClient.setQueryData(TRASHED_QUERY_KEY, nextItems);
-    queryClient.setQueryData(THREADS_QUERY_KEY, nextThreads);
-    setItems(nextItems);
-    setThreads(nextThreads);
-    const alive = new Set(nextItems.map((item) => item.id));
-    setSelected((current) => {
-      if ([...current].every((id) => alive.has(id))) return current;
-      return new Set([...current].filter((id) => alive.has(id)));
-    });
-    setExiting((current) => {
-      if ([...current].every((id) => !alive.has(id))) return current;
-      return new Set([...current].filter((id) => alive.has(id)));
-    });
-    setLockedHeights((current) => {
-      const next: Record<string, number> = {};
-      for (const id of Object.keys(current)) if (alive.has(id)) next[id] = current[id];
-      return next;
-    });
-    setLoaded(true);
-  }, [queryClient]);
+    applyRefresh(nextItems, nextThreads);
+  }, [applyRefresh]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    let cancelled = false;
+    void Promise.all([fetchTrashed(), fetchThreads()]).then(
+      ([nextItems, nextThreads]) => {
+        if (cancelled) return;
+        applyRefresh(nextItems, nextThreads);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [applyRefresh]);
 
   useEffect(() => {
     const onSignIn = () => void refresh();

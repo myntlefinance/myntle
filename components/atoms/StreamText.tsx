@@ -37,13 +37,23 @@ export function StreamText({
   onDone?: () => void;
 }) {
   const [count, setCount] = useState(0);
+  const [prevText, setPrevText] = useState(text);
+  // A new string replays the reveal from the start. Derived during render
+  // so the interval below never syncs state from its own effect.
+  if (prevText !== text) {
+    setPrevText(text);
+    setCount(0);
+  }
   const onProgressRef = useRef(onProgress);
   const onDoneRef = useRef(onDone);
-  onProgressRef.current = onProgress;
-  onDoneRef.current = onDone;
+  useEffect(() => {
+    onProgressRef.current = onProgress;
+  }, [onProgress]);
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
 
   useEffect(() => {
-    setCount(0);
     let i = 0;
     const id = setInterval(() => {
       i = Math.min(i + charsPerTick, text.length);

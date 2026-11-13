@@ -175,17 +175,16 @@ export function UnlockRequestCard({
   const [wasUnlocked, setWasUnlocked] = useState(
     resolved || (unlocked === true && !superseded && !timedOut),
   );
-
-  useEffect(() => {
-    // The live gate never becomes sticky: its state is the session's.
-    if (live) return;
-    if (resolved) {
-      setWasUnlocked(true);
-      return;
-    }
-    if (!unlocked || superseded || timedOut) return;
+  // An unlock latches for this card only, the moment its own request is
+  // answered. Latched during render rather than synced in an effect; the
+  // live gate never latches, so its state keeps following the session.
+  if (
+    !live &&
+    !wasUnlocked &&
+    (resolved || (unlocked === true && !superseded && !timedOut))
+  ) {
     setWasUnlocked(true);
-  }, [live, resolved, unlocked, superseded, timedOut]);
+  }
 
   useEffect(() => {
     if (timedOut || createdAt === null) return;

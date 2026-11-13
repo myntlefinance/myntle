@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  shouldShowTimestampPill,
   formatClusterTimestamp,
-  getMessageTimestamp,
   computeMessageClusters,
-  isSameDay,
 } from "./TimestampPill";
 
 describe("Timestamp clustering & formatting", () => {

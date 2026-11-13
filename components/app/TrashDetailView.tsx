@@ -73,6 +73,14 @@ export default function TrashDetailView({ slug }: { slug: string }) {
   const [missing, setMissing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  // A new trashed thread paints its warmed preview at once, instead of an
+  // effect syncing the cache into state after mount.
+  const [prevId, setPrevId] = useState(id);
+  if (prevId !== id) {
+    setPrevId(id);
+    setMessages(trashedMessageCache.get(id) ?? null);
+    setMissing(false);
+  }
 
   const clusteredMessages = useMemo(
     () => (messages ? computeMessageClusters(messages, getMessageTimestamp) : []),
@@ -149,16 +157,11 @@ export default function TrashDetailView({ slug }: { slug: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    const cached = trashedMessageCache.get(id);
-    if (cached) {
-      setMessages(cached);
-      setMissing(false);
+    if (trashedMessageCache.get(id)) {
       // A trashed chat cannot gain messages. A preview warmed on hover is
       // already the read; fetching it again would only repeat the page.
       return;
     }
-    setMessages(null);
-    setMissing(false);
     void loadTrashedMessages(id).then((result) => {
       if (cancelled) return;
       if (result.kind !== "ok") {

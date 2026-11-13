@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -46,13 +47,17 @@ export function WalletPickerDialog({
   /** Viewport point the dialog grows from; clamped to its own edge. */
   origin?: { x: number; y: number } | null;
 }) {
-  const [mounted, setMounted] = useState(false);
+  // The dialog portals into the document body, which only exists in the
+  // browser. Read from the store instead of syncing a flag in an effect.
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
   const bodyRef = useRef<HTMLDivElement>(null);
   const bodyHeightRef = useRef<number | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelOrigin, setPanelOrigin] = useState<string | undefined>(undefined);
-
-  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {

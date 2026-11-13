@@ -123,12 +123,13 @@ describe("threadCache", () => {
   });
 
   it("shares one message read between a hover prefetch and the open", async () => {
-    const fetchMock = vi.fn(async (_url: string) =>
-      new Response(
+    const fetchMock = vi.fn(async (_input?: RequestInfo | URL) => {
+      void _input;
+      return new Response(
         JSON.stringify({ messages: sampleMessages, hasMore: false }),
         { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    );
+      );
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const prefetch = loadThreadMessages("conv-hover", { prefetch: true });
@@ -145,12 +146,13 @@ describe("threadCache", () => {
   });
 
   it("marks a cold hover as a prefetch and skips a fresh one", async () => {
-    const fetchMock = vi.fn(async (_url: string) =>
-      new Response(JSON.stringify({ messages: sampleMessages }), {
+    const fetchMock = vi.fn(async (_input?: RequestInfo | URL) => {
+      void _input;
+      return new Response(JSON.stringify({ messages: sampleMessages }), {
         status: 200,
         headers: { "content-type": "application/json" },
-      }),
-    );
+      });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     prefetchThread("conv-cold");
@@ -166,12 +168,13 @@ describe("threadCache", () => {
   });
 
   it("reads a trashed preview at the 20-message page size", async () => {
-    const fetchMock = vi.fn(async (_url: string) =>
-      new Response(JSON.stringify({ messages: sampleMessages }), {
+    const fetchMock = vi.fn(async (_input?: RequestInfo | URL) => {
+      void _input;
+      return new Response(JSON.stringify({ messages: sampleMessages }), {
         status: 200,
         headers: { "content-type": "application/json" },
-      }),
-    );
+      });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     prefetchTrashedThread("trash-1");

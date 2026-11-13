@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { render, PeleError } from "pele";
 import {
@@ -33,7 +33,14 @@ export function PeleDiagram({ code, isIncomplete = false }: PeleDiagramProps) {
   const [isPanning, setIsPanning] = useState(false);
   const [isWheeling, setIsWheeling] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  // The fullscreen dialog portals into the document body, which only
+  // exists in the browser. Read from the store instead of syncing a flag
+  // in an effect.
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const panStartRef = useRef({ x: 0, y: 0 });
@@ -50,10 +57,6 @@ export function PeleDiagram({ code, isIncomplete = false }: PeleDiagramProps) {
   const anchorTopRef = useRef<number | null>(null);
   const [currentHeight, setCurrentHeight] = useState<number | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   const handleTabChange = useCallback(
     (nextTab: "preview" | "code") => {
@@ -166,15 +169,10 @@ export function PeleDiagram({ code, isIncomplete = false }: PeleDiagramProps) {
   }, []);
 
   // Mouse wheel zoom in fullscreen canvas anchored at mouse cursor
+  // Leaving fullscreen tears down the wheel listener below, and its
+  // cleanup releases the transient interaction flags with it.
   useEffect(() => {
-    if (!fullscreen) {
-      if (wheelTimeoutRef.current) {
-        clearTimeout(wheelTimeoutRef.current);
-      }
-      setIsWheeling(false);
-      setIsPanning(false);
-      return;
-    }
+    if (!fullscreen) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -230,6 +228,8 @@ export function PeleDiagram({ code, isIncomplete = false }: PeleDiagramProps) {
     return () => {
       canvas.removeEventListener("wheel", onWheel);
       if (wheelTimeoutRef.current) clearTimeout(wheelTimeoutRef.current);
+      setIsWheeling(false);
+      setIsPanning(false);
     };
   }, [fullscreen]);
 

@@ -427,11 +427,14 @@ export function UserBubble({
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(text);
+  const [prevText, setPrevText] = useState(text);
+  // A new message starts a new draft, unless the person is mid-edit.
+  // Derived during render so no effect syncs the prop into state.
+  if (prevText !== text) {
+    setPrevText(text);
+    if (!isEditing) setDraft(text);
+  }
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    setDraft(text);
-  }, [text]);
 
   useEffect(() => {
     if (isEditing && textareaRef.current) {

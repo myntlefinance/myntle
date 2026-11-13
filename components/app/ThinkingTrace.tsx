@@ -27,11 +27,16 @@ export default function ThinkingTrace({
   const expanded = manualExpanded ?? active;
 
   /* the thinking duration, counted live and left standing once
-   * the trace settles */
+   * the trace settles. Restarting is derived during render so the
+   * interval below never syncs state from its own effect. */
   const [seconds, setSeconds] = useState(0);
+  const [prevActive, setPrevActive] = useState(active);
+  if (prevActive !== active) {
+    setPrevActive(active);
+    if (active) setSeconds(0);
+  }
   useEffect(() => {
     if (!active) return;
-    setSeconds(0);
     const t = setInterval(() => setSeconds((s) => s + 1), 1000);
     return () => clearInterval(t);
   }, [active]);

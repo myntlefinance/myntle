@@ -65,7 +65,9 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
   const canDisconnect = account !== null && !signedIn;
 
   const closeRef = useRef(onClose);
-  closeRef.current = onClose;
+  useEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
 
   // The success notice reads first, then the dialog fades out and closes.
   useEffect(() => {

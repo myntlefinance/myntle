@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { IconChevronDown, IconChevronRight, IconFingerprint, IconLoader2, IconLockFilled, IconLockOpen, IconLogout, IconUser, IconUserCircle, IconWallet, IconX } from "@tabler/icons-react";
 import { CopyAddressButton } from "@/components/app/CopyAddressButton";
@@ -387,13 +387,14 @@ export function AccountMenu({
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [armedSignOut, setArmedSignOut] = useState(false);
+  // Closing the menu disarms the sign-out confirm. Derived during render
+  // so no effect syncs the open flag into state.
+  if (!open && armedSignOut) {
+    setArmedSignOut(false);
+  }
   // The sidebar clips anything drawn outside its shell, so the rail menu is
   // portalled and pinned to the trigger's edge instead of the rail's.
   const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(null);
-
-  useEffect(() => {
-    if (!open) setArmedSignOut(false);
-  }, [open]);
 
   useEffect(() => {
     if (!open || suspendDismiss) return;
@@ -667,7 +668,13 @@ function ConnectPicker({
   const passkeyAvailable = usePasskeysAvailable();
   const passkeyFlow = usePasskeyLogin();
   const [view, setView] = useState<"options" | "passkey">("options");
-  const [mounted, setMounted] = useState(false);
+  // The dialog portals into the document body, which only exists in the
+  // browser. Read from the store instead of syncing a flag in an effect.
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
   const [error, setError] = useState<string | null>(null);
   const [installLink, setInstallLink] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -719,8 +726,9 @@ function ConnectPicker({
     return () => observer.disconnect();
   }, []);
 
+  // A pending close timer is dialog state, not render state: releasing it
+  // needs no state sync.
   useEffect(() => {
-    setMounted(true);
     return () => {
       if (closeTimer.current) window.clearTimeout(closeTimer.current);
     };

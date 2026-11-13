@@ -41,7 +41,7 @@ import {
   TimestampPill,
   computeMessageClusters,
   getMessageTimestamp,
-  shouldShowTimestampPill,
+  type ClusteredMessage,
 } from "@/components/app/TimestampPill";
 import dynamic from "next/dynamic";
 import ApprovalCard from "@/components/primitives/ApprovalCard";
@@ -587,10 +587,9 @@ function EmptyState({ onSend, shuffle, offset, live }: { onSend: (text: string, 
 
   useEffect(() => {
     if (live) return;
-    if (homeRevealPlayed) {
-      setStage(4);
-      return;
-    }
+    // A reveal that already played mounts at its final stage through the
+    // initializer above; only a fresh demo runs the timers below.
+    if (homeRevealPlayed) return;
     homeRevealPlayed = true;
     const timers = [
       setTimeout(() => setStage(1), revealParams.sequence.helloAt),
@@ -601,7 +600,6 @@ function EmptyState({ onSend, shuffle, offset, live }: { onSend: (text: string, 
 
     return () => {
       timers.forEach(clearTimeout);
-      setStage(4);
     };
   }, [live]);
 
@@ -925,7 +923,7 @@ export default function Harness({
   /* spreadsheet: which view/property is open in the right inspector (null = chat) */
   const [propView, setPropView] = useState<string | null>(null);
   /* "use this harness" open-source modal */
-  const [useOpen, setUseOpen] = useState(false); // retained so the modal removal is a no-op
+  const [, setUseOpen] = useState(false); // retained so the modal removal is a no-op
   const msgIdRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
@@ -934,7 +932,10 @@ export default function Harness({
   const initialSpacerRef = useRef(0);
   const messageTimestampsRef = useRef<Map<string, number>>(new Map());
 
-  const resolveTimestamp = (msg: {
+  // Cached per message so a revisit keeps its timestamp. Defined as a
+  // callback so the ref is only touched post-render; callers run it in
+  // effects (cluster sync below), never during render.
+  const resolveTimestamp = useCallback((msg: {
     id: string | number;
     metadata?: unknown;
     createdAt?: unknown;
@@ -945,16 +946,29 @@ export default function Harness({
     const resolved = getMessageTimestamp(msg, existing ?? Date.now());
     messageTimestampsRef.current.set(key, resolved);
     return resolved;
-  };
+  }, []);
 
-  const liveClustered = useMemo(
-    () => (live?.messages ? computeMessageClusters(live.messages, resolveTimestamp) : []),
-    [live?.messages],
+  // Clusters are derived in effects (not useMemo) because the resolver
+  // reads/writes the cache: running it during render would touch a ref
+  // during render. State holds the last committed clusters.
+  const [liveClustered, setLiveClustered] = useState<
+    ClusteredMessage<UIMessage>[]
+  >([]);
+  const [demoClustered, setDemoClustered] = useState<ClusteredMessage<Msg>[]>(
+    [],
   );
-  const demoClustered = useMemo(
-    () => computeMessageClusters(demoMessages, resolveTimestamp),
-    [demoMessages],
-  );
+  /* eslint-disable react-hooks/set-state-in-effect -- timestamp cache: resolveTimestamp reads/writes messageTimestampsRef, which must only run post-render, so the clusters sync in effects rather than deriving during render */
+  useEffect(() => {
+    setLiveClustered(
+      live?.messages
+        ? computeMessageClusters(live.messages, resolveTimestamp)
+        : [],
+    );
+  }, [live?.messages, resolveTimestamp]);
+  useEffect(() => {
+    setDemoClustered(computeMessageClusters(demoMessages, resolveTimestamp));
+  }, [demoMessages, resolveTimestamp]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const displayTitle = live ? title : demoTitle;
   // In live mode the conversation lives in `live.messages`, so the thread is
@@ -985,7 +999,8 @@ export default function Harness({
     );
   const workspaceScenario = workspaceMsg ? SCENARIOS[workspaceMsg.scenarioId] : null;
 
-  const send = (text: string, scenarioId: ScenarioId) => {
+  /* Stable identity: only the demo composers call this, always as an event. */
+  const send = useCallback((text: string, scenarioId: ScenarioId) => {
     setDemoTitle((current) => current ?? (text.length > 30 ? `${text.slice(0, 30).trimEnd()}…` : text));
     const now = Date.now();
     setDemoMessages((current) => [
@@ -993,7 +1008,7 @@ export default function Harness({
       { id: (msgIdRef.current += 1), role: "user", text, timestamp: now },
       { id: (msgIdRef.current += 1), role: "assistant", scenarioId, timestamp: now },
     ]);
-  };
+  }, []);
 
   /* recents open as a fresh single thread with that prompt */
   const pickRecent = (scenarioId: ScenarioId, label: string, prompt = label) => {
@@ -1041,20 +1056,24 @@ export default function Harness({
    * prepends, which keep the current key. Adjusted during render so the
    * commit already carries the right key; no flash frame. */
   const [threadKey, setThreadKey] = useState<string>(activeChatId ?? "thread");
-  const prevIdForKey = prevActiveChatIdRef.current;
-  const prevFirstForKey = prevFirstMsgIdRef.current;
-  let desiredKey = activeChatId ?? "thread";
-  if (activeChatId === prevIdForKey) {
-    desiredKey = threadKey;
-  } else if (
-    activeChatId != null &&
-    prevIdForKey == null &&
-    prevFirstForKey === firstMsgId &&
-    firstMsgId != null
-  ) {
-    desiredKey = threadKey;
-  }
-  if (desiredKey !== threadKey) setThreadKey(desiredKey);
+  // Synced in a layout effect so the commit already carries the right key;
+  // no flash frame. Reads the previous ids here (post-render), never during
+  // render, and runs before the scroll sync below so it sees the prior commit.
+  useIsomorphicLayoutEffect(() => {
+    const prevId = prevActiveChatIdRef.current;
+    const prevFirst = prevFirstMsgIdRef.current;
+    if (activeChatId === prevId) return;
+    if (
+      activeChatId != null &&
+      prevId == null &&
+      prevFirst === firstMsgId &&
+      firstMsgId != null
+    ) {
+      return;
+    }
+    const desired = activeChatId ?? "thread";
+    setThreadKey((current) => (current === desired ? current : desired));
+  }, [activeChatId, firstMsgId]);
 
   const scrollToBottom = useCallback((smooth = true) => {
     stickRef.current = true;
@@ -1332,10 +1351,11 @@ export default function Harness({
     else setDemoTitle(next);
   };
 
-  /* a fresh thread leaves nothing to rename */
-  useEffect(() => {
-    if (!displayTitle) setEditingTitle(false);
-  }, [displayTitle]);
+  /* a fresh thread leaves nothing to rename: closing the editor is
+   * derived during render so no effect syncs the title into state */
+  if (!displayTitle && editingTitle) {
+    setEditingTitle(false);
+  }
 
   const titleBar = (
     <div className="group flex h-11 shrink-0 items-center justify-between gap-2 border-b border-line px-3 sm:pl-4">
