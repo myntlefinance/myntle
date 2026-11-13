@@ -249,6 +249,8 @@ describe("POST /api/near/setup/fund", () => {
       error: null,
     });
     expect(await res.json()).toMatchObject({
+      // The grant is final, so the dialog can register without another read.
+      hasGas: true,
       needsFunding: false,
       grant: { status: "final", txHash: "tx-hash" },
     });

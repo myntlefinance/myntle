@@ -170,6 +170,8 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         ...state,
+        // The transfer is final, so the account now holds at least the grant.
+        hasGas: true,
         needsFunding: false,
         grant: { status: "final", txHash, error: null },
       },
