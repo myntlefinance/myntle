@@ -3,6 +3,24 @@
 import type { NearWalletBase } from "@hot-labs/near-connect";
 
 /**
+ * The transaction hash from a near-connect wallet result.
+ *
+ * Wallets return either a `FinalExecutionOutcome` (transaction.hash) or a
+ * bare hash. The shape is not part of the wallet standard, so read both.
+ */
+export function nearTransactionHash(result: unknown): string | null {
+  const first = Array.isArray(result) ? result[0] : result;
+  const hash =
+    (first as { transaction?: { hash?: string } } | undefined)?.transaction
+      ?.hash ??
+    (result as { transaction?: { hash?: string } } | undefined)?.transaction
+      ?.hash ??
+    (first as { hash?: string } | undefined)?.hash ??
+    (result as { hash?: string } | undefined)?.hash;
+  return typeof hash === "string" && hash.length > 0 ? hash : null;
+}
+
+/**
  * Build and send one NEAR deposit from a near-connect wallet.
  *
  * NEP-141 tokens travel as `ft_transfer`; native NEAR wraps to wNEAR first,
@@ -86,15 +104,8 @@ export async function sendNearDepositWithWallet(
   const result = withSend.signAndSendTransactions
     ? await withSend.signAndSendTransactions({ transactions: txs })
     : await withSend.signAndSendTransaction?.(txs[0]);
-  const first = Array.isArray(result) ? result[0] : result;
-  const hash =
-    (first as { transaction?: { hash?: string } } | undefined)?.transaction
-      ?.hash ??
-    (result as { transaction?: { hash?: string } } | undefined)?.transaction
-      ?.hash ??
-    (first as { hash?: string } | undefined)?.hash ??
-    (result as { hash?: string } | undefined)?.hash;
-  if (typeof hash !== "string" || hash.length === 0) {
+  const hash = nearTransactionHash(result);
+  if (!hash) {
     throw new Error("Deposit did not return a transaction hash");
   }
   return hash;

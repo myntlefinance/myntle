@@ -3,7 +3,10 @@
 import { useNearWallet } from "near-connect-hooks";
 import { useCallback, useMemo, useState } from "react";
 import { fromHex, toHex, type ConnectedWallet } from "./types";
-import { sendNearDepositWithWallet } from "./near-transfer";
+import {
+  nearTransactionHash,
+  sendNearDepositWithWallet,
+} from "./near-transfer";
 
 /**
  * The NEAR adapter.
@@ -98,6 +101,46 @@ export function useNearWalletAdapter() {
     },
     signMessage: sign,
     signNEP413: signNEP413Message,
+    /**
+     * The public key the wallet will sign with, for the NEAR setup check.
+     * Some wallets do not expose it here; the signed-in session stores the
+     * key that verified, and the setup routes fall back to it.
+     */
+    getPublicKey: async (): Promise<string | null> => {
+      const wallet = await connector.wallet();
+      const accounts = await wallet.getAccounts();
+      return accounts[0]?.publicKey ?? null;
+    },
+    /**
+     * Registers the wallet key with `intents.near`.
+     *
+     * A named NEAR account needs this one-time transaction before it can
+     * authenticate. The network fee was already sent to the account by the
+     * setup faucet. The contract stores the key under the transaction's
+     * signer, so this must be sent by the wallet's own account.
+     */
+    registerIntentsKey: async (publicKey: string): Promise<string> => {
+      const wallet = await connector.wallet();
+      const result = await wallet.signAndSendTransaction({
+        receiverId: "intents.near",
+        actions: [
+          {
+            type: "FunctionCall",
+            params: {
+              methodName: "add_public_key",
+              args: { public_key: publicKey },
+              gas: "100000000000000",
+              deposit: "1",
+            },
+          },
+        ],
+      });
+      const hash = nearTransactionHash(result);
+      if (!hash) {
+        throw new Error("The registration did not return a transaction hash.");
+      }
+      return hash;
+    },
     /**
      * Funds the 1Click deposit address from the connected NEAR wallet.
      *

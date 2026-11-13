@@ -573,6 +573,10 @@ export function useWalletState() {
     sendDeposit,
     /** NEP-413 signing for NEAR approvals, with caller-chosen recipient. */
     signNEP413: near.signNEP413,
+    /** The connected NEAR wallet's public key, when it exposes one. */
+    getNearPublicKey: near.getPublicKey,
+    /** One-time `intents.near.add_public_key` transaction for a named account. */
+    registerNearIntentsKey: near.registerIntentsKey,
     pendingChain,
     authStage,
     isPending:

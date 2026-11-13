@@ -28,6 +28,13 @@ import {
   OPEN_SUPER_EVENT,
   SuperUnlockDialog,
 } from "@/components/app/SuperUnlockDialog";
+import { NearSetupDialog } from "@/components/app/NearSetupDialog";
+import {
+  clearNearSetupDismissed,
+  dismissNearSetup,
+  fetchNearSetup,
+  wasNearSetupDismissed,
+} from "@/lib/intents/near-setup";
 import { usePasskeysAvailable } from "@/lib/auth/passkey-client";
 import {
   lockSuperAccount,
@@ -52,12 +59,25 @@ export function WalletButton({
   /** icon-only rail control for the collapsed sidebar */
   compact?: boolean;
 } = {}) {
-  const { wallet, account, signedIn, status: sessionStatus, signOut, busy } = useAuth();
+  const {
+    wallet,
+    account,
+    identity,
+    signedIn,
+    canSign,
+    status: sessionStatus,
+    signOut,
+    busy,
+  } = useAuth();
   const superUnlocked = useSuperUnlocked(account?.kind, account?.address);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [signinOpen, setSigninOpen] = useState(false);
   const [superOpen, setSuperOpen] = useState(false);
   const [superSource, setSuperSource] = useState<string | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [setupThenUnlock, setSetupThenUnlock] = useState(false);
+  const setupChecked = useRef<string | null>(null);
+  const getNearKeyRef = useRef(wallet.getNearPublicKey);
   const [menuOpen, setMenuOpen] = useState(false);
 
   // The gated assistant reply carries its own inline connect action, so the
@@ -90,6 +110,58 @@ export function WalletButton({
   // dialog animation and the cards would pop in imageless. Preloading
   // is guarded so it runs once per session, not on every button remount.
   useEffect(() => scheduleWalletLogoPreload(), []);
+
+  useEffect(() => {
+    getNearKeyRef.current = wallet.getNearPublicKey;
+  }, [wallet.getNearPublicKey]);
+
+  // A named NEAR account cannot authenticate until its wallet key is
+  // registered on `intents.near`. Ask once after sign-in, and only when the
+  // server says this exact account needs it. A dismissal is remembered for
+  // the tab; the unlock dialog still hands off here when the user tries.
+  const nearSetupAddress =
+    identity?.kind === "wallet" && identity.chain === "near"
+      ? identity.address
+      : null;
+
+  useEffect(() => {
+    if (!signedIn) {
+      setupChecked.current = null;
+      return;
+    }
+    if (!canSign || !nearSetupAddress) {
+      if (!canSign) setupChecked.current = null;
+      return;
+    }
+    if (signinOpen || superOpen || setupOpen) return;
+    if (setupChecked.current === nearSetupAddress) return;
+    if (wasNearSetupDismissed(nearSetupAddress)) return;
+    setupChecked.current = nearSetupAddress;
+
+    let cancelled = false;
+    void (async () => {
+      let key: string | null = null;
+      try {
+        key = await getNearKeyRef.current();
+      } catch {
+        key = null;
+      }
+      const state = await fetchNearSetup(key);
+      if (cancelled || !state?.needsSetup) return;
+      setSetupThenUnlock(false);
+      setSetupOpen(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    signedIn,
+    canSign,
+    nearSetupAddress,
+    signinOpen,
+    superOpen,
+    setupOpen,
+  ]);
 
   // The picker must stay mounted through approval AND signature. The wallet
   // account appears as soon as the connection is approved, which is before
@@ -131,6 +203,29 @@ export function WalletButton({
   const resumeLogIn = account
     ? () => setSigninOpen(true)
     : () => setPickerOpen(true);
+
+  const handleSetupClose = () => {
+    if (account?.kind === "near") dismissNearSetup(account.address);
+    setSetupOpen(false);
+    setSetupThenUnlock(false);
+  };
+
+  const handleSetupDone = () => {
+    if (account?.kind === "near") {
+      clearNearSetupDismissed(account.address);
+    }
+    setSetupOpen(false);
+    if (setupThenUnlock) {
+      setSetupThenUnlock(false);
+      setSuperOpen(true);
+    }
+  };
+
+  const handleNeedsSetup = () => {
+    setSuperOpen(false);
+    setSetupThenUnlock(true);
+    setSetupOpen(true);
+  };
 
   // Connected, but the session check has not answered yet. The address is
   // already known, so it shows: the alternative is claiming "Sign In" to a
@@ -218,6 +313,19 @@ export function WalletButton({
     );
   }
 
+  if (setupOpen) {
+    return (
+      <>
+        {resting}
+        <NearSetupDialog
+          sourceCallId={superSource}
+          onClose={handleSetupClose}
+          onDone={handleSetupDone}
+        />
+      </>
+    );
+  }
+
   if (superOpen) {
     return (
       <>
@@ -228,6 +336,7 @@ export function WalletButton({
             setSuperOpen(false);
             setSuperSource(null);
           }}
+          onNeedsSetup={handleNeedsSetup}
           onUnlocked={() => setMenuOpen(false)}
         />
       </>

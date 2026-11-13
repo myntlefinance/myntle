@@ -14,6 +14,7 @@ import {
   buildPasskeyEmptyIntent,
   encodeSignedData,
 } from "@/lib/intents/empty-intent";
+import { fetchNearSetup } from "@/lib/intents/near-setup";
 import {
   notifySuperClosed,
   notifySuperUnlock,
@@ -152,11 +153,14 @@ export async function unlockPrivateBalanceWithPasskey(
 export function SuperUnlockDialog({
   onClose,
   onUnlocked,
+  onNeedsSetup,
   sourceCallId,
 }: {
   onClose: () => void;
   /** Fires once the tokens are stored, before the success screen lands. */
   onUnlocked?: () => void;
+  /** The signed-in NEAR account has not registered this wallet key yet. */
+  onNeedsSetup?: () => void;
   /** The card that opened this dialog, so a cancel can be reported back. */
   sourceCallId?: string | null;
 }) {
@@ -164,6 +168,7 @@ export function SuperUnlockDialog({
     account: rawAccount,
     signMessage,
     signNEP413,
+    getNearPublicKey,
     lastWallet,
     reconnectWallet,
     isPending: walletPending,
@@ -275,6 +280,30 @@ export function SuperUnlockDialog({
       setError("This wallet cannot unlock the super account yet.");
       setPhase("error");
       return;
+    }
+    // A named NEAR account must register its wallet key once. Hand off before
+    // asking for the empty-intent signature, because 1Click would reject it
+    // with the same generic `signature verification failed` either way.
+    if (account.kind === "near" && onNeedsSetup) {
+      setPhase("signing");
+      try {
+        let publicKey: string | null = null;
+        try {
+          publicKey = getNearPublicKey
+            ? (await getNearPublicKey())?.trim() || null
+            : null;
+        } catch {
+          publicKey = null;
+        }
+        const setup = await fetchNearSetup(publicKey);
+        if (setup?.needsSetup) {
+          onNeedsSetup();
+          return;
+        }
+      } catch {
+        // A failed setup check must not block the unlock; the signature
+        // attempt below will surface the real error.
+      }
     }
     try {
       setPhase("signing");
