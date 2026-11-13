@@ -106,10 +106,16 @@ describe("resolveNearSetupKey", () => {
     );
   });
 
-  it("rejects a key that is not a full-access key on the account", async () => {
+  it("falls back to the sign-in key when the exposed key is not full-access", async () => {
     await expect(resolveNearSetupKey(SESSION, OTHER_KEY)).resolves.toEqual({
-      badKey: true,
+      key: KEY,
     });
+  });
+
+  it("rejects a non-full-access key when the session has no stored key", async () => {
+    await expect(
+      resolveNearSetupKey({ ...SESSION, publicKey: null }, OTHER_KEY),
+    ).resolves.toEqual({ badKey: true });
   });
 
   it("rejects malformed key material", async () => {

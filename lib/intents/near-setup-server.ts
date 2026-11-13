@@ -73,8 +73,11 @@ export async function resolveNearSetupKey(
 
   // A new key is accepted only when it is a full-access key on the same
   // account. This covers an older session and a wallet that rotated keys.
+  // Wallets can expose a different, non-signing key here; fall back to the
+  // key the sign-in already verified instead of blocking setup.
   const onAccount = await isNearFullAccessKey(session.address, candidate);
-  return onAccount ? { key: candidate } : { badKey: true };
+  if (onAccount) return { key: candidate };
+  return stored ? { key: stored } : { badKey: true };
 }
 
 async function refreshGrant(grant: NearSetupGrant): Promise<NearSetupGrant> {

@@ -109,7 +109,10 @@ export function useNearWalletAdapter() {
     getPublicKey: async (): Promise<string | null> => {
       const wallet = await connector.wallet();
       const accounts = await wallet.getAccounts();
-      return accounts[0]?.publicKey ?? null;
+      const active =
+        accounts.find((entry) => entry.accountId === signedAccountId) ??
+        accounts[0];
+      return active?.publicKey ?? null;
     },
     /**
      * Registers the wallet key with `intents.near`.
