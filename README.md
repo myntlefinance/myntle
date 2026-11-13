@@ -22,7 +22,7 @@
   </a>
 </p>
 
-Myntle is for someone who already holds tokens and already has a wallet. You connect an EVM wallet, a Solana wallet, or a NEAR wallet, and the same conversation works for all three: you need no account on the chain that settles the trade, no gas on a new network, and no faucet.
+Myntle is for someone who already holds tokens, whether they keep them in a wallet or want to start with a passkey. You can create an account with a passkey on the device you are using, or connect a wallet you already have. Either way, the same conversation works: you need no account on the chain that settles the trade, no gas on a new network, and no faucet.
 
 > The assistant can propose a trade and look things up, but it cannot sign or move money. A trade is finished only when the settlement record says so.
 
@@ -34,9 +34,9 @@ The assistant runs on NEAR AI Cloud, the trade settles through NEAR Intents, and
 
 You type something like swapping a hundred USDC for NEAR, and the assistant turns it into a quote instead of a guess. You see what you would receive, the minimum you would accept, the rate, the slippage bound, and the moment the quote expires. Nothing is signed before you approve that card, and rejecting it is a normal answer that leaves the conversation running.
 
-### Any wallet works
+### Start with a passkey or a wallet
 
-EVM wallets connect through wagmi and viem, Solana wallets through the Wallet Standard, and NEAR wallets through near-connect, all behind one interface. You can also sign in with a passkey. The conversation does not change with the wallet, because every wallet can sign the intent that settles the trade.
+A passkey account is created with your device's authenticator, so there is nothing to install and no extension to connect. If you already have a wallet, it connects through wagmi and viem on EVM, the Wallet Standard on Solana, and near-connect on NEAR, all behind the same interface. The conversation does not change with the account, because every account can sign the intent that settles the trade.
 
 <p align="center">
   <a href="docs/images/wallets.png">
@@ -44,7 +44,7 @@ EVM wallets connect through wagmi and viem, Solana wallets through the Wallet St
   </a>
 </p>
 
-The portfolio is the same account seen from another angle. It shows your on-chain balances and your private balance, and it can track any address read-only without asking for a signature.
+The portfolio is the same account seen from another angle. It shows what the account holds on chain and in the private balance, and it can track any address read-only without asking for a signature.
 
 ### You approve the numbers, and the record decides
 
@@ -67,7 +67,7 @@ flowchart TB
   subgraph browser["Browser"]
     direction LR
     ui["Chat, quote and approval cards"]
-    wallet["EVM, Solana, or NEAR wallet"]
+    account["Passkey, EVM, Solana, or NEAR account"]
   end
 
   subgraph server["Next.js on Vercel"]
@@ -88,7 +88,7 @@ flowchart TB
   chat --> model
   chat --> intents
   ui -->|approval| approve
-  wallet -->|signature| approve
+  account -->|signature| approve
   approve --> lifecycle
   lifecycle --> intents
   lifecycle --> db
@@ -132,7 +132,7 @@ sequenceDiagram
   App-->>U: the record, never the model's claim
 ```
 
-The server rebuilds the intent from the parameters it saved before the card was shown, the wallet signs a message rather than a transaction, and the signed intent settles inside the verifier contract. The user needs no NEAR account and no gas, and the signature never passes through the model.
+The server rebuilds the intent from the parameters it saved before the card was shown, the account signs a message rather than a transaction, and the signed intent settles inside the verifier contract. The user needs no NEAR account and no gas, and the signature never passes through the model.
 
 ## Quickstart
 
@@ -145,6 +145,8 @@ bun run dev
 ```
 
 Fill in `.env.local` before you expect trades to work. The trade path needs the NEAR AI Cloud key, the 1Click partner key, the WalletConnect project id, the Supabase URL and service role key, and the approval secret. The news tools need their own keys and are optional. Contract addresses and RPC URLs are configuration rather than secrets, and the filled-in file is never committed.
+
+The passkey account is disabled by default in a fresh checkout. Set `PASSKEY_ENABLED=true` and `NEXT_PUBLIC_PASSKEY_ENABLED=true` to turn it on; the WebAuthn relying party defaults to localhost in development.
 
 | Command | What it does |
 |---|---|
@@ -171,6 +173,7 @@ workflows/
   swap-lifecycle.ts              submit, poll, reconcile
 lib/
   ai/                            provider, prompts, tool registry
+  auth/                          passkeys, sessions, challenges
   intents/                       quotes, approval checks, settlement
   wallet/                        EVM, Solana, and NEAR adapters
   news/                          Google News, Reddit, and X

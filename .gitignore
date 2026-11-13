@@ -64,3 +64,4 @@ context/
 # Raw screen recordings for the demo video. The cut and the plan are kept;
 # the takes are large and get replaced on every re-record.
 demo/raw/
+demo/*.mp4
