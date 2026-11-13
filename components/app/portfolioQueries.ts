@@ -6,16 +6,13 @@ import type { QueryObserverResult } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { accountScope } from "@/lib/auth/session-identity";
 import {
-  isSuperUnlocked,
   SUPER_LOCK_EVENT,
   SUPER_UNLOCK_EVENT,
 } from "@/lib/intents/user-session";
 import { AuthExpiredError } from "./apiErrors";
 import {
   buildPasskeySnapshot,
-  fetchPasskeyPortfolio,
   fetchSessionPortfolio,
-  passkeyPortfolioScope,
   passkeyPortfolioStatus,
   type PasskeyPortfolioRead,
 } from "./passkeyPortfolioData";
@@ -460,101 +457,15 @@ export function useWatchedPortfolio(
 }
 
 /**
- * The private balance of a passkey account, read in the browser.
- *
- * There is no wallet route here: a passkey account has no wallet, and the
- * confidential ledger is reached with the User-Session token held in this
- * tab. A locked result is data, not an error, so the page can offer the
- * unlock dialog instead of a failure. The unlock and lock events re-read
- * the balance, and the query scope is namespaced so it cannot share an
- * entry with a wallet.
- */
-export function usePasskeyPortfolio(
-  accountId: string | null,
-  enabled: boolean,
-) {
-  const scope = useMemo(
-    () => (accountId ? passkeyPortfolioScope(accountId) : null),
-    [accountId],
-  );
-
-  const query = useQuery<PasskeyPortfolioRead>({
-    queryKey: [...PORTFOLIO_QUERY_KEY, scope ?? "passkey:anonymous"],
-    queryFn: () => {
-      if (!accountId) throw new Error("No passkey account is signed in.");
-      return fetchPasskeyPortfolio(accountId);
-    },
-    enabled: enabled && scope !== null,
-    // Same 300s cache as the wallet hook; unlock/lock events refetch below.
-    staleTime: 300_000,
-    // The read reports its own locked and error states; a thrown failure is
-    // unexpected, and retrying it would ask 1Click again for no benefit.
-    retry: false,
-    // Paint-at-once like the wallet side, but only while a session is
-    // live: a locked account must show the unlock card, never the last
-    // session's stale holdings.
-    initialData: () =>
-      scope && accountId && isSuperUnlocked("passkey", accountId)
-        ? readSuperPrivateCache(scope)
-        : undefined,
-    initialDataUpdatedAt: 0,
-  });
-
-  const entries = useMemo(
-    () => (query.data?.ok ? query.data.entries : []),
-    [query.data],
-  );
-  const ids = useMemo(
-    () => entries.map((entry) => entry.tokenId),
-    [entries],
-  );
-  const meta = useResolvedAssetMeta(ids);
-  const snapshot = useMemo(
-    () => (query.data?.ok ? buildPasskeySnapshot(entries, meta) : null),
-    [query.data, entries, meta],
-  );
-  const liveSnapshot = useLiveSnapshot(snapshot);
-
-  const refresh = query.refetch;
-
-  // Write-through: the next mount paints this read instantly.
-  // Only successful reads are kept; locked and error states re-check.
-  useEffect(() => {
-    if (!scope || !query.data) return;
-    writeSuperPrivateCache(scope, query.data);
-  }, [scope, query.data]);
-
-  useEffect(() => {
-    if (!enabled || !scope) return;
-    const reread = () => {
-      void refresh();
-    };
-    window.addEventListener(SUPER_UNLOCK_EVENT, reread);
-    window.addEventListener(SUPER_LOCK_EVENT, reread);
-    return () => {
-      window.removeEventListener(SUPER_UNLOCK_EVENT, reread);
-      window.removeEventListener(SUPER_LOCK_EVENT, reread);
-    };
-  }, [enabled, scope, refresh]);
-
-  return {
-    status: query.isError
-      ? ("error" as const)
-      : passkeyPortfolioStatus(query.data),
-    snapshot: liveSnapshot,
-    entries,
-    error: query.error,
-    isPending: query.isPending,
-    refresh,
-  };
-}
-
-/**
  * The confidential side of a wallet's super account, read in the
  * browser with its own User-Session. A locked result is data, not a
  * failure: the page offers the unlock card instead of balances. The
  * public ledger the server reads stays visible underneath; a private
  * row wins when both name the same token.
+ *
+ * A passkey account reads through the same hook with `chain` set to
+ * `passkey` and its account id as the address: it has no wallet, but it
+ * has its own User-Session and its own confidential ledger.
  */
 export function useSuperPrivateBalances(
   chain: string | null,

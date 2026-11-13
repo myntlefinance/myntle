@@ -124,6 +124,7 @@ function PortfolioBody({
   walletIcon,
   chain,
   address,
+  passkeyAccountId = null,
   tab,
   onTabChange,
   onRefresh,
@@ -134,6 +135,9 @@ function PortfolioBody({
   walletIcon?: string;
   chain: ChainKind | null;
   address: string | null;
+  /** A passkey account has no connected wallet, so its confidential
+   * ledger is the whole portfolio rather than one tab of it. */
+  passkeyAccountId?: string | null;
   tab: PortfolioTab;
   onTabChange: (next: PortfolioTab) => void;
   /** Re-reads the public balances; each tab titles it the same way. */
@@ -147,65 +151,82 @@ function PortfolioBody({
   const [group, setGroup] = useState<AllocationGroup | null>(null);
   const toggleGroup = (next: AllocationGroup) =>
     setGroup((prev) => (prev === next ? null : next));
+  const passkey = passkeyAccountId !== null;
+  // A passkey account reads its private ledger with the User-Session
+  // under the `passkey` scope; a wallet's super account under its chain.
+  const superChain: string | null = passkey ? "passkey" : chain;
+  const superAddress = passkey ? passkeyAccountId : address;
   const scope = chain && address ? portfolioScope(chain, address) : null;
+  const superScope =
+    superChain && superAddress
+      ? portfolioScope(superChain, superAddress)
+      : null;
   // The last settled row counts are read even when the public snapshot is
   // present: the super account's private read can still be pending, and
   // its skeleton should reserve the merged table's height, not the sample's.
   const walletRows = readPortfolioRowCount(scope, "wallet");
-  const superRows = readPortfolioRowCount(scope, "super");
-  // The selected pill is part of the loaded state, not the skeleton: fade
-  // it in when the active tab has data, and leave the switcher bland until
-  // then. The watchlist is ready when its list lands; wallet and super when
-  // the public snapshot does.
-  const tabReady =
-    tab === "Watchlist" ? watch.entries !== null : snapshot !== null;
+  const superRows = readPortfolioRowCount(superScope, "super");
 
+  // Only a real snapshot feeds the table. The sample below is measured by
+  // the skeleton and never rendered as a balance; a missing read is an
+  // empty state, never a template of someone else's money.
   const walletGroups = useMemo(() => {
-    if (snapshot) {
-      return (
-        snapshot.walletGroups ??
-        snapshot.groups.filter((entry) => !isIntentsGroupName(entry.name))
-      );
-    }
-    return sampleGroupsWithRows(SAMPLE_PORTFOLIO.walletGroups ?? [], walletRows);
-  }, [snapshot, walletRows]);
-  const walletSample = useMemo(() => {
-    const groups = sampleGroupsWithRows(
-      SAMPLE_PORTFOLIO.walletGroups ?? [],
-      walletRows,
+    if (!snapshot) return [];
+    return (
+      snapshot.walletGroups ??
+      snapshot.groups.filter((entry) => !isIntentsGroupName(entry.name))
     );
-    return {
-      groups,
+  }, [snapshot]);
+  const walletSample = useMemo(
+    () => ({
+      groups: sampleGroupsWithRows(
+        SAMPLE_PORTFOLIO.walletGroups ?? [],
+        walletRows,
+      ),
       totalUsd: SAMPLE_PORTFOLIO.walletUsd ?? 0,
-    };
-  }, [walletRows]);
-  const walletItems = useMemo(() => flattenGroups(walletGroups), [walletGroups]);
-  const walletTotal =
-    snapshot?.walletUsd ??
-    (snapshot
-      ? Number.parseFloat(
-          walletItems
+    }),
+    [walletRows],
+  );
+  const walletData = useMemo(() => {
+    if (!snapshot) return null;
+    return {
+      groups: walletGroups,
+      totalUsd:
+        snapshot.walletUsd ??
+        Number.parseFloat(
+          flattenGroups(walletGroups)
             .reduce((sum, item) => sum + item.valueUsd, 0)
             .toFixed(2),
-        )
-      : (SAMPLE_PORTFOLIO.walletUsd ?? 0));
-  const walletData = snapshot
-    ? { groups: walletGroups, totalUsd: walletTotal }
-    : null;
+        ),
+    };
+  }, [snapshot, walletGroups]);
 
   // The super read stays mounted so the private gate and its reads do not
   // restart every time the tab is opened; it only reads while the tab is
   // visible, so opening the portfolio never touches the private ledger.
   const superView = useSuperAccountView({
-    chain,
-    address,
-    publicGroups: snapshot?.superGroups ?? [],
-    publicPending: snapshot === null,
+    chain: superChain,
+    address: superAddress,
+    publicGroups: passkey ? [] : (snapshot?.superGroups ?? []),
+    publicPending: passkey ? false : snapshot === null,
     publicRefreshing: isRefreshing,
     sampleRows: superRows,
-    onRefresh,
+    // A passkey account has no public wallet read; its refresh asks the
+    // private ledger again, which `refreshAll` already does.
+    onRefresh: passkey ? () => {} : onRefresh,
     active: tab === "Super account",
   });
+
+  // The selected pill is part of the loaded state, not the skeleton: fade
+  // it in when the active tab has data, and leave the switcher bland until
+  // then. The watchlist is ready when its list lands; a wallet and super
+  // tab when their reads do.
+  const tabReady =
+    tab === "Watchlist"
+      ? watch.entries !== null
+      : passkey
+        ? !superView.pending
+        : snapshot !== null;
 
   // The watched detail is shaped for the same chrome. Keeping the hook
   // mounted across tabs lets the address and total morph into the watched
@@ -243,7 +264,7 @@ function PortfolioBody({
   return (
     <div className={`flex flex-col ${isWatch ? "gap-6" : "gap-8"}`}>
       <SegmentedControl
-        options={PORTFOLIO_TABS}
+        options={passkey ? PASSKEY_PORTFOLIO_TABS : PORTFOLIO_TABS}
         value={tab}
         onChange={onTabChange}
         icons={portfolioTabIcons(walletIcon)}
@@ -275,7 +296,7 @@ function PortfolioBody({
         /* Within the watchlist tab this stays mounted across card
          * changes, so torph can morph the identity and totals. */
         <Skeleton
-          id="portfolio:content"
+          id={passkey ? "portfolio:passkey" : "portfolio:content"}
           data={
             isWatch
               ? (watchedView?.data ?? null)
@@ -312,13 +333,21 @@ function PortfolioBody({
                 : loaded.totalUsd;
             return (
               <PortfolioChrome
-                address={isWatch ? (watchedView?.address ?? address) : address}
+                address={
+                  isWatch
+                    ? (watchedView?.address ?? address)
+                    : passkey
+                      ? passkeyAccountId
+                      : address
+                }
                 // The subject names a watched card; wallet and super use
                 // the account the user is already looking at.
                 chain={
                   isWatch
                     ? (watchedView?.entry.chain ?? "evm")
-                    : (chain ?? "evm")
+                    : passkey
+                      ? "near"
+                      : (chain ?? "evm")
                 }
                 qrTitle={
                   isWatch
@@ -369,7 +398,11 @@ function PortfolioBody({
                       : "wallet"
                 }
                 emptyTitle={
-                  isWatch ? "No public holdings found." : undefined
+                  isWatch
+                    ? "No public holdings found."
+                    : passkey && isSuper && !superView.showLock
+                      ? "Your private balance is empty. Ask the assistant to deposit."
+                      : undefined
                 }
                 error={
                   isWatch
@@ -429,7 +462,8 @@ export default function PortfolioView({
   const { account, connected, signedIn, status, identity } = useAuth();
   const passkeys = usePasskeysAvailable();
   const passkeyIdentity = identity?.kind === "passkey" ? identity : null;
-  const passkeyAccount = passkeyIdentity !== null;
+  const passkeyAccountId = passkeyIdentity?.accountId ?? null;
+  const passkeyAccount = passkeyAccountId !== null;
   const accountAddress = account?.address;
   const accountKind = account?.kind;
 
@@ -447,7 +481,12 @@ export default function PortfolioView({
   // Refresh lives in each section beside its title now, not the header:
   // the watchlist already tracks from its own card, and every tab
   // re-reads from the same row.
-  const [tab, setTab] = useState<PortfolioTab>(initialTab);
+  const [tabState, setTabState] = useState<PortfolioTab>(initialTab);
+  // A passkey account has no chain wallet, so the wallet tab is not a
+  // place it can open on. The tab reads as the super account from the
+  // first frame the identity is known; the effect below settles the URL.
+  const tab: PortfolioTab =
+    passkeyAccount && tabState === "Your wallet" ? "Super account" : tabState;
   const [watchSelected, setWatchSelected] = useState<string | null>(null);
   const [trackOpen, setTrackOpen] = useState(false);
   const [trackOrigin, setTrackOrigin] = useState<{
@@ -459,7 +498,10 @@ export default function PortfolioView({
     x: number;
     y: number;
   } | null>(null);
-  const watchEnabled = !passkeyAccount && connected && signedIn;
+  // The watchlist belongs to the session, not to a wallet: a passkey
+  // account has an account id and a session, so it can track addresses
+  // the same way a connected wallet can.
+  const watchEnabled = passkeyAccount || (connected && signedIn);
   const watchlist = useWatchlist(watchEnabled);
   const watchAtLimit =
     (watchlist.entries?.length ?? 0) >= MAX_WATCHLIST_ENTRIES;
@@ -486,6 +528,18 @@ export default function PortfolioView({
     writeTabParams(tab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A passkey session can land after the first client frame, because it
+  // is read asynchronously. The wallet tab it may have opened on is not a
+  // tab this account has, so settle the state and the URL on the super
+  // account instead of leaving an impossible selection behind.
+  /* eslint-disable react-hooks/set-state-in-effect -- identity arrival: the tab follows the account kind */
+  useEffect(() => {
+    if (!passkeyAccount || tabState !== "Your wallet") return;
+    setTabState("Super account");
+    writeTabParams("Super account");
+  }, [passkeyAccount, tabState]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // The default account: the list arrives default-first, so the first
   // entry is the stored default and selects itself once the list lands.
@@ -542,7 +596,9 @@ export default function PortfolioView({
   }, [watchEnabled, tab, watchlist.entries, selectedEntry?.id, queryClient]);
 
   const handleTab = (next: PortfolioTab) => {
-    setTab(next);
+    // A passkey account has no wallet to show.
+    if (passkeyAccount && next === "Your wallet") return;
+    setTabState(next);
     writeTabParams(next);
     if (next === "Watchlist" && !watchSelected) {
       // Entering with nothing selected falls back to the default, so
@@ -754,6 +810,7 @@ export default function PortfolioView({
       walletIcon={walletIcon}
       chain={accountKind ?? null}
       address={accountAddress ?? null}
+      passkeyAccountId={passkeyAccountId}
       tab={tab}
       onTabChange={handleTab}
       onRefresh={() => void portfolio.refresh()}
@@ -822,14 +879,13 @@ export default function PortfolioView({
 
           <div className="min-h-0 flex-1 overflow-y-auto scroll-slim px-4 py-4 sm:px-6 [scrollbar-gutter:stable]">
             <div className="w-full">
-              {passkeyIdentity ? (
-                <PasskeyPortfolio accountId={passkeyIdentity.accountId} />
-              ) : status === "unknown" ? (
-                // A signed-in reload starts here while the wallet and the
-                // cookie are still being read. Painting the log-in prompt
-                // first (the old order) made a returning user watch their
-                // own account turn into "Please log in" and back. The real
-                // per-tab skeleton holds the shape, with its remembered id.
+              {passkeyIdentity || status === "unknown" ? (
+                // A signed-in reload starts here while the wallet, the
+                // passkey, and the cookie are still being read. Painting
+                // the log-in prompt first (the old order) made a returning
+                // user watch their own account turn into "Please log in"
+                // and back. The real per-tab skeleton holds the shape,
+                // with its remembered id.
                 body
               ) : !connected || !accountAddress ? (
                 <div className="flex min-h-[46vh] flex-col items-center justify-center px-4 py-12 text-center">
@@ -856,7 +912,7 @@ export default function PortfolioView({
                 signInPrompt
               ) : portfolio.authExpired ? (
                 signInPrompt
-              ) : portfolio.error && snapshot === null && tab !== "Watchlist" ? (
+              ) : portfolio.error && snapshot === null && !passkeyAccount && tab !== "Watchlist" ? (
                 <HoldingsTable
                   groups={[]}
                   error

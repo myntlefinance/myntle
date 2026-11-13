@@ -9,25 +9,40 @@ const WALLET = "0x32596df10ff2ac5acde8406e6adcc8d047921073";
 
 const state = vi.hoisted(() => ({
   auth: {} as Record<string, unknown>,
+  unlocked: false,
+  priv: {} as Record<string, unknown>,
   usePortfolio: vi.fn(),
   useWatchedPortfolio: vi.fn(),
   useWatchlist: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), prefetch: vi.fn() }),
 }));
 
 vi.mock("skullet/react", () => ({
   Skeleton: ({
     children,
     data,
-    sample,
+    label,
   }: {
     children: (value: unknown) => React.ReactNode;
     data: unknown;
-    sample: unknown;
-  }) => <>{children(data ?? sample)}</>,
+    label?: string;
+  }) => <>{data == null ? (label ?? null) : children(data)}</>,
+}));
+
+vi.mock("@/lib/intents/user-session", () => ({
+  useSuperUnlocked: () => state.unlocked,
+  getValidAccessToken: vi.fn(),
+  notifySuperClosed: vi.fn(),
+  notifySuperUnlock: vi.fn(),
+  saveIntentsSession: vi.fn(),
+  SUPER_UNLOCK_EVENT: "myntle:super-unlock",
+  SUPER_LOCK_EVENT: "myntle:super-lock",
+  SUPER_CLOSED_EVENT: "myntle:super-closed",
+  SUPER_CONTINUE_EVENT: "myntle:super-continue",
+  SUPER_CANCEL_EVENT: "myntle:super-cancel",
 }));
 
 vi.mock("@/components/primitives/SidebarNav", () => ({
@@ -63,28 +78,18 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({
     getQueryData: () => undefined,
     setQueryData: () => undefined,
+    prefetchQuery: () => Promise.resolve(),
   }),
 }));
 
 vi.mock("@/components/app/portfolioQueries", () => ({
   usePortfolio: state.usePortfolio,
   useWatchedPortfolio: state.useWatchedPortfolio,
-  useSuperPrivateBalances: () => ({
-    status: "pending",
-    snapshot: null,
-    isPending: true,
-    isRefreshing: false,
-    refresh: vi.fn(),
-  }),
+  useSuperPrivateBalances: () => state.priv,
 }));
 
 vi.mock("@/components/app/useWatchlist", () => ({
   useWatchlist: state.useWatchlist,
-}));
-
-vi.mock("@/components/app/PasskeyPortfolio", () => ({
-  PasskeyPortfolio: ({ accountId }: { accountId: string }) =>
-    `passkey-portfolio:${accountId}`,
 }));
 
 vi.mock("@/lib/auth/auth-provider", () => ({
@@ -188,12 +193,22 @@ const WALLET_SNAPSHOT: PortfolioSnapshot = {
 };
 
 beforeEach(() => {
+  state.unlocked = false;
+  state.priv = {
+    status: "pending",
+    snapshot: null,
+    isPending: true,
+    isRefreshing: false,
+    refresh: vi.fn(),
+  };
   state.usePortfolio.mockReset();
   state.usePortfolio.mockReturnValue({
     snapshot: WALLET_SNAPSHOT,
     error: null,
     authExpired: false,
     isPending: false,
+    isRefreshing: false,
+    refresh: vi.fn(),
   });
   state.useWatchedPortfolio.mockReset();
   state.useWatchedPortfolio.mockReturnValue({
@@ -201,6 +216,7 @@ beforeEach(() => {
     error: null,
     authExpired: false,
     isPending: false,
+    isRefreshing: false,
     refresh: vi.fn(),
   });
   state.useWatchlist.mockReset();
@@ -237,7 +253,6 @@ describe("PortfolioView branches", () => {
     expect(html).toContain("Your wallet holds $10.00 across 1 asset.");
     expect(html).toContain("USDC");
     expect(html).toContain("Search assets");
-    expect(html).not.toContain("passkey-portfolio");
     expect(state.usePortfolio).toHaveBeenCalledWith("evm", WALLET, true);
     // The section names its address, with the copy mark beside it and
     // the Deposit action at the far edge.
@@ -249,7 +264,7 @@ describe("PortfolioView branches", () => {
     expect(html).toContain("animate-[fade-up");
   });
 
-  it("reads no wallet balance for a passkey account", () => {
+  it("keeps the tabbed portfolio for a passkey account, without a wallet tab", () => {
     state.auth = {
       account: null,
       connected: false,
@@ -257,13 +272,115 @@ describe("PortfolioView branches", () => {
       status: "signed-in",
       identity: passkeyIdentity,
     };
+    state.usePortfolio.mockReturnValue({
+      snapshot: null,
+      error: null,
+      authExpired: false,
+      isPending: false,
+      isRefreshing: false,
+      refresh: vi.fn(),
+    });
 
     const html = ReactDOMServer.renderToStaticMarkup(<PortfolioView />);
 
-    expect(html).toContain(`passkey-portfolio:${ACCOUNT}`);
-    expect(html).not.toContain("Connect Wallet");
-    expect(html).not.toContain("Private balances are being connected.");
+    // The layout is the same page: its tabs, identity row, and gate.
+    expect(html).toContain("Super account");
+    expect(html).toContain("Watchlist");
+    expect(html).not.toContain("Your wallet");
+    expect(html).toContain(ACCOUNT);
+    expect(html).toContain("Copy address");
+    expect(html).toContain("Private balance locked");
+    // The passkey account reads its private ledger, and the watchlist is
+    // session-scoped, so it stays available with no connected wallet.
     expect(state.usePortfolio).toHaveBeenCalledWith(null, null, false);
+    expect(state.useWatchlist).toHaveBeenCalledWith(true);
+  });
+
+  it("holds the passkey skeleton instead of painting sample balances", () => {
+    state.auth = {
+      account: null,
+      connected: false,
+      signedIn: true,
+      status: "signed-in",
+      identity: passkeyIdentity,
+    };
+    state.unlocked = true;
+    state.usePortfolio.mockReturnValue({
+      snapshot: null,
+      error: null,
+      authExpired: false,
+      isPending: false,
+      isRefreshing: false,
+      refresh: vi.fn(),
+    });
+
+    const html = ReactDOMServer.renderToStaticMarkup(<PortfolioView />);
+
+    expect(html).toContain("Reading your super account.");
+    // The sample that measures the skeleton must never read as a balance.
+    expect(html).not.toContain("$896.98");
+    expect(html).not.toContain("$320.50");
+    expect(html).not.toContain("USDC");
+  });
+
+  it("paints the passkey private ledger inside the shared chrome", () => {
+    state.auth = {
+      account: null,
+      connected: false,
+      signedIn: true,
+      status: "signed-in",
+      identity: passkeyIdentity,
+    };
+    state.unlocked = true;
+    state.priv = {
+      status: "loaded",
+      snapshot: {
+        groups: [
+          {
+            id: "private-balance",
+            name: "Private balance",
+            icon: "near",
+            items: [
+              {
+                id: "private-usdc",
+                symbol: "USDC",
+                name: "USDC",
+                amount: "2.5",
+                valueUsd: 2.5,
+                priceUsd: 1,
+                category: "stables",
+                chain: "near",
+                network: "intents",
+              },
+            ],
+          },
+        ],
+        totalUsd: 2.5,
+        walletGroups: [],
+        superGroups: [],
+        walletUsd: 0,
+        superUsd: 2.5,
+      },
+      isPending: false,
+      isRefreshing: false,
+      refresh: vi.fn(),
+    };
+    state.usePortfolio.mockReturnValue({
+      snapshot: null,
+      error: null,
+      authExpired: false,
+      isPending: false,
+      isRefreshing: false,
+      refresh: vi.fn(),
+    });
+
+    const html = ReactDOMServer.renderToStaticMarkup(<PortfolioView />);
+
+    expect(html).toContain("Super account");
+    expect(html).toContain("Watchlist");
+    expect(html).toContain("Your super account holds $2.50 across 1 asset.");
+    expect(html).toContain("USDC");
+    expect(html).toContain("$2.50");
   });
 
   it("offers one log-in action to a connected wallet without a session", () => {

@@ -8,12 +8,13 @@ import type { AssetMeta } from "./toolParts";
 import type { PortfolioSnapshot } from "./portfolioCache";
 
 /* ─────────────────────────────────────────────────────────
- * PASSKEY PRIVATE BALANCE
- * A passkey account has no chain wallet, so its portfolio is the
- * confidential ledger read with its own User-Session. Everything
- * here is browser-side: the token never reaches the server and the
- * amounts are never sent anywhere. The asset catalogue only ever
- * receives the token ids it needs to name a row.
+ * PRIVATE BALANCE READ
+ * The confidential ledger of whichever account is signed in: a
+ * passkey account with its own User-Session, or a wallet's super
+ * account with the session its chain minted. Everything here is
+ * browser-side: the token never reaches the server and the amounts
+ * are never sent anywhere. The asset catalogue only ever receives
+ * the token ids it needs to name a row.
  * ───────────────────────────────────────────────────────── */
 
 export type PasskeyBalanceEntry = {
@@ -28,14 +29,6 @@ export type PasskeyPortfolioRead =
 
 export type PasskeyPortfolioStatus = "locked" | "error" | "empty" | "loaded";
 
-/**
- * The cache scope is namespaced so a passkey account can never share a
- * React Query entry with the wallet of the same address on a chain.
- */
-export function passkeyPortfolioScope(accountId: string): string {
-  return `passkey:${accountId}`;
-}
-
 function positiveEntry(entry: PasskeyBalanceEntry): boolean {
   if (!entry.tokenId || !/^\d+$/.test(entry.available)) return false;
   try {
@@ -46,18 +39,10 @@ function positiveEntry(entry: PasskeyBalanceEntry): boolean {
 }
 
 /**
- * Reads the private balance straight from 1Click with the passkey
- * User-Session. A locked session is a state, not a failure.
- */
-export async function fetchPasskeyPortfolio(
-  accountId: string,
-): Promise<PasskeyPortfolioRead> {
-  return fetchSessionPortfolio("passkey", accountId);
-}
-
-/**
- * The same private read for any session owner: a wallet super
- * account reads with its own chain and address.
+ * Reads the private ledger with the User-Session of whichever account is
+ * signed in: a passkey account uses `passkey` and its account id, a
+ * wallet's super account uses its chain and address. A locked session is
+ * a state, not a failure.
  */
 export async function fetchSessionPortfolio(
   chain: string,
