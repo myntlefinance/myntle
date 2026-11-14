@@ -63,7 +63,7 @@ export function SuperAccountTab({
         <PortfolioChrome
           address={address}
           chain={chain ?? "evm"}
-          qrTitle="Super account"
+          qrTitle="Myntle account"
           scope="super"
           groups={loaded.groups}
           heroGroups={loaded.groups}

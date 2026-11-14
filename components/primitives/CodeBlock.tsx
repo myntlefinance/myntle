@@ -423,7 +423,7 @@ export default function CodeBlock({
             aria-label={copied ? text.copied : text.copy}
             onClick={copy}
             className={cn(
-              "flex h-6 w-[68px] shrink-0 items-center justify-center gap-1.5 rounded-[6px] text-[11px] transition-colors duration-150 hover:bg-hover active:scale-[0.97]",
+              "flex h-7 w-[72px] shrink-0 items-center justify-center gap-1.5 rounded-[6px] text-xs transition-colors duration-150 hover:bg-hover active:scale-[0.97]",
               copied ? "text-green font-medium" : "text-ink-3 hover:text-ink",
             )}
           >

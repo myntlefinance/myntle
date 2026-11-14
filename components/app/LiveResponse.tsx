@@ -545,7 +545,7 @@ export const LiveResponse = memo(function LiveResponseInner({
     const snap = settlements?.[a.approvalId] ?? null;
     const snapState = snap ? settlementCardState(snap.state) : null;
     // The quote decides the route, not the session kind: a wallet can spend
-    // its Near Account balance, and that trade is one signed intent. Only a
+    // its Myntle account balance, and that trade is one signed intent. Only a
     // turn stored before the tool named the route falls back to the account
     // kind.
     const accountTrade =
@@ -1342,6 +1342,42 @@ function describeToolStep(
       }
       return withdrawal;
     }
+    case "get_limit_order_quote":
+      return quoteRow(part, symbols, "Priced a limit order", "limit");
+    case "get_limit_orders": {
+      const output = outputOf(part);
+      const orders = Array.isArray(output.orders) ? output.orders : null;
+      return {
+        icon: "limit",
+        label: "Listed limit orders",
+        chip:
+          orders === null
+            ? "limit orders"
+            : orders.length === 0
+              ? "no orders"
+              : `${orders.length} order${orders.length === 1 ? "" : "s"}`,
+        mono: false,
+        detailMono: true,
+        detail: [],
+      };
+    }
+    case "get_earn_options": {
+      const output = outputOf(part);
+      const vaults = Array.isArray(output.vaults) ? output.vaults : null;
+      return {
+        icon: "earn",
+        label: "Listed yield vaults",
+        chip:
+          vaults === null
+            ? "yield vaults"
+            : vaults.length === 0
+              ? "no vaults"
+              : `${vaults.length} vault${vaults.length === 1 ? "" : "s"}`,
+        mono: false,
+        detailMono: true,
+        detail: [],
+      };
+    }
     case "get_transaction_status":
       return statusRow(part);
     case "get_transaction_history":
@@ -1351,7 +1387,7 @@ function describeToolStep(
     case "request_super_unlock":
       return {
         icon: "unlock",
-        label: "Super account",
+        label: "Requested an unlock",
         chip: "unlock needed",
         mono: false,
         detailMono: false,
@@ -1483,12 +1519,12 @@ const TOOL_NAMES: Record<string, { live: string; done: string }> = {
     done: "Read transaction history",
   },
   get_super_balances: {
-    live: "Reading the private balance",
-    done: "Read the private balance",
+    live: "Reading the Myntle balance",
+    done: "Read the Myntle balance",
   },
   request_super_unlock: {
-    live: "Requesting the private unlock",
-    done: "Requested the private unlock",
+    live: "Requesting the Myntle unlock",
+    done: "Requested the Myntle unlock",
   },
   get_google_news: {
     live: "Searching Google News",
@@ -1567,9 +1603,9 @@ function labelFor(name: string, part: ToolPart): string {
     case "get_transaction_history":
       return "Listed trades";
     case "get_super_balances":
-      return "Read private balance";
+      return "Read Myntle balance";
     case "request_super_unlock":
-      return "Super account";
+      return "Requested an unlock";
     case "get_google_news":
     case "get_crypto_news":
     case "get_market_news":
@@ -1719,7 +1755,7 @@ function superBalancesRow(part: ToolPart): ToolStep {
   if (output.status === "locked") {
     return {
       icon: "lock",
-      label: "Read private balance",
+      label: "Read Myntle balance",
       chip: "locked",
       mono: false,
       detailMono: false,
@@ -1730,7 +1766,7 @@ function superBalancesRow(part: ToolPart): ToolStep {
   if (output.status === "error") {
     return {
       icon: "lock",
-      label: "Read private balance",
+      label: "Read Myntle balance",
       chip: "unavailable",
       mono: false,
       detailMono: false,
@@ -1755,7 +1791,7 @@ function superBalancesRow(part: ToolPart): ToolStep {
     }
     return {
       icon: "lock",
-      label: "Read private balance",
+      label: "Read Myntle balance",
       chip: `${balances.length} ${balances.length === 1 ? "token" : "tokens"}`,
       mono: false,
       detailMono: true,
@@ -1765,7 +1801,7 @@ function superBalancesRow(part: ToolPart): ToolStep {
 
   return {
     icon: "lock",
-    label: "Read private balance",
+    label: "Read Myntle balance",
     chip: "empty",
     mono: false,
     detailMono: false,

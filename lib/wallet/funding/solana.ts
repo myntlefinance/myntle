@@ -1,7 +1,7 @@
 "use client";
 
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
-import { sendSolanaDeposit } from "../solana-transfer";
+import { sendSolanaDeposit, solanaRpcEndpoint } from "../solana-transfer";
 import { trackFundingConnection } from "./release";
 import {
   gasShortfall,
@@ -14,12 +14,9 @@ import {
   type FundingSendResult,
 } from "./types";
 
-const SOLANA_RPC =
-  process.env.NEXT_PUBLIC_SOLANA_RPC ?? "https://api.mainnet-beta.solana.com";
-
 function solanaConnection() {
   return import("@solana/web3.js").then(
-    ({ Connection }) => new Connection(SOLANA_RPC, "confirmed"),
+    ({ Connection }) => new Connection(solanaRpcEndpoint(), "confirmed"),
   );
 }
 

@@ -460,7 +460,7 @@ export function useWatchedPortfolio(
 }
 
 /**
- * The confidential side of a wallet's super account, read in the
+ * The confidential side of a wallet's Myntle account, read in the
  * browser with its own User-Session. A locked result is data, not a
  * failure: the page offers the unlock card instead of balances. The
  * public ledger the server reads stays visible underneath; a private

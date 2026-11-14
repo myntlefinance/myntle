@@ -3,11 +3,11 @@
  * the opening `?tab=` on the server: importing it from a "use client"
  * module would fail the build. */
 
-export type PortfolioTab = "Your wallet" | "Super account" | "Watchlist";
+export type PortfolioTab = "Your wallet" | "Myntle account" | "Watchlist";
 
 export const PORTFOLIO_TABS: readonly PortfolioTab[] = [
   "Your wallet",
-  "Super account",
+  "Myntle account",
   "Watchlist",
 ] as const;
 
@@ -15,13 +15,13 @@ export const PORTFOLIO_TABS: readonly PortfolioTab[] = [
  * the wallet tab does not exist for it. The confidential ledger and the
  * watchlist are the whole portfolio, not a replacement for it. */
 export const PASSKEY_PORTFOLIO_TABS: readonly PortfolioTab[] = [
-  "Super account",
+  "Myntle account",
   "Watchlist",
 ] as const;
 
 /** The `?tab=` value a fresh visit — server or client — opens to. */
 export function parsePortfolioTab(raw: unknown): PortfolioTab {
-  if (raw === "super") return "Super account";
+  if (raw === "super") return "Myntle account";
   if (raw === "watched") return "Watchlist";
   return "Your wallet";
 }

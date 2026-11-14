@@ -110,11 +110,11 @@ export function UnlockedCard() {
     <CardShell>
       <CardBody
         tone="green"
-        title={passkey ? "Private balance unlocked" : "Super account unlocked"}
+        title={passkey ? "Myntle balance unlocked" : "Myntle account unlocked"}
       >
         {passkey
-          ? "Myntle can read your private balance."
-          : "Myntle has access to your super account."}
+          ? "The assistant can read your Myntle balance."
+          : "The assistant can sign for your Myntle account."}
       </CardBody>
     </CardShell>
   );
@@ -253,8 +253,8 @@ export function UnlockRequestCard({
       : recordState;
 
   const lockedTitle = passkey
-    ? "Private balance locked"
-    : "Super account locked";
+    ? "Myntle balance locked"
+    : "Myntle account locked";
 
   if (state === "unlocked") return <UnlockedCard />;
 
@@ -330,8 +330,8 @@ export function UnlockRequestCard({
     >
       <CardBody tone="attention" title={lockedTitle}>
         {passkey
-          ? "Please unlock your private balance to continue."
-          : "Please unlock your super account to continue."}
+          ? "Please unlock your Myntle balance to continue."
+          : "Please unlock your Myntle account to continue."}
       </CardBody>
     </CardShell>
   );

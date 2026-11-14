@@ -29,11 +29,16 @@ export function ExternalLinkDialog({
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [onClose]);
 
   useEffect(() => {
@@ -204,8 +209,17 @@ export function MarkdownLink({
     );
   }
 
-  // External URLs.
+  // External URLs (strictly http and https).
   const isExternal = Boolean(href && /^https?:\/\//i.test(href));
+
+  // Disallow unsafe or unrecognized schemes (javascript:, data:, vbscript:, etc.).
+  if (!isExternal) {
+    return (
+      <span className={className} {...props}>
+        {children}
+      </span>
+    );
+  }
 
   return (
     <>

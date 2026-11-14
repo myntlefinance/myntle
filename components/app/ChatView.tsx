@@ -96,7 +96,7 @@ export type InitialThread = {
 const NO_PENDING_APPROVALS: ReadonlySet<string> = new Set();
 
 /**
- * True when the assistant's last turn stopped on the super account: either it
+ * True when the assistant's last turn stopped on the Myntle account: either it
  * asked for the unlock, or the private read came back locked. Only then is
  * there a paused request worth resuming after the user unlocks.
  */

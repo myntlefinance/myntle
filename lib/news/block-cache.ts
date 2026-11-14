@@ -16,7 +16,6 @@ import type { NormalizedNewsItem } from "./fetcher";
 export const BLOCK_BUDGET_CHARS = 6000;
 const MAX_ITEMS_PER_BLOCK = 10;
 const TTL_MS = 5 * 60 * 1000;
-const MAX_CACHED_ITEMS = 60;
 
 export type CachedSearch = {
   query: string;
@@ -38,7 +37,7 @@ function packBlocks(items: NormalizedNewsItem[]): NormalizedNewsItem[][] {
   const blocks: NormalizedNewsItem[][] = [];
   let current: NormalizedNewsItem[] = [];
   let currentChars = 0;
-  for (const item of items.slice(0, MAX_CACHED_ITEMS)) {
+  for (const item of items) {
     const chars = itemChars(item);
     if (
       current.length > 0 &&
@@ -81,12 +80,12 @@ export function storeSearch(args: {
     query: args.query,
     source: args.source,
     blocks,
-    totalItems: Math.min(args.items.length, MAX_CACHED_ITEMS),
+    totalItems: args.items.length,
     createdAt: Date.now(),
     nextCursor: args.nextCursor ?? null,
     hasNextPage: args.hasNextPage ?? false,
   });
-  return { searchId, blocks, totalItems: Math.min(args.items.length, MAX_CACHED_ITEMS) };
+  return { searchId, blocks, totalItems: args.items.length };
 }
 
 export function getBlock(

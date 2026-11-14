@@ -55,8 +55,8 @@ function locked(accountKind: "wallet" | "passkey"): SuperBalancesResult {
     needsSuperUnlock: true,
     message:
       accountKind === "passkey"
-        ? "The private balance is locked. Unlock it to read the balance."
-        : "The super account is locked. Unlock it to read the private balance.",
+        ? "The Myntle balance is locked. Unlock it to read the balance."
+        : "The Myntle account is locked. Unlock it to read the Myntle balance.",
   };
 }
 
@@ -65,7 +65,7 @@ function failed(): SuperBalancesResult {
     status: "error",
     balances: [],
     totalValueUsd: 0,
-    message: "The private balance could not be read.",
+    message: "The Myntle balance could not be read.",
   };
 }
 
@@ -82,12 +82,12 @@ export function createSuperBalancesTool(context?: ToolContext) {
   return tool({
     description:
       accountKind === "passkey"
-        ? "Read the private balance inside the user's account. " +
-          "Use this whenever the user asks about their private balance or what they can spend " +
+        ? "Read the Myntle balance inside the user's account. " +
+          "Use this whenever the user asks about their Myntle balance or what they can spend " +
           "from the account. This is the private ledger; get_wallet_balances only reads the " +
           "account's public settlement ledger."
-        : "Read the private balance inside the user's super account. " +
-          "Use this whenever the user asks about their private balance, their super account holdings, " +
+        : "Read the Myntle balance inside the user's Myntle account. " +
+          "Use this whenever the user asks about their Myntle balance, their Myntle account holdings, " +
           "or what they can spend from super. This is the private ledger; get_wallet_balances " +
           "only sees public on-chain balances and the public settlement ledger.",
     inputSchema: z.object({}),
@@ -174,7 +174,7 @@ export function createSuperBalancesTool(context?: ToolContext) {
           decimals,
           amount,
           rawAmount: available,
-          // This tool only ever reads the private balance, so the model sees
+          // This tool only ever reads the Myntle balance, so the model sees
           // the product word rather than whatever mode string the upstream
           // endpoint happened to send.
           source: "private",
@@ -191,8 +191,8 @@ export function createSuperBalancesTool(context?: ToolContext) {
           totalValueUsd: 0,
           message:
             accountKind === "passkey"
-              ? "The private balance is empty."
-              : "The super account is empty.",
+              ? "The Myntle balance is empty."
+              : "The Myntle account is empty.",
         };
       }
 

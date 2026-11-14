@@ -1,7 +1,7 @@
 import type { UIMessage } from "ai";
 
 /**
- * The hidden user turn that resumes a request after the super account unlocks.
+ * The hidden user turn that resumes a request after the Myntle account unlocks.
  *
  * The unlock card must stay in the transcript: it is the record of the paused
  * request, and it is the thing that morphs to "unlocked" or settles to

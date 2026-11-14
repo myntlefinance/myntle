@@ -41,7 +41,7 @@ function positiveEntry(entry: PasskeyBalanceEntry): boolean {
 /**
  * Reads the private ledger with the User-Session of whichever account is
  * signed in: a passkey account uses `passkey` and its account id, a
- * wallet's super account uses its chain and address. A locked session is
+ * wallet's Myntle account uses its chain and address. A locked session is
  * a state, not a failure.
  */
 export async function fetchSessionPortfolio(
@@ -116,7 +116,7 @@ export function buildPasskeySnapshot(
       : [
           {
             id: "private-balance",
-            name: "Private balance",
+            name: "Myntle balance",
             icon: "near",
             items,
           },

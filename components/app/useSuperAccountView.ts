@@ -208,7 +208,7 @@ export function useSuperAccountView({
     !locked &&
     priv.status === "error" &&
     merged.groups.every((group) => group.items.length === 0);
-  // The address row re-reads both sides of the super account. Refreshing
+  // The address row re-reads both sides of the Myntle account. Refreshing
   // only the public ledger while the private read is refused looks like a
   // broken button; the private read is what the user is asking about.
   // A locked account has nothing to re-read — the gate is waiting on the
@@ -247,7 +247,7 @@ export function useSuperAccountView({
     skeletonData: pending
       ? null
       : { groups: merged.groups, totalUsd: merged.totalUsd },
-    label: "Reading your super account.",
+    label: "Reading your Myntle account.",
   };
 }
 

@@ -300,25 +300,25 @@ export function NearSetupDialog({
 
   const title =
     phase === "done"
-      ? "Super account ready"
-      : "Set up your super account";
+      ? "Your Myntle account is ready."
+      : "Set up your Myntle account";
 
   const subtitle =
     phase === "done"
-      ? "Your super account is ready."
+      ? "Ask for a trade whenever you like."
       : state?.needsKey
         ? "Sign in again so Myntle can use this wallet's key."
         : state?.badKey
           ? "This wallet key no longer belongs to the account. Reconnect and sign in again."
           : grantFailed && state?.hasGas !== true
-            ? "NEAR Intents needs to register this wallet's key once before your super account can open. The network fee could not be sent, so add a little NEAR to this account and try again."
+            ? "NEAR Intents needs to register this wallet's key once before your Myntle account can open. The network fee could not be sent, so add a little NEAR to this account and try again."
             : grantSpent
               ? "The network fee was sent earlier, but this account no longer has enough NEAR. Add a little NEAR and try again."
               : grantReady
-                ? "NEAR Intents needs to register this wallet's key once before your super account can open. Approve one registration to finish."
+                ? "NEAR Intents needs to register this wallet's key once before your Myntle account can open. Approve one registration to finish."
                 : state?.hasGas
-                  ? "NEAR Intents needs to register this wallet's key once before your super account can open. This is a network transaction, and only the fee is spent."
-                  : `NEAR Intents needs to register this wallet's key once before your super account can open. We send ${amount} NEAR to cover the network fee, then you approve one registration.`;
+                  ? "NEAR Intents needs to register this wallet's key once before your Myntle account can open. This is a network transaction, and only the fee is spent."
+                  : `NEAR Intents needs to register this wallet's key once before your Myntle account can open. We send ${amount} NEAR to cover the network fee, then you approve one registration.`;
 
   const status =
     phase === "checking"

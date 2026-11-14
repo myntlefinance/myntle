@@ -78,7 +78,7 @@ export type AssetGroup = {
   items: AssetItem[];
 };
 
-/** The super account's public group, named for the rail that settles it. */
+/** The Myntle account's public group, named for the rail that settles it. */
 export const INTENTS_GROUP_NAME = "Near Intents";
 /** Snapshots cached before the rename still carry this name. */
 const LEGACY_INTENTS_GROUP_NAME = "Settlement Ledger";

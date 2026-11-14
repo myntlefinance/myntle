@@ -142,19 +142,19 @@ afterEach(() => {
 });
 
 describe("passkey unlock copy", () => {
-  it("names the private balance and never asks for a wallet", () => {
+  it("names the Myntle balance and never asks for a wallet", () => {
     state.identity = passkeyIdentity;
     const html = ReactDOMServer.renderToStaticMarkup(
       <SuperUnlockDialog onClose={() => {}} />,
     );
 
-    expect(html).toContain("Unlock your private balance");
+    expect(html).toContain("Unlock your Myntle balance");
     expect(html).toContain(
-      "Your private balance is read with your passkey. Nothing moves.",
+      "Your Myntle balance is read with your passkey. Nothing moves.",
     );
     expect(html.toLowerCase()).not.toContain("wallet");
     expect(html.toLowerCase()).not.toContain("connect");
-    expect(html).not.toContain("super account");
+    expect(html).not.toContain("Myntle account");
   });
 
   it("keeps the wallet copy for a wallet session", () => {
@@ -163,9 +163,9 @@ describe("passkey unlock copy", () => {
       <SuperUnlockDialog onClose={() => {}} />,
     );
 
-    expect(html).toContain("Unlock your super account");
+    expect(html).toContain("Unlock your Myntle account");
     expect(html).toContain(
-      "Your private balance inside Myntle. Fund it once, then trade in one signature.",
+      "Your Myntle account needs one funding deposit, then every trade takes a single signature.",
     );
   });
 });
@@ -221,7 +221,7 @@ describe("unlockPrivateBalanceWithPasskey", () => {
     await expect(
       unlockPrivateBalanceWithPasskey(passkeyIdentity),
     ).rejects.toThrow(
-      "The private balance could not be unlocked. Please try again.",
+      "The Myntle balance could not be unlocked. Please try again.",
     );
     expect(state.save).not.toHaveBeenCalled();
     expect(state.notify).not.toHaveBeenCalled();
@@ -235,7 +235,7 @@ describe("unlockPrivateBalanceWithPasskey", () => {
     await expect(
       unlockPrivateBalanceWithPasskey(passkeyIdentity),
     ).rejects.toThrow(
-      "The private balance could not be unlocked. Please try again.",
+      "The Myntle balance could not be unlocked. Please try again.",
     );
     expect(state.save).not.toHaveBeenCalled();
   });
@@ -246,7 +246,7 @@ describe("unlockPrivateBalanceWithPasskey", () => {
     await expect(
       unlockPrivateBalanceWithPasskey(passkeyIdentity),
     ).rejects.toThrow(
-      "The private balance service is unavailable. Try again later.",
+      "The Myntle balance service is unavailable. Try again later.",
     );
     expect(state.save).not.toHaveBeenCalled();
   });
@@ -257,7 +257,7 @@ describe("unlockPrivateBalanceWithPasskey", () => {
     await expect(
       unlockPrivateBalanceWithPasskey(passkeyIdentity),
     ).rejects.toThrow(
-      "The private balance service is unavailable. Try again later.",
+      "The Myntle balance service is unavailable. Try again later.",
     );
     expect(state.save).not.toHaveBeenCalled();
   });

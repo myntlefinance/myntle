@@ -17,7 +17,7 @@ export async function POST(req: Request) {
   const session = await requireSession(req);
   if (!session) {
     return NextResponse.json(
-      { error: "Log in to set up your super account." },
+      { error: "Log in to set up your Myntle account." },
       { status: 401, headers: NO_STORE },
     );
   }

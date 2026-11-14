@@ -59,7 +59,7 @@ describe("SentenceTradeCard", () => {
     expect(html).toContain("USDT");
     expect(html).toContain("0.05");
     expect(html).toContain("ETH");
-    expect(html).toContain("Near Account");
+    expect(html).toContain("Myntle account");
     // No ticket legs survive.
     expect(html).not.toContain("You send");
     expect(html).not.toContain("You receive");
@@ -420,7 +420,7 @@ describe("VenuePopup", () => {
       <VenuePopup address="0x3259aBcDeF12345678901073" />,
     );
     expect(html).toContain("You");
-    expect(html).toContain("Near Account");
+    expect(html).toContain("Myntle account");
     expect(html).toContain("Near Intents");
     expect(html).toContain("intents.near");
     expect(html).toContain("0x3259…1073");

@@ -194,6 +194,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // account can sign in on this browser. `signOut` reloads itself; this
     // covers the expiry path.
     if (wasSignedIn && reply.status === "signed-out") {
+      try {
+        const { clearThreadCache } = await import(
+          "@/components/app/threadCache"
+        );
+        const { clearFinanceCaches } = await import(
+          "@/components/app/portfolioCache"
+        );
+        clearThreadCache();
+        clearFinanceCaches();
+      } catch {
+        // The reload below still drops in-memory state.
+      }
       window.location.replace("/");
     }
     return reply.status;

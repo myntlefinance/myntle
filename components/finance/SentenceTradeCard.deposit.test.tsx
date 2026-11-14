@@ -245,7 +245,7 @@ describe("the deposit Start state", () => {
   it("keeps the sentence and offers Start without an empty Details drawer", () => {
     const html = render(<SentenceTradeCard {...depositCard} />);
 
-    expect(sentenceText(html)).toBe("Deposit 2 USDC in your Near Account");
+    expect(sentenceText(html)).toBe("Deposit 2 USDC in your Myntle account");
     expect(html).toContain("Click Start to begin the deposit process.");
     expect(button("Start")).toBeTruthy();
     expect(button("Details")?.disabled).toBe(true);

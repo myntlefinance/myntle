@@ -49,7 +49,7 @@ describe("NEAR setup copy", () => {
       <NearSetupDialog onClose={() => {}} onDone={() => {}} />,
     );
 
-    expect(html).toContain("Set up your super account");
+    expect(html).toContain("Set up your Myntle account");
     expect(html).toContain("NEAR Intents needs to register this wallet");
     expect(html).toContain(
       "We send 0.0015 NEAR to cover the network fee",

@@ -6,6 +6,7 @@ import {
 } from "@/lib/auth/challenge";
 import { verifyWalletSignature } from "@/lib/auth/signatures";
 import { createSession, SESSION_COOKIE, SESSION_TTL_MS } from "@/lib/auth/session";
+import { checkRateLimit, clientIp } from "@/lib/auth/rate-limit";
 
 const Body = z.object({
   chain: z.enum(["evm", "solana", "near"]),
@@ -18,6 +19,11 @@ const Body = z.object({
 });
 
 export async function POST(req: Request) {
+  const { limited } = checkRateLimit(`auth-verify:${clientIp(req)}`, 15, 60_000);
+  if (limited) {
+    return NextResponse.json({ error: "An error occurred." }, { status: 429 });
+  }
+
   let raw: unknown;
   try {
     raw = await req.json();

@@ -146,7 +146,7 @@ afterEach(() => {
 });
 
 describe("get_quote funding", () => {
-  it("prices a passkey account from the Near Account for the account itself", async () => {
+  it("prices a passkey account from the Myntle account for the account itself", async () => {
     const result = await run(passkeyContext, {
       recipient: "0xMODEL_SUPPLIED",
       refundTo: "0xMODEL_SUPPLIED",
@@ -196,7 +196,7 @@ describe("get_quote funding", () => {
     });
   });
 
-  it("defaults a wallet session to the Near Account", async () => {
+  it("defaults a wallet session to the Myntle account", async () => {
     const result = await run(walletContext);
 
     expect(quoteMock.mock.calls[0][0]).toMatchObject({
@@ -357,7 +357,7 @@ describe("get_quote funding", () => {
     expect(quoteMock).not.toHaveBeenCalled();
   });
 
-  it("prices a cross-chain pair from the Near Account", async () => {
+  it("prices a cross-chain pair from the Myntle account", async () => {
     const result = await run(walletContext, {
       fromAssetId: "nep141:usdc-base",
       toAssetId: "nep141:wrap.near",

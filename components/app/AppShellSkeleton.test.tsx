@@ -46,7 +46,7 @@ describe("AppShellSkeleton", () => {
       <AppShellSkeleton variant="portfolio" />,
     );
     expect(html).toContain("Your wallet");
-    expect(html).toContain("Super account");
+    expect(html).toContain("Myntle account");
     expect(html).toContain("Search assets");
     // The skeleton bar is bare pills; labels live in the real content.
     expect(html).toContain("min-width:24px");
@@ -95,7 +95,7 @@ describe("AppShellSkeleton", () => {
     const sample = ReactDOMServer.renderToStaticMarkup(
       <PortfolioSkeletonBody snapshot={SAMPLE_PORTFOLIO} />,
     );
-    for (const marker of ["Your wallet", "Super account", "USDC"]) {
+    for (const marker of ["Your wallet", "Myntle account", "USDC"]) {
       expect(sample).toContain(marker);
       expect(shell).toContain(marker);
     }

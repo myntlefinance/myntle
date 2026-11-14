@@ -69,7 +69,7 @@ function WatchlistTabIcon() {
 export function portfolioTabIcons(walletIcon?: string): Record<PortfolioTab, ReactNode> {
   return {
     "Your wallet": <WalletTabIcon icon={walletIcon} />,
-    "Super account": <SuperTabIcon />,
+    "Myntle account": <SuperTabIcon />,
     Watchlist: <WatchlistTabIcon />,
   };
 }
@@ -102,12 +102,12 @@ export function PortfolioSkeletonBody({
   // The skeleton replays the opening tab's shape, so landing on it never
   // flashes the wallet first: the switcher, sentence, and body all agree
   // from the first paint.
-  const activeGroups = tab === "Super account" ? superGroups : walletGroups;
+  const activeGroups = tab === "Myntle account" ? superGroups : walletGroups;
   const activeUsd = Number.parseFloat(
     sumGroups(activeGroups).toFixed(2),
   );
   const activeItems = flattenGroups(activeGroups);
-  const locked = tab === "Super account" && superLocked;
+  const locked = tab === "Myntle account" && superLocked;
   // The shell has no session yet, so the address row draws its shape from
   // a realistic address; Skullet turns the text into bones either way.
   const sampleAddress = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
@@ -131,7 +131,7 @@ export function PortfolioSkeletonBody({
             address={sampleAddress}
             chain="evm"
             qrTitle={
-              tab === "Super account" ? "Super account" : "Your wallet"
+              tab === "Myntle account" ? "Myntle account" : "Your wallet"
             }
             onRefresh={() => {}}
             total={activeUsd}
@@ -141,7 +141,7 @@ export function PortfolioSkeletonBody({
           <PortfolioHero
             total={activeUsd}
             count={activeItems.length}
-            scope={tab === "Super account" ? "super" : "wallet"}
+            scope={tab === "Myntle account" ? "super" : "wallet"}
             items={activeItems}
             selected={null}
             onSelect={() => {}}
@@ -193,10 +193,10 @@ function UnlockCardSample() {
           <span className="shrink-0 text-attention">
             <IconLock size={14} stroke={2} aria-hidden />
           </span>
-          <p className="text-sm font-medium text-ink">Super account locked</p>
+          <p className="text-sm font-medium text-ink">Myntle account locked</p>
         </div>
         <p className="mt-1 text-[13px] leading-relaxed text-ink-2">
-          Please unlock your super account to continue.
+          Please unlock your Myntle account to continue.
         </p>
       </div>
       <div className="primitive-card-footer flex items-center justify-end gap-2 bg-surface pb-1.5 pt-1.5">

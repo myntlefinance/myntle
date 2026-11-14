@@ -2118,3 +2118,15 @@ th.is-colsel .records-header-icon {
     transform: none !important;
   }
 }
+
+/* ── iOS zoom guard ─────────────────────────────────────── */
+/* Inputs below 16px trigger auto-zoom on focus in iOS Safari. Bumping text
+ * inputs to 16px on coarse/small viewports keeps the page put. Desktop is
+ * untouched. */
+@media (max-width: 640px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}

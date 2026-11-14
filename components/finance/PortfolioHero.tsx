@@ -328,8 +328,8 @@ export function PortfolioHero({
           ? "Your wallet holds $•••••• across •• assets."
           : `Your wallet holds ${formatMoney(total)} across ${count} ${count === 1 ? "asset" : "assets"}.`
         : masked
-          ? "Your super account holds $•••••• across •• assets."
-          : `Your super account holds ${formatMoney(total)} across ${count} ${count === 1 ? "asset" : "assets"}.`;
+          ? "Your Myntle account holds $•••••• across •• assets."
+          : `Your Myntle account holds ${formatMoney(total)} across ${count} ${count === 1 ? "asset" : "assets"}.`;
 
   return (
     <div className="w-full">

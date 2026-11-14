@@ -41,7 +41,7 @@ describe("super unlock continuation", () => {
 
   it("removes the synthetic turn without reordering the transcript", () => {
     const messages = [
-      user("u1", "What is in my super account?"),
+      user("u1", "What is in my Myntle account?"),
       assistant("a1"),
       continuation,
       assistant("a2"),
@@ -56,7 +56,7 @@ describe("super unlock continuation", () => {
 
   it("keeps the newest message the person actually typed", () => {
     const messages = [
-      user("u1", "What is in my super account?"),
+      user("u1", "What is in my Myntle account?"),
       assistant("a1"),
       continuation,
       assistant("a2"),
@@ -71,7 +71,7 @@ describe("super unlock continuation", () => {
 describe("unlockResolvedAfter", () => {
   it("counts the continuation assistant as the answer", () => {
     const messages = [
-      user("u1", "What is in my super account?"),
+      user("u1", "What is in my Myntle account?"),
       assistant("a-card"),
       continuation,
       assistant("a-answer"),
@@ -83,7 +83,7 @@ describe("unlockResolvedAfter", () => {
 
   it("stays resolved when the user moves on afterwards", () => {
     const messages = [
-      user("u1", "What is in my super account?"),
+      user("u1", "What is in my Myntle account?"),
       assistant("a-card"),
       assistant("a-answer"),
       user("u2", "Thanks"),
@@ -95,7 +95,7 @@ describe("unlockResolvedAfter", () => {
 
   it("does not mark a card the user moved past without unlocking", () => {
     const messages = [
-      user("u1", "What is in my super account?"),
+      user("u1", "What is in my Myntle account?"),
       assistant("a-card"),
       user("u2", "Never mind, what do I hold?"),
       assistant("a-answer"),

@@ -36,7 +36,7 @@ export function createLimitOrderQuoteTool(context?: ToolContext) {
       "A SELL deposits the base asset and receives the quote asset; a BUY deposits the " +
       "quote asset and receives the base asset. The quantity is in the base asset's " +
       "smallest unit, and the price is human units of quote per one base. Leave funding " +
-      "at its default to spend the Near Account balance. Set funding to wallet only when " +
+      "at its default to spend the Myntle account balance. Set funding to wallet only when " +
       "the user explicitly asks to spend from the connected wallet; that route can only " +
       "fund and pay out on the wallet's own chain. A passkey account has no wallet.",
     inputSchema: z.object({
@@ -65,7 +65,7 @@ export function createLimitOrderQuoteTool(context?: ToolContext) {
         .enum(["account", "wallet"])
         .optional()
         .describe(
-          "Where the input comes from. Defaults to the Near Account for a signed-in " +
+          "Where the input comes from. Defaults to the Myntle account for a signed-in " +
             "account. Set wallet only when the user explicitly asks to spend from the " +
             "connected wallet. A passkey account has no wallet.",
         ),
@@ -102,7 +102,7 @@ export function createLimitOrderQuoteTool(context?: ToolContext) {
 
       if (requestedFunding === "wallet" && accountKind === "passkey") {
         throw new Error(
-          "This account has no wallet. Price the order from the Near Account instead.",
+          "This account has no wallet. Price the order from the Myntle account instead.",
         );
       }
 
@@ -131,7 +131,7 @@ export function createLimitOrderQuoteTool(context?: ToolContext) {
         const walletAddress = context?.activeAddress?.trim() || null;
         if (!walletChain || !walletAddress) {
           throw new Error(
-            "No wallet is connected for a wallet-funded order. Place the order from the Near Account instead.",
+            "No wallet is connected for a wallet-funded order. Place the order from the Myntle account instead.",
           );
         }
 
@@ -157,13 +157,13 @@ export function createLimitOrderQuoteTool(context?: ToolContext) {
         if (!onWalletChain(inputAsset.chain)) {
           throw new Error(
             `${inputAsset.symbol} on ${labelFor(inputAsset.chain)} cannot be funded from this ${walletLabel} wallet. ` +
-              "Place the order from the Near Account instead.",
+              "Place the order from the Myntle account instead.",
           );
         }
         if (!onWalletChain(outputAsset.chain)) {
           throw new Error(
             `${outputAsset.symbol} pays out on ${labelFor(outputAsset.chain)}, and this ${walletLabel} wallet cannot receive it there. ` +
-              "Place the order from the Near Account instead.",
+              "Place the order from the Myntle account instead.",
           );
         }
       }

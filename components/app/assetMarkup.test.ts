@@ -4,8 +4,8 @@ import { stripAssetMarkup } from "@/components/app/assetMarkup";
 describe("stripAssetMarkup", () => {
   it("removes the tag from prose and keeps the ticker", () => {
     expect(
-      stripAssetMarkup("Your private balance is 4 <asset>USDC</asset>."),
-    ).toBe("Your private balance is 4 USDC.");
+      stripAssetMarkup("Your Myntle balance is 4 <asset>USDC</asset>."),
+    ).toBe("Your Myntle balance is 4 USDC.");
   });
 
   it("falls back to the symbol attribute when the label is empty", () => {

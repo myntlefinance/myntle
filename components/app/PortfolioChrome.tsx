@@ -47,7 +47,7 @@ export type PortfolioChromeView = {
   /** The read failed; the body names it and offers a retry. */
   error?: boolean;
   onRetry?: () => void;
-  /** Super account gate: the table stays mounted, blurred beneath
+  /** Myntle account gate: the table stays mounted, blurred beneath
     * the unlock card, so unlocking never remounts the toolbar. */
   gate?: { forceLocked: boolean } | null;
   /** A newly picked watched account is still loading: dim the held
@@ -87,7 +87,7 @@ export function PortfolioChrome(view: PortfolioChromeView) {
           qrTitle={view.qrTitle}
           actionLabel={view.scope === "watched" ? "Transfer" : "Deposit"}
           onRefresh={view.onRefresh}
-          // The gate is the locked super account: its private read cannot
+          // The gate is the locked Myntle account: its private read cannot
           // run, so re-reading from its title row would only spin.
           refreshDisabled={Boolean(view.gate)}
           refreshing={view.refreshing}

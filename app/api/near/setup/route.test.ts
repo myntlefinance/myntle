@@ -56,7 +56,7 @@ describe("POST /api/near/setup", () => {
 
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({
-      error: "Log in to set up your super account.",
+      error: "Log in to set up your Myntle account.",
     });
   });
 

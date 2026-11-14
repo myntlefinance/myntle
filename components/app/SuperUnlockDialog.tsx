@@ -38,7 +38,7 @@ const ONE_CLICK =
  * service is unavailable rather than telling the user their signature failed.
  */
 const SERVICE_UNAVAILABLE =
-  "The private balance service is unavailable. Try again later.";
+  "The Myntle balance service is unavailable. Try again later.";
 
 export function openSuperUnlock(callId?: string) {
   window.dispatchEvent(
@@ -59,7 +59,7 @@ function friendlyUnlockError(cause: unknown): string {
     return raw;
   }
   if (
-    /No wallet is connected|super account yet|not detected|No saved wallet|Log in to unlock|disconnected/i.test(
+    /No wallet is connected|Myntle account yet|not detected|No saved wallet|Log in to unlock|disconnected/i.test(
       raw,
     )
   ) {
@@ -71,7 +71,7 @@ function friendlyUnlockError(cause: unknown): string {
 type Phase = "idle" | "signing" | "authenticating" | "unlocked" | "error";
 
 const PASSKEY_UNLOCK_FAILED =
-  "The private balance could not be unlocked. Please try again.";
+  "The Myntle balance could not be unlocked. Please try again.";
 
 function friendlyPasskeyUnlockError(cause: unknown): string {
   if (cause instanceof PasskeyError) {
@@ -277,7 +277,7 @@ export function SuperUnlockDialog({
     }
     const account = sessionAccount;
     if (account.kind !== "evm" && account.kind !== "solana" && account.kind !== "near") {
-      setError("This wallet cannot unlock the super account yet.");
+      setError("This wallet cannot unlock the Myntle account yet.");
       setPhase("error");
       return;
     }
@@ -384,14 +384,14 @@ export function SuperUnlockDialog({
   return (
     <DialogShell
       label={
-        passkey ? "Unlock your private balance" : "Unlock your super account"
+        passkey ? "Unlock your Myntle balance" : "Unlock your Myntle account"
       }
       title={
         phase === "unlocked"
           ? "Unlocked"
           : passkey
-            ? "Unlock your private balance"
-            : "Unlock your super account"
+            ? "Unlock your Myntle balance"
+            : "Unlock your Myntle account"
       }
       icon={
         phase === "unlocked" ? (
@@ -411,10 +411,10 @@ export function SuperUnlockDialog({
       }
       subtitle={
         phase === "unlocked"
-          ? "Your private balance is ready. Ask for it whenever you like."
+          ? "Your Myntle balance is ready. Ask for a trade whenever you like."
           : passkey
-            ? "Your private balance is read with your passkey. Nothing moves."
-            : "Your private balance inside Myntle. Fund it once, then trade in one signature."
+            ? "Your Myntle balance is read with your passkey. Nothing moves."
+            : "Your Myntle account needs one funding deposit, then every trade takes a single signature."
       }
       onClose={closeWithoutUnlock}
       busy={busy || phase === "unlocked"}
@@ -485,7 +485,7 @@ export function SuperUnlockDialog({
             ? reconnectName
               ? `Your ${reconnectName} disconnected. Reconnect it and unlock with one signature.`
               : "Your wallet disconnected. Reconnect it and unlock with one signature."
-            : "Private swaps. Orders that wait for your price."}
+            : "Unlock to settle swaps privately and fill limit orders at your price."}
         </p>
       ) : null}
 
@@ -505,8 +505,8 @@ export function SuperUnlockDialog({
               style={{ animation: "fade-in 180ms ease-out both" }}
             >
               {passkey
-                ? "Private balance unlocked. Nothing left the browser."
-                : "Super account unlocked. Nothing left the browser."}
+                ? "Myntle balance unlocked. Nothing left the browser."
+                : "Myntle account unlocked. Nothing left the browser."}
             </p>
           ) : error ? (
             <p

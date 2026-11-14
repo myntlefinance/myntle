@@ -23,6 +23,29 @@ const nextConfig: NextConfig = {
      */
     staleTimes: { dynamic: 86_400, static: 86_400 },
   },
+  async headers() {
+    // Baseline hardening. No CSP here: the wallet connectors, WalletConnect
+    // relay, and streaming transports need a per-source policy, which is a
+    // separate change with its own testing.
+    return [
+      {
+        source: "/((?!_next/static|_next/image|favicon.ico|.well-known/workflow/).*)",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=()",
+          },
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=63072000; includeSubDomains",
+          },
+        ],
+      },
+    ];
+  },
 };
 
 export default withWorkflow(nextConfig);

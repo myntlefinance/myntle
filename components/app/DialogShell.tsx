@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { IconX } from "@tabler/icons-react";
 import type { ReactNode } from "react";
@@ -41,12 +41,52 @@ export function DialogShell({
   footer?: ReactNode;
   children?: ReactNode;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    // Restore focus to the trigger when the dialog closes.
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    // Move focus into the dialog on open so keyboard and screen-reader
+    // users land on the decision, matching the aria-modal announcement.
+    const panel = panelRef.current;
+    const focusables = panel?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    (focusables?.[0] ?? panel)?.focus?.();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !busy) onClose();
+      // Trap Tab inside the dialog while it is open.
+      if (event.key === "Tab" && panel) {
+        const items = [...(panel.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [])].filter((el) => el.offsetParent !== null);
+        if (items.length === 0) {
+          event.preventDefault();
+          return;
+        }
+        const first = items[0];
+        const last = items[items.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        if (event.shiftKey && (active === first || !panel.contains(active))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (active === last || !panel.contains(active))) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+      previouslyFocused?.focus?.();
+    };
   }, [busy, onClose]);
 
   return createPortal(
@@ -66,7 +106,9 @@ export function DialogShell({
         }}
       />
       <div
-        className="relative flex max-h-[calc(100dvh-2rem)] min-h-[154px] w-full max-w-md flex-col justify-between overflow-y-auto scroll-slim rounded-card bg-surface shadow-overlay"
+        ref={panelRef}
+        tabIndex={-1}
+        className="relative flex max-h-[calc(100dvh-2rem)] min-h-[154px] w-full max-w-md flex-col justify-between overflow-y-auto scroll-slim rounded-card bg-surface shadow-overlay focus:outline-none"
         style={{ animation: "dialog-in 240ms var(--ease-out-strong) both" }}
       >
         <div className="primitive-card-pad">

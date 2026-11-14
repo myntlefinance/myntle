@@ -2,7 +2,7 @@
  * Client-side User-Session for NEAR Intents private reads.
  *
  * The browser talks to 1Click directly; the server never sees these tokens.
- * That is the point: private balances stay between the user and 1Click, and
+ * That is the point: Myntle balances stay between the user and 1Click, and
  * nothing server-side can leak, lose, or abuse them. Memory holds the live
  * access token, localStorage holds the refresh token across reloads. A page
  * reload loses at most the 15-minute access token, which is re-minted
@@ -253,7 +253,7 @@ export type PrivateBalances = {
 };
 
 /**
- * Private balances for the user's own session. Direct browser→1Click;
+ * Myntle balances for the user's own session. Direct browser→1Click;
  * the server never sees the token.
  *
  * Three outcomes, not two: locked means there is no session or the service
@@ -346,7 +346,7 @@ export function clearIntentsSession(chain: string, address: string): void {
 }
 
 /**
- * Locks one wallet's super account: drops the live access token from memory
+ * Locks one wallet's Myntle account: drops the live access token from memory
  * and the refresh token from localStorage, then tells every listener so the
  * menu, the assistant context, and the next private read all see it locked.
  */

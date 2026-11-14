@@ -1,5 +1,6 @@
 import type { UIMessage } from "ai";
 import { clearApprovalRecords } from "./approvalRecords";
+import { clearApprovalStore } from "./approvalStore";
 
 /* ─────────────────────────────────────────────────────────
  * THREAD CACHE
@@ -197,6 +198,13 @@ export function clearThreadCache() {
   trashedLoads.clear();
   threadPagination.clear();
   clearApprovalRecords();
+  // Paint caches are account-scoped by content: never let one account's
+  // decided cards seed another account's first paint.
+  try {
+    clearApprovalStore();
+  } catch {
+    // Memory is already cleared above; storage follows on next write.
+  }
   threadsInflightPromise = null;
   trashedInflightPromise = null;
   threadsMemoryCache = null;

@@ -172,7 +172,7 @@ describe("get_wallet_balances for a passkey account", () => {
     expect(result.groups).toEqual([]);
     expect(result.totalValueUsd).toBe(0);
     expect(result.message).toBe(
-      "No public balances. The private balance is separate.",
+      "No public balances. The Myntle balance is separate.",
     );
     expect(result.privateBalance).toBe("separate");
     expect(result.privateBalanceNote).toContain("get_super_balances");

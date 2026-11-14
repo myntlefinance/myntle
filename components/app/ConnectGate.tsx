@@ -64,7 +64,7 @@ export function ConnectGate() {
           >
             Log In
           </Button>
-          <span>to start a chat with myntle.</span>
+          <span>to start a chat with Myntle.</span>
         </p>
       </div>
     </article>

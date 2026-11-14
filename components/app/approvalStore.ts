@@ -92,11 +92,24 @@ function persist(): void {
   }
 }
 
-/** Resets all records. Only used by tests. */
+/** Resets all records, in memory and in storage. Used by tests and on sign-out. */
 export function resetApprovalStore(): void {
   tx.clear();
   outcome.clear();
   hydrated = false;
+}
+
+/** Clears the persisted paint caches. Called on sign-out and session expiry so a forged or stale entry cannot paint an outcome for the next account. */
+export function clearApprovalStore(): void {
+  resetApprovalStore();
+  const store = storage();
+  if (!store) return;
+  try {
+    store.removeItem(TX_KEY);
+    store.removeItem(OUTCOME_KEY);
+  } catch {
+    // Quota or privacy mode: memory is already cleared.
+  }
 }
 
 export function rememberApprovalTx(approvalId: string, record: ApprovalTx): void {

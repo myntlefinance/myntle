@@ -18,7 +18,7 @@ export const GET_QUOTE_CAPABILITY: Capability = {
 /**
  * Where the trade's input comes from.
  *
- * The Near Account is the default for every signed-in account. The connected
+ * The Myntle account is the default for every signed-in account. The connected
  * wallet is an explicit choice, because it can only spend and deliver on its
  * own chain. A logged-out preview has no account and prices from the wallet.
  */
@@ -40,8 +40,8 @@ export function createQuoteTool(context?: ToolContext) {
       "trade, and pass the figures through unchanged. A recipient or refund may be a name " +
       "such as vitalik.eth or example.sns; pass it through unchanged. " +
       (accountKind === "passkey"
-        ? "This account trades from its Near Account balance, so leave funding at its default."
-        : "Leave funding at its default to spend the Near Account balance. Set funding " +
+        ? "This account trades from its Myntle account balance, so leave funding at its default."
+        : "Leave funding at its default to spend the Myntle account balance. Set funding " +
           "to wallet only when the user explicitly asks to spend from the connected " +
           "wallet; the wallet route can only deliver an output on the wallet's own chain."),
     inputSchema: z.object({
@@ -54,7 +54,7 @@ export function createQuoteTool(context?: ToolContext) {
         .enum(["account", "wallet"])
         .optional()
         .describe(
-          "Where the input comes from. Defaults to the Near Account for a signed-in " +
+          "Where the input comes from. Defaults to the Myntle account for a signed-in " +
             "account, because it can hold any asset on any chain. Set wallet only when " +
             "the user explicitly asks to spend from the connected wallet. A passkey " +
             "account has no wallet, so wallet funding is not available to it.",
@@ -88,7 +88,7 @@ export function createQuoteTool(context?: ToolContext) {
     }) => {
       const sessionAccountId = context?.intentsAccountId?.trim() || null;
 
-      // The Near Account is the default source, not the connected wallet.
+      // The Myntle account is the default source, not the connected wallet.
       // It can hold any asset on any chain, so it is the only route that
       // works for every destination the user can ask about. Spending from
       // the wallet is an explicit choice: that route can only deliver on
@@ -101,7 +101,7 @@ export function createQuoteTool(context?: ToolContext) {
 
       if (requestedFunding === "wallet" && accountKind === "passkey") {
         throw new Error(
-          "This account has no wallet. Price the trade from the Near Account instead.",
+          "This account has no wallet. Price the trade from the Myntle account instead.",
         );
       }
 
@@ -174,11 +174,11 @@ export function createQuoteTool(context?: ToolContext) {
         if (fromChain && !onWalletChain(fromChain)) {
           walletRouteError =
             `${fromSymbol ?? "That asset"} on ${chainLabel(fromChain)} cannot be funded from this ${walletLabel} wallet. ` +
-            "Use the same token on the wallet's chain, or trade from the Near Account.";
+            "Use the same token on the wallet's chain, or trade from the Myntle account.";
         } else if (toChain && usesWalletRecipient && !onWalletChain(toChain)) {
           walletRouteError =
             `${toSymbol ?? "The output"} pays out on ${chainLabel(toChain)}, and this ${walletLabel} wallet cannot receive it there. ` +
-            "Trade from the Near Account instead.";
+            "Trade from the Myntle account instead.";
         }
       }
 
@@ -225,7 +225,7 @@ export function createQuoteTool(context?: ToolContext) {
 
       // An account-funded quote belongs to the account, not to an address the
       // model supplied: the output and any refund land back in the same
-      // private balance the trade spends from.
+      // Myntle balance the trade spends from.
       const targetRecipientConst = accountFunded
         ? accountIdForQuote
         : recipient || context?.activeAddress;

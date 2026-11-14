@@ -30,10 +30,11 @@ import {
  * the wallet stack boots: connect, sign in, switch account, and sign out all
  * run through the same code paths as a browser extension.
  *
- * It is inert unless `NEXT_PUBLIC_DEV_WALLET_KEY` is set, and it refuses to
- * run in a production build. The key is inlined into the client bundle by
- * design — the browser has to sign with it — so it is only ever safe as a
- * throwaway account holding the amount you are willing to lose.
+ * It is inert unless the server answers `/api/dev/wallet` with a key, and
+ * that route 404s in a production build. The key arrives at runtime over
+ * the local connection — it is never inlined into the client bundle via a
+ * `NEXT_PUBLIC_` variable, so it is only ever safe as a throwaway account
+ * holding the amount you are willing to lose.
  */
 
 const CHAINS: Record<number, Chain> = {

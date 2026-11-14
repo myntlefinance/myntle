@@ -61,7 +61,7 @@ describe("the private session read", () => {
     });
   });
 
-  it("reads a wallet's super account under its own chain", async () => {
+  it("reads a wallet's Myntle account under its own chain", async () => {
     state.fetchPrivateBalances.mockResolvedValue({
       ok: true,
       balances: [],

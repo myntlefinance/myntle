@@ -53,7 +53,7 @@ export type ToolContext = {
   accountId?: string | null;
   activeAddress?: string | null;
   activeChain?: string | null;
-  /** Whether the super account is unlocked for this wallet. */
+  /** Whether the Myntle account is unlocked for this wallet. */
   superUnlocked?: boolean | null;
   /**
    * A live 1Click User-Session access token for this turn.

@@ -10,7 +10,7 @@ export const PORTFOLIO_PROMPT = `Portfolio and balances:
 - When the user asks for stablecoins (e.g. "my stablecoin balances", "how much stables do I have"), call get_wallet_balances with category: "stables".
 - When the user asks for EVM chains (e.g. "my balances on evm"), call get_wallet_balances with chain: "evm".
 - When the user asks for a specific token (e.g. "what is my PEPE balance?", "do I have XYZ?"), call get_wallet_balances with symbol: "PEPE" (or the requested ticker). This ensures the token is retrieved even if it has zero USD value or is unpriced.
-- A request for the private balance or the super account's holdings goes to get_super_balances instead, because this tool only sees public on-chain balances and the public settlement ledger.
+- A request for the Myntle balance or the Myntle account's holdings goes to get_super_balances instead, because this tool only sees public on-chain balances and the public settlement ledger.
 - If the user specifically asks to inspect unpriced airdrops or zero-value assets (e.g. "show all airdrops including zero value"), call get_wallet_balances with includeZeroValue: true.
 - Otherwise, leave includeZeroValue omitted or false so scam airdrops and zero-value tokens are omitted by default.
 - After a balance result arrives, write one sentence about the money and its consequence: whether it covers what they asked, and what happens next. Mention a section (ledger, chain, total) only when it is non-zero, explicitly asked for, or required for the stated next step; omit zero or empty sections otherwise. Do not generate a redundant full markdown table. When the table is on screen, do not repeat its figures verbatim; a rounded reference is enough. When it is a check, the exact figure is the answer.

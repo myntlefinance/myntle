@@ -909,7 +909,7 @@ export default function TrashView() {
                           {/* Quick row hover actions */}
                           <div
                             onClick={(e) => e.stopPropagation()}
-                            className="ml-2 flex shrink-0 items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-75 group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto"
+                            className="ml-2 flex shrink-0 items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-75 group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto max-lg:opacity-100 max-lg:pointer-events-auto"
                           >
                             <Button
                               variant="ghost"
@@ -919,7 +919,6 @@ export default function TrashView() {
                                 void restoreMany([item.id]);
                               }}
                               aria-label={`Restore ${item.label ?? "New chat"}`}
-                              className="h-6 px-2 text-[11.5px]"
                             >
                               <IconArrowBackUp size={12} stroke={2} />
                               Restore
@@ -932,7 +931,7 @@ export default function TrashView() {
                                 setDialog({ kind: "delete", ids: [item.id] });
                               }}
                               aria-label={`Delete ${item.label ?? "New chat"}`}
-                              className="h-6 px-2 text-[11.5px] text-red hover:bg-red hover:text-white"
+                              className="text-red hover:bg-red hover:text-white"
                             >
                               <IconTrash size={12} stroke={2} />
                               Delete

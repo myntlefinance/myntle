@@ -3,7 +3,7 @@ import { buildSystemPrompt } from "./builder";
 
 describe("buildSystemPrompt account kind", () => {
   beforeEach(() => {
-    // The override replaces the assembled sections; every test here reads
+    // The override replaces only the identity section; every test here reads
     // the assembled prompt instead.
     delete process.env.SYSTEM_INSTRUCTIONS;
   });
@@ -88,7 +88,7 @@ describe("buildSystemPrompt account kind", () => {
       expect(prompt).toContain(
         "Never show a contract ID or full asset id unless the user explicitly asks",
       );
-      expect(prompt).toContain("from your Near Account");
+      expect(prompt).toContain("from your Myntle account");
       expect(prompt).toContain("Connected wallet:");
       expect(prompt.toLowerCase()).not.toContain("confidential");
     } finally {

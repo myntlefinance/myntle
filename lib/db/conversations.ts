@@ -13,13 +13,15 @@ export function newSlug(): string {
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SLUG_RE = /^[0-9A-Za-z_-]{1,64}$/;
 
 export function conversationFilter(value: string): string {
   // A slug must never be compared against the uuid column: Postgres rejects
   // the whole query with invalid input syntax instead of returning no rows.
-  const v = value.replace(/"/g, "");
+  const v = value.replace(/"/g, "").trim();
   if (UUID_RE.test(v)) return `id.eq.${v}`;
-  return `slug.eq.${v}`;
+  if (SLUG_RE.test(v)) return `slug.eq.${v}`;
+  return `slug.eq.invalid-slug`;
 }
 
 /**

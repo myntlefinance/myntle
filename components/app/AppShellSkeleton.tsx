@@ -359,7 +359,7 @@ function PortfolioBody({ tab }: { tab?: PortfolioTab }) {
         <PortfolioSkeletonBody
           snapshot={SAMPLE_PORTFOLIO}
           tab={tab}
-          superLocked={tab === "Super account"}
+          superLocked={tab === "Myntle account"}
         />
       </div>
     </div>

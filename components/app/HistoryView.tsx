@@ -307,9 +307,19 @@ export default function HistoryView() {
               ) : history.authExpired ? (
                 signInPrompt
               ) : history.error && rows === null ? (
-                <p className="text-[13.5px] leading-relaxed text-ink-2">
-                  History is unavailable. Please try again.
-                </p>
+                <div className="flex flex-col items-center gap-3">
+                  <p className="text-[13.5px] leading-relaxed text-ink-2">
+                    History is unavailable. Please try again.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => history.retry()}
+                  >
+                    Try again
+                  </Button>
+                </div>
               ) : (
                 <Skeleton
                   id="history"

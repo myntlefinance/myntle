@@ -8,11 +8,11 @@ export const REQUEST_SUPER_UNLOCK_CAPABILITY: Capability = {
   subject: "session",
   approval: "none",
   attribution: "none",
-  promptTerms: ["request_super_unlock", "super account"],
+  promptTerms: ["request_super_unlock", "Myntle account"],
 };
 
 /**
- * The deterministic redirect to the super account.
+ * The deterministic redirect to the Myntle account.
  *
  * The model calls this instead of acting when the user wants something
  * balance-backed while locked: private holdings, a deposit to super, limit
@@ -23,9 +23,9 @@ export const REQUEST_SUPER_UNLOCK_CAPABILITY: Capability = {
 export function createRequestSuperUnlockTool() {
   return tool({
     description:
-      "Ask the user to unlock their super account. Call this when the user " +
-      "wants private holdings, a deposit to their super account, perps, or " +
-      "private history, and their super account is locked. Do not call " +
+      "Ask the user to unlock their Myntle account. Call this when the user " +
+      "wants private holdings, a deposit to their Myntle account, perps, or " +
+      "private history, and their Myntle account is locked. Do not call " +
       "anything balance-backed afterwards — stop after this call and wait. " +
       "A limit order, a yield quote, and a trade do not need the unlock.",
     inputSchema: z.object({
@@ -34,7 +34,7 @@ export function createRequestSuperUnlockTool() {
         .min(1)
         .max(200)
         .describe(
-          "What the user asked for that needs the super account, in their words",
+          "What the user asked for that needs the Myntle account, in their words",
         ),
     }),
     execute: async ({ wanted }) => {
@@ -42,7 +42,7 @@ export function createRequestSuperUnlockTool() {
         needsSuperUnlock: true,
         wanted,
         message:
-          "The super account is still locked. Opening unlock — one signature, nothing leaves the browser.",
+          "The Myntle account is still locked. Opening unlock — one signature, nothing leaves the browser.",
       };
     },
   });

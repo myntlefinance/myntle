@@ -72,8 +72,8 @@ import type { ChainKind } from "@/lib/wallet/types";
 
 /* ─────────────────────────────────────────────────────────
  * PORTFOLIO
- * Tabbed holdings: the connected wallet beside the super account
- * that settles through NEAR Intents, or the private balance of a
+ * Tabbed holdings: the connected wallet beside the Myntle account
+ * that settles through NEAR Intents, or the Myntle balance of a
  * passkey account. Tabs, hero, and table are distilled from the
  * segmented control, allocation card, filter table, and search list.
  * A wallet reads nothing until it is connected and signed in.
@@ -89,7 +89,7 @@ function writeTabParams(tab: PortfolioTab) {
   const params = new URLSearchParams(window.location.search);
   params.set(
     "tab",
-    tab === "Super account" ? "super" : tab === "Watchlist" ? "watched" : "wallet",
+    tab === "Myntle account" ? "super" : tab === "Watchlist" ? "watched" : "wallet",
   );
   params.delete("address");
   window.history.replaceState(
@@ -154,7 +154,7 @@ function PortfolioBody({
     setGroup((prev) => (prev === next ? null : next));
   const passkey = passkeyAccountId !== null;
   // A passkey account reads its private ledger with the User-Session
-  // under the `passkey` scope; a wallet's super account under its chain.
+  // under the `passkey` scope; a wallet's Myntle account under its chain.
   const superChain: string | null = passkey ? "passkey" : chain;
   const superAddress = passkey ? passkeyAccountId : address;
   const scope = chain && address ? portfolioScope(chain, address) : null;
@@ -163,7 +163,7 @@ function PortfolioBody({
       ? portfolioScope(superChain, superAddress)
       : null;
   // The last settled row counts are read even when the public snapshot is
-  // present: the super account's private read can still be pending, and
+  // present: the Myntle account's private read can still be pending, and
   // its skeleton should reserve the merged table's height, not the sample's.
   const walletRows = readPortfolioRowCount(scope, "wallet");
   const superRows = readPortfolioRowCount(superScope, "super");
@@ -215,7 +215,7 @@ function PortfolioBody({
     // A passkey account has no public wallet read; its refresh asks the
     // private ledger again, which `refreshAll` already does.
     onRefresh: passkey ? () => {} : onRefresh,
-    active: tab === "Super account",
+    active: tab === "Myntle account",
   });
 
   // The selected pill is part of the loaded state, not the skeleton: fade
@@ -241,7 +241,7 @@ function PortfolioBody({
     isRefreshing: watch.isRefreshing,
   });
 
-  const isSuper = tab === "Super account";
+  const isSuper = tab === "Myntle account";
   const isWatch = tab === "Watchlist";
 
   // The bar filter belongs to the account on screen, so a new watched
@@ -354,7 +354,7 @@ function PortfolioBody({
                   isWatch
                     ? (watchedView?.subject ?? "Watchlist")
                     : isSuper
-                      ? "Super account"
+                      ? "Myntle account"
                       : "Your wallet"
                 }
                 scope={isWatch ? "watched" : isSuper ? "super" : "wallet"}
@@ -402,7 +402,7 @@ function PortfolioBody({
                   isWatch
                     ? "No public holdings found."
                     : passkey && isSuper && !superView.showLock
-                      ? "Your private balance is empty. Ask the assistant to deposit."
+                      ? "Your Myntle balance is empty. Ask the assistant to deposit."
                       : undefined
                 }
                 error={
@@ -485,10 +485,10 @@ export default function PortfolioView({
   // re-reads from the same row.
   const [tabState, setTabState] = useState<PortfolioTab>(initialTab);
   // A passkey account has no chain wallet, so the wallet tab is not a
-  // place it can open on. The tab reads as the super account from the
+  // place it can open on. The tab reads as the Myntle account from the
   // first frame the identity is known; the effect below settles the URL.
   const tab: PortfolioTab =
-    passkeyAccount && tabState === "Your wallet" ? "Super account" : tabState;
+    passkeyAccount && tabState === "Your wallet" ? "Myntle account" : tabState;
   const [watchSelected, setWatchSelected] = useState<string | null>(null);
   const [trackOpen, setTrackOpen] = useState(false);
   const [trackOrigin, setTrackOrigin] = useState<{
@@ -538,8 +538,8 @@ export default function PortfolioView({
   /* eslint-disable react-hooks/set-state-in-effect -- identity arrival: the tab follows the account kind */
   useEffect(() => {
     if (!passkeyAccount || tabState !== "Your wallet") return;
-    setTabState("Super account");
-    writeTabParams("Super account");
+    setTabState("Myntle account");
+    writeTabParams("Myntle account");
   }, [passkeyAccount, tabState]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -579,8 +579,8 @@ export default function PortfolioView({
         for (const entry of rest) {
           const scope = `watched:${accountScope(entry.chain, entry.address)}`;
           void queryClient.prefetchQuery({
-            queryKey: [...PORTFOLIO_QUERY_KEY, scope],
-            queryFn: () => fetchPortfolio(entry.address, entry.chain),
+            queryKey: [...PORTFOLIO_QUERY_KEY, scope, "fast"],
+            queryFn: () => fetchPortfolio(entry.address, entry.chain, { mode: "fast" }),
             staleTime: 300_000,
           });
         }

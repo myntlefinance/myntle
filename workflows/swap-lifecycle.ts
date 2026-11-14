@@ -279,11 +279,14 @@ async function recordDepositStep(input: {
         }),
       });
       if (!res.ok && res.status !== 404) {
-        throw new Error(`deposit submit ${res.status}`);
+        console.error("[swap] deposit nudge failed", { status: res.status });
       }
-    } catch {
-      // Retryable: a missed nudge only slows detection, never the outcome.
-      throw new Error("The deposit registration failed and will be retried");
+    } catch (err) {
+      // Optional: a missed nudge only slows detection, never the outcome.
+      console.error(
+        "[swap] deposit nudge failed",
+        err instanceof Error ? err.message.slice(0, 200) : "unknown",
+      );
     }
     return;
   }

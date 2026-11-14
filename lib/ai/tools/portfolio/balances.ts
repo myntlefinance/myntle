@@ -108,7 +108,7 @@ export function createWalletBalancesTool(context?: ToolContext) {
           "check and omit it for an inventory."
         : "Read the user's public token balances. Returns on-chain balances in their connected wallet " +
           "(EVM, Solana, or NEAR) and their public NEAR Intents settlement ledger balance. " +
-          "This tool cannot see private funds: for the private balance inside the super account, " +
+          "This tool cannot see private funds: for the Myntle balance inside the Myntle account, " +
           "call get_super_balances instead. " +
           "Use this whenever the user asks about their balances, portfolio, or what they have available to trade. " +
           "A single-token question should pass symbol, and the one network when the user named one; a portfolio " +
@@ -266,13 +266,13 @@ export function createWalletBalancesTool(context?: ToolContext) {
             status: ledger.status,
             message: ledger.message,
           },
-          // The public ledger is not the private balance. A locked or
-          // unread private balance must never be presented as zero funds.
+          // The public ledger is not the Myntle balance. A locked or
+          // unread Myntle balance must never be presented as zero funds.
           privateBalance: "separate" as const,
           privateBalanceNote:
-            "This tool reads the public account ledger only. The private balance is separate; call get_super_balances before concluding the account has no funds.",
+            "This tool reads the public account ledger only. The Myntle balance is separate; call get_super_balances before concluding the account has no funds.",
           ...(ledger.status === "empty"
-            ? { message: "No public balances. The private balance is separate." }
+            ? { message: "No public balances. The Myntle balance is separate." }
             : {}),
         };
       }

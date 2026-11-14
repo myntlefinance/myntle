@@ -139,6 +139,9 @@ export function useHistory(scope: string | null, enabled: boolean) {
     error: query.error,
     authExpired,
     isPending: query.isPending,
+    retry: () => {
+      void query.refetch();
+    },
     hasNextPage: query.hasNextPage,
     isFetchingNextPage: query.isFetchingNextPage,
     loadMore: () => {

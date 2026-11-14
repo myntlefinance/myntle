@@ -92,7 +92,7 @@ export function signerIdFor(chain: string, address: string): string {
   if (c === "solana") {
     return toHex(bs58.decode(address));
   }
-  throw new Error("This wallet cannot unlock the super account yet.");
+  throw new Error("This wallet cannot unlock the Myntle account yet.");
 }
 
 /** Builds the proof. Fetches the live salt (5-min cached) when needed. */

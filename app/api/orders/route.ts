@@ -190,7 +190,7 @@ export async function POST(req: Request) {
         {
           error: "funding",
           message:
-            "This account has no wallet. Place the order from the Near Account.",
+            "This account has no wallet. Place the order from the Myntle account.",
         },
         { status: 400 },
       );
@@ -211,7 +211,7 @@ export async function POST(req: Request) {
         {
           error: "funding",
           message:
-            "This order cannot be funded from the connected wallet's chain. Place the order from the Near Account instead.",
+            "This order cannot be funded from the connected wallet's chain. Place the order from the Myntle account instead.",
         },
         { status: 400 },
       );

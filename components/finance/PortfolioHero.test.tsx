@@ -33,7 +33,7 @@ describe("PortfolioHero", () => {
     expect(html).toContain("min-width:24px");
   });
 
-  it("uses super account copy for the settlement side", () => {
+  it("uses Myntle account copy for the settlement side", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <PortfolioHero
         total={5}
@@ -44,7 +44,7 @@ describe("PortfolioHero", () => {
         onSelect={vi.fn()}
       />,
     );
-    expect(html).toContain("Your super account holds $5.00 across 1 asset.");
+    expect(html).toContain("Your Myntle account holds $5.00 across 1 asset.");
   });
 
   it("marks the watched state with the subject label", () => {
@@ -64,7 +64,7 @@ describe("PortfolioHero", () => {
     );
     expect(html).toContain("$896.98");
     expect(html).not.toContain("Your wallet holds");
-    expect(html).not.toContain("Your super account holds");
+    expect(html).not.toContain("Your Myntle account holds");
   });
 
   it("uses the singular asset and a fallback subject when watched", () => {
@@ -101,7 +101,7 @@ describe("PortfolioHero", () => {
         masked
       />,
     );
-    expect(html).toContain("Your super account holds $•••••• across •• assets.");
+    expect(html).toContain("Your Myntle account holds $•••••• across •• assets.");
     expect(html).toContain("$••••••");
     expect(html).not.toContain("$0.00");
   });

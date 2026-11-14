@@ -19,7 +19,17 @@ export function checkRateLimit(
   windowMs: number,
   now = Date.now(),
 ): RateLimit {
-  if (hits.size > MAX_KEYS) hits.clear();
+  if (hits.size > MAX_KEYS) {
+    for (const [k, timestamps] of hits.entries()) {
+      if (timestamps.length === 0 || timestamps[timestamps.length - 1] < now - windowMs) {
+        hits.delete(k);
+      }
+    }
+    if (hits.size > MAX_KEYS) {
+      const oldestKey = hits.keys().next().value;
+      if (oldestKey !== undefined) hits.delete(oldestKey);
+    }
+  }
   const cutoff = now - windowMs;
   const recent = (hits.get(key) ?? []).filter((t) => t > cutoff);
   if (recent.length >= limit) {

@@ -45,6 +45,12 @@ type ChatBody = {
  * user message are still resolved here, before anything is signed or stored.
  */
 export async function POST(req: Request) {
+  let body: ChatBody;
+  try {
+    body = (await req.json()) as ChatBody;
+  } catch {
+    return Response.json({ error: "An error occurred." }, { status: 400 });
+  }
   const {
     messages,
     model,
@@ -52,11 +58,19 @@ export async function POST(req: Request) {
     title,
     walletAddress,
     walletChain,
-    superUnlocked,
+    // superUnlocked is intentionally unread: the access-token header is the
+    // only unlock signal (see below), so a client flag can never promote the
+    // prompt to "unlocked".
     superJustUnlocked,
     trigger,
     messageId,
-  }: ChatBody = await req.json();
+  } = body;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return Response.json({ error: "An error occurred." }, { status: 400 });
+  }
+  if (messages.length > 200) {
+    return Response.json({ error: "An error occurred." }, { status: 413 });
+  }
 
   // Borrowed for this turn only. It is sealed before it crosses into the
   // workflow so the run's event log holds ciphertext, never the token; the
@@ -142,9 +156,12 @@ export async function POST(req: Request) {
   const activeChain = session?.chain || walletChain || null;
   const accountKind = session?.accountKind ?? "wallet";
 
-  // The token is the real signal: a live access token means the account is
-  // unlocked for this turn, even if the client's cached flag is stale.
-  const superUnlockedNow = Boolean(intentsAccessToken) || superUnlocked === true;
+  // The token is the only signal: a live access token means the account is
+  // unlocked for this turn. The client's cached flag is never trusted here,
+  // so a stale or forged flag cannot make the prompt claim an unlocked
+  // account the token cannot actually read. Fail closed: at worst the model
+  // asks for an unlock that is already in place.
+  const superUnlockedNow = Boolean(intentsAccessToken);
 
   // The flag only shapes prose, and only when a live token really is here;
   // the token remains the gate for the read itself.

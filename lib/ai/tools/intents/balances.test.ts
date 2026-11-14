@@ -85,7 +85,7 @@ describe("get_super_balances", () => {
     });
   });
 
-  it("reads only private balances and formats them from base units", async () => {
+  it("reads only Myntle balances and formats them from base units", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -171,7 +171,7 @@ describe("get_super_balances", () => {
 
     const result = await run("live");
     expect(result).toMatchObject({ status: "error", balances: [] });
-    expect(result.message).toBe("The private balance could not be read.");
+    expect(result.message).toBe("The Myntle balance could not be read.");
   });
 
   it("never echoes an upstream balance source label", async () => {

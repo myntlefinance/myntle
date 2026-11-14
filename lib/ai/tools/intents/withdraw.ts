@@ -29,7 +29,7 @@ export const prepareWithdrawalInputSchema = z.object({
   fromAssetId: z
     .string()
     .min(1)
-    .describe("Full asset id of the token leaving the private balance"),
+    .describe("Full asset id of the token leaving the Myntle balance"),
   toAssetId: z
     .string()
     .min(1)

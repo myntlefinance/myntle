@@ -70,7 +70,7 @@ export async function churnBatch() {
     // Slide animation structure in copy button
     expect(html).toContain("translateY(0)");
     expect(html).toContain("translateY(5px)");
-    expect(html).toContain("w-[68px]");
+    expect(html).toContain("w-[72px]");
     // Syntax highlighted tokens
     expect(html).toContain("export");
     expect(html).toContain("churnBatch");

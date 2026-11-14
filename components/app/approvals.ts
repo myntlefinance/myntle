@@ -101,7 +101,7 @@ export type ApprovalInfo = {
   minAmountOut?: string;
   minAmountOutRaw?: string;
   /**
-   * What funds the trade: the user's Near Account or their connected wallet.
+   * What funds the trade: the user's Myntle account or their connected wallet.
    * Absent on messages stored before the tool named the route.
    */
   route?: "account" | "wallet";
@@ -275,7 +275,7 @@ export function collectApprovals(
     const quoted = matched?.output ?? null;
     const quoteId = str(quoted?.quoteId) || undefined;
     // The card routes from the quote, not from the account kind: a wallet
-    // session can spend its Near Account balance. New outputs name the
+    // session can spend its Myntle account balance. New outputs name the
     // route; turns stored before it do carry only the internal mode, which
     // maps one to one. Neither value ever reaches the interface as a mode.
     const route = quoteRouteOf(quoted);

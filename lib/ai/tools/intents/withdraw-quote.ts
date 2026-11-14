@@ -14,7 +14,7 @@ export const GET_WITHDRAWAL_QUOTE_CAPABILITY: Capability = {
 };
 
 /**
- * Prices a withdrawal from the private balance to an external address.
+ * Prices a withdrawal from the Myntle balance to an external address.
  *
  * This is the withdrawal half of `get_quote`: it reads the catalogue and the
  * 1Click quote endpoint, stores the dry preview against the signed-in user,
@@ -29,7 +29,7 @@ export const getWithdrawalQuoteInputSchema = z.object({
   fromAssetId: z
     .string()
     .min(1)
-    .describe("Full asset id of the token leaving the private balance"),
+    .describe("Full asset id of the token leaving the Myntle balance"),
   toAssetId: z
     .string()
     .min(1)
@@ -56,7 +56,7 @@ export const getWithdrawalQuoteInputSchema = z.object({
 export function createGetWithdrawalQuoteTool(context?: ToolContext) {
   return tool({
     description:
-      "Price a withdrawal from the private balance to an external address. Call this after the " +
+      "Price a withdrawal from the Myntle balance to an external address. Call this after the " +
       "user names the asset, the amount, and the destination, and before prepare_withdrawal. " +
       "The server validates the destination against the destination asset's chain and stores " +
       "the exact address it will bind. A destination may be a name such as vitalik.eth; pass " +

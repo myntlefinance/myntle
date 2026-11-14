@@ -236,7 +236,7 @@ export function WalletButton({
       variant="secondary"
       size="md"
       disabled
-      className="w-full text-[12px]"
+      className="w-full"
     >
       <IconLoader2 size={14} stroke={1.8} className="shrink-0 animate-spin text-ink-3" />
       <span className="min-w-0 flex-1 truncate text-left">
@@ -446,7 +446,7 @@ export function AccountMenu({
   const itemClass =
     "flex h-9 w-full items-center gap-1.5 rounded-[8px] px-2 text-left text-[13.5px] text-ink hover:bg-hover-2 active:scale-[0.97] transition-[background-color,color,transform] duration-150 ease-out";
 
-  // Balance-backed actions need the super account; this entry is their
+  // Balance-backed actions need the Myntle account; this entry is their
   // permanent way in when the dialog is dismissed. While unlocked the same
   // row becomes the lock action, which forgets the tokens in this browser.
   const locked = superUnlocked === false;
@@ -463,7 +463,7 @@ export function AccountMenu({
         <span className="flex size-5 shrink-0 items-center justify-center text-green">
           <IconLockOpen size={16} stroke={1.8} />
         </span>
-        <span className="min-w-0 flex-1 truncate">Lock super account</span>
+        <span className="min-w-0 flex-1 truncate">Lock Myntle account</span>
       </button>
     ) : (
       <button
@@ -481,7 +481,7 @@ export function AccountMenu({
         >
           <IconLockFilled size={16} />
         </span>
-        <span className="min-w-0 flex-1 truncate">Unlock super account</span>
+        <span className="min-w-0 flex-1 truncate">Unlock Myntle account</span>
       </button>
     )
   ) : null;
@@ -585,8 +585,8 @@ export function AccountMenu({
         <div ref={rootRef}>
           <button
             type="button"
-            aria-label={locked ? "Account, super account locked" : "Account"}
-            title={locked ? "Account, super account locked" : "Account"}
+            aria-label={locked ? "Account, Myntle account locked" : "Account"}
+            title={locked ? "Account, Myntle account locked" : "Account"}
             aria-haspopup="menu"
             aria-expanded={open}
             onClick={toggle}
@@ -631,8 +631,8 @@ export function AccountMenu({
         {locked ? (
           <span
             role="img"
-            aria-label="Super account locked"
-            title="Super account locked"
+            aria-label="Myntle account locked"
+            title="Myntle account locked"
             className="super-lock-glow absolute right-0 -top-1.5 z-10 text-attention"
           >
             <IconLockFilled size={15} />
@@ -908,7 +908,7 @@ function ConnectPicker({
             )}
             <span className="truncate text-[13px] font-semibold text-ink">
               {view === "passkey"
-                ? "Passkey Login"
+                ? "Sign in"
                 : "Choose an option to log in."}
             </span>
           </div>

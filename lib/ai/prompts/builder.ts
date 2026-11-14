@@ -33,8 +33,10 @@ export type SystemPromptOptions = {
 
 /**
  * Builds a modular, context-aware system prompt for the assistant.
- * If process.env.SYSTEM_INSTRUCTIONS is set, it will be used as the base
- * instructions with wallet context appended.
+ * If process.env.SYSTEM_INSTRUCTIONS is set, it replaces only the identity
+ * section; the trading, Myntle account, portfolio, names, news, formatting,
+ * and disclosure sections are always kept so an override cannot silently
+ * drop the money-movement rules.
  */
 export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
   const accountKind: PromptAccountKind =
@@ -48,12 +50,9 @@ export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
           activeChain: options.activeChain,
         });
 
-  if (process.env.SYSTEM_INSTRUCTIONS) {
-    const base = process.env.SYSTEM_INSTRUCTIONS.trim();
-    return `${base}\n\n${DISCLOSURE_PROMPT}\n\n${accountSection}`;
-  }
-
-  const sections: string[] = [IDENTITY_PROMPT];
+  const sections: string[] = [
+    process.env.SYSTEM_INSTRUCTIONS?.trim() || IDENTITY_PROMPT,
+  ];
 
   const domains = options.domains ?? [
     "trading",
@@ -72,7 +71,7 @@ export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
       ? "unlocked"
       : "locked";
 
-  sections.push(SUPER_PROMPT + `\nSuper account status: ${superStatus}.`);
+  sections.push(SUPER_PROMPT + `\nMyntle account status: ${superStatus}.`);
 
   if (domains.includes("portfolio")) {
     sections.push(PORTFOLIO_PROMPT);

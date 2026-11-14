@@ -10,6 +10,30 @@ import type { Wallet, WalletAccount } from "@wallet-standard/base";
  * The amount is the exact smallest-unit amount from the deposit record. The
  * card's status poll remains the authority; this only broadcasts the transfer.
  */
+export const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
+
+/**
+ * Client-side Solana RPC endpoint. The keyed provider is server-only, so a
+ * key-bearing value in the public variable is refused here and the default
+ * public endpoint is used instead. The check is shape-based (a `/v2/<key>`
+ * path segment or a key query parameter) so no provider string lives in
+ * client code. Mirrors the server's `looksKeyBearing`.
+ */
+export function solanaRpcEndpoint(): string {
+  const configured = process.env.NEXT_PUBLIC_SOLANA_RPC;
+  if (
+    configured &&
+    configured.length > 0 &&
+    !(
+      /\/v2\/[^/?\s]+/.test(configured) ||
+      /[?&](api[_-]?key|key)=/i.test(configured)
+    )
+  ) {
+    return configured;
+  }
+  return DEFAULT_SOLANA_RPC;
+}
+
 export async function sendSolanaDeposit(input: {
   wallet: Wallet;
   account: WalletAccount;
@@ -21,8 +45,7 @@ export async function sendSolanaDeposit(input: {
   const { PublicKey, SystemProgram, Transaction, Connection } = await import(
     "@solana/web3.js"
   );
-  const rpc =
-    process.env.NEXT_PUBLIC_SOLANA_RPC ?? "https://api.mainnet-beta.solana.com";
+  const rpc = solanaRpcEndpoint();
   const net = new Connection(rpc, "confirmed");
   const toPubkey = new PublicKey(input.depositAddress);
   const fromPubkey = new PublicKey(input.address);

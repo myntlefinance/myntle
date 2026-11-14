@@ -287,13 +287,27 @@ export async function setTransactionStatus(
       statusCheckedAtColumn = true;
       return;
     }
-    if (!missingStatusCheckedAt(error)) return;
-    noteMissingStatusColumn();
+    if (missingStatusCheckedAt(error)) {
+      noteMissingStatusColumn();
+    } else {
+      console.error("[transactions] status write failed", {
+        code: error.code,
+        message: error.message?.slice(0, 200),
+      });
+      throw new Error("The transaction status could not be saved.");
+    }
   }
-  await sb
+  const { error: fallbackError } = await sb
     .from("transactions")
     .update({ state, ...(outcome ? { outcome } : {}) })
     .eq("id", id);
+  if (fallbackError) {
+    console.error("[transactions] status write failed", {
+      code: fallbackError.code,
+      message: fallbackError.message?.slice(0, 200),
+    });
+    throw new Error("The transaction status could not be saved.");
+  }
 }
 
 /**

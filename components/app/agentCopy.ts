@@ -111,8 +111,8 @@ function rateOf(amountIn: string, amountOut: string): string | null {
 }
 
 /**
- * True when the quote is funded by the user's Near Account and the output
- * lands back there. The copy then says "in Near Account" and omits the
+ * True when the quote is funded by the user's Myntle account and the output
+ * lands back there. The copy then says "in Myntle account" and omits the
  * recipient, because the recipient is the account itself.
  */
 function isAccountSwap(approval: ApprovalInfo): boolean {
@@ -132,10 +132,10 @@ export function approvalToMarkdown(
   const venue = isAccountSwap(approval) ? "in" : "on";
   const headline =
     approval.action === "deposit"
-      ? `${verb} ${approval.amountIn} ${approval.fromSymbol} to Near Account [${state}]`
+      ? `${verb} ${approval.amountIn} ${approval.fromSymbol} to Myntle account [${state}]`
       : approval.action === "withdraw"
         ? `${verb} ${approval.amountIn} ${approval.fromSymbol} to ${approval.recipient} [${state}]`
-        : `${verb} ${approval.amountIn} ${approval.fromSymbol} for ${approval.amountOut} ${approval.toSymbol} ${venue} Near Account [${state}]`;
+        : `${verb} ${approval.amountIn} ${approval.fromSymbol} for ${approval.amountOut} ${approval.toSymbol} ${venue} Myntle account [${state}]`;
   const lines = [`## ${headline}`];
   const fromLeg = approval.fromChain
     ? `${approval.fromSymbol} on ${approval.fromChain}`
@@ -241,10 +241,10 @@ export function buildAgentCopyHtml(segments: AgentCopySegment[]): string {
       const venue = isAccountSwap(approval) ? "in" : "on";
       const headline =
         approval.action === "deposit"
-          ? `${verb} ${approval.amountIn} ${approval.fromSymbol} to Near Account [${state}]`
+          ? `${verb} ${approval.amountIn} ${approval.fromSymbol} to Myntle account [${state}]`
           : approval.action === "withdraw"
             ? `${verb} ${approval.amountIn} ${approval.fromSymbol} to ${approval.recipient} [${state}]`
-            : `${verb} ${approval.amountIn} ${approval.fromSymbol} for ${approval.amountOut} ${approval.toSymbol} ${venue} Near Account [${state}]`;
+            : `${verb} ${approval.amountIn} ${approval.fromSymbol} for ${approval.amountOut} ${approval.toSymbol} ${venue} Myntle account [${state}]`;
       out.push(`<h3>${escapeHtml(headline)}</h3><ul>`);
       if (approval.action !== "deposit") {
         out.push(

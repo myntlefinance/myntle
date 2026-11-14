@@ -584,7 +584,7 @@ describe("LiveResponse money card", () => {
     expect(lastCard().runApproval).toBeTypeOf("function");
   });
 
-  it("copies a legacy passkey trade as money inside Near Account", () => {
+  it("copies a legacy passkey trade as money inside Myntle account", () => {
     state.identity = passkeyIdentity;
     const legacy = swapMessage();
     const quote = legacy.parts[0] as unknown as {
@@ -597,8 +597,8 @@ describe("LiveResponse money card", () => {
     // The card and the copy agree on the fallback route.
     expect(lastCard().runApproval).toBeTypeOf("function");
     const copy = lastCopyText();
-    expect(copy).toContain("in Near Account");
-    expect(copy).not.toContain("on Near Account");
+    expect(copy).toContain("in Myntle account");
+    expect(copy).not.toContain("on Myntle account");
     expect(copy).not.toContain("Recipient:");
   });
 
@@ -673,8 +673,8 @@ describe("LiveResponse money card", () => {
     expect(card.expiresAt).toBe("2099-01-01T00:00:00.000Z");
   });
 
-  it("runs a wallet session's Near Account trade through the Intents routes", async () => {
-    // The session is a wallet, but the quote is funded by its Near Account.
+  it("runs a wallet session's Myntle account trade through the Intents routes", async () => {
+    // The session is a wallet, but the quote is funded by its Myntle account.
     // The card must follow the quote, not the account kind: approve → sign →
     // submit, never `/api/approve`.
     state.identity = walletIdentity;

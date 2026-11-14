@@ -71,7 +71,7 @@ const PRIVATE: PortfolioSnapshot = {
   groups: [
     {
       id: "private-balance",
-      name: "Private balance",
+      name: "Myntle balance",
       icon: "near",
       items: [
         {
@@ -128,11 +128,11 @@ describe("SuperAccountTab", () => {
   it("keeps the layout and fades the in-chat unlock card over it when locked", () => {
     state.unlocked = false;
     const html = renderTab([]);
-    expect(html).toContain("Super account locked");
-    expect(html).toContain("Please unlock your super account to continue.");
+    expect(html).toContain("Myntle account locked");
+    expect(html).toContain("Please unlock your Myntle account to continue.");
     expect(html).toContain("Unlock");
     // The exact layout stays mounted underneath the card, masked.
-    expect(html).toContain("Your super account holds $•••••• across •• assets.");
+    expect(html).toContain("Your Myntle account holds $•••••• across •• assets.");
     expect(html).toContain("Asset");
     expect(html).toContain("No assets found");
   });
@@ -142,7 +142,7 @@ describe("SuperAccountTab", () => {
     const html = renderTab();
     expect(html).toContain("USDC");
     expect(html).toContain("$10.00");
-    expect(html).toContain("Super account locked");
+    expect(html).toContain("Myntle account locked");
   });
 
   it("keeps the lock action when a live session's read is refused", () => {
@@ -151,10 +151,10 @@ describe("SuperAccountTab", () => {
     // Public rows exist, which used to hide the gate and paint them as if
     // the private read had succeeded. The refused read needs the action.
     const html = renderTab();
-    expect(html).toContain("Super account locked");
-    expect(html).toContain("Please unlock your super account to continue.");
-    expect(html).not.toContain("Super account unlocked");
-    expect(html).toContain("Your super account holds $•••••• across •• assets.");
+    expect(html).toContain("Myntle account locked");
+    expect(html).toContain("Please unlock your Myntle account to continue.");
+    expect(html).not.toContain("Myntle account unlocked");
+    expect(html).toContain("Your Myntle account holds $•••••• across •• assets.");
   });
 
   it("merges the private ledger over the public rows once unlocked", () => {
@@ -175,7 +175,7 @@ describe("SuperAccountTab", () => {
         groups: [
           {
             id: "private-balance",
-            name: "Private balance",
+            name: "Myntle balance",
             icon: "near",
             items: [
               {
@@ -205,7 +205,7 @@ describe("SuperAccountTab", () => {
     state.unlocked = true;
     state.priv = { status: "pending", snapshot: null };
     const html = renderTab([]);
-    expect(html).toContain("Reading your super account.");
+    expect(html).toContain("Reading your Myntle account.");
     expect(html).toContain("USDC");
     expect(html).toContain("$320.50");
   });

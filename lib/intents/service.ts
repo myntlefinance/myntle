@@ -199,8 +199,8 @@ const QUOTE_BALANCE_TYPES: Record<QuoteMode, QuoteBalanceTypes> = {
     recipientType: "CONFIDENTIAL_INTENTS",
     refundType: "CONFIDENTIAL_INTENTS",
   },
-  // Measured by B4b: the input leaves the private balance and the output pays
-  // an external chain address. The refund returns to the private balance, so
+  // Measured by B4b: the input leaves the Myntle balance and the output pays
+  // an external chain address. The refund returns to the Myntle balance, so
   // a failed order costs no second withdrawal fee.
   "confidential-withdrawal": {
     depositType: "CONFIDENTIAL_INTENTS",
@@ -285,7 +285,7 @@ async function requestQuote(params: {
   const fallbackDeadline = new Date(Date.now() + 30 * 60_000).toISOString();
   const types = balanceTypesFor(params.mode);
 
-  // A withdrawal refunds to the private balance, and `refundTo ?? recipient`
+  // A withdrawal refunds to the Myntle balance, and `refundTo ?? recipient`
   // would pair a CONFIDENTIAL_INTENTS refund with an external address. The
   // caller must name the account explicitly; there is no safe default.
   if (params.mode === "confidential-withdrawal" && !params.refundTo) {
@@ -359,6 +359,24 @@ async function requestQuote(params: {
       ? q.withdrawFee
       : undefined;
 
+function inferDecimals(raw?: string, formatted?: string): number | null {
+  if (!raw || !formatted || !/^\d+$/.test(raw)) return null;
+  const [whole = "", frac = ""] = formatted.split(".");
+  const cleanWhole = whole.replace(/^0+/, "");
+  const estimated = raw.length - cleanWhole.length;
+  if (estimated >= frac.length && estimated <= 36) return estimated;
+  return null;
+}
+
+  const toDecimals =
+    (await decimalsOf(params.toAssetId)) ||
+    inferDecimals(q.amountOut, q.amountOutFormatted) ||
+    0;
+  const fromDecimals =
+    (await decimalsOf(params.fromAssetId)) ||
+    inferDecimals(q.amountIn, q.amountInFormatted) ||
+    0;
+
   const formatted: Quote = {
     engine: "intents",
     fromAssetId: params.fromAssetId,
@@ -367,7 +385,7 @@ async function requestQuote(params: {
     amountInFormatted: q.amountInFormatted,
     amountOut: q.amountOut,
     amountOutFormatted: q.amountOutFormatted,
-    minAmountOut: formatUnits(q.minAmountOut, await decimalsOf(params.toAssetId)),
+    minAmountOut: formatUnits(q.minAmountOut, toDecimals),
     minAmountOutRaw: q.minAmountOut,
     amountOutUsd: q.amountOutUsd,
     feeBps: 0,
@@ -382,7 +400,7 @@ async function requestQuote(params: {
           withdrawFee,
           withdrawFeeFormatted: formatUnits(
             withdrawFee,
-            await decimalsOf(params.fromAssetId),
+            fromDecimals,
           ),
         }
       : {}),

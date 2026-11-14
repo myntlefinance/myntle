@@ -678,7 +678,7 @@ export function clearFinanceCaches() {
 
 /* ─────────────────────────────────────────────────────────
  * SUPER PRIVATE CACHE
- * The confidential side of a wallet super account, read in the
+ * The confidential side of a wallet Myntle account, read in the
  * browser with its own User-Session. Same paint-at-once contract
  * as the wallet portfolio: the last read renders instantly and
  * revalidates quietly behind it, so the tab never drops to a bare

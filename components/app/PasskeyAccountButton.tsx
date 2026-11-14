@@ -13,7 +13,7 @@ import {
  * The account control for a passkey-owned account.
  *
  * It renders the same menu as a wallet: copy the account id, unlock or lock
- * the private balance, profile, theme, and sign out. A passkey
+ * the Myntle balance, profile, theme, and sign out. A passkey
  * account is a full account, not a reduced one.
  */
 export function PasskeyAccountButton({

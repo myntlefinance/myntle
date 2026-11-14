@@ -333,7 +333,13 @@ export async function fetchAlchemyBalances(
         decimals: 18,
       };
 
-      const decimals = item.tokenMetadata?.decimals ?? networkDefault.decimals;
+      const decimals =
+        typeof item.tokenMetadata?.decimals === "number" &&
+        Number.isInteger(item.tokenMetadata.decimals) &&
+        item.tokenMetadata.decimals >= 0 &&
+        item.tokenMetadata.decimals <= 36
+          ? item.tokenMetadata.decimals
+          : networkDefault.decimals;
       const symbol = item.tokenMetadata?.symbol || networkDefault.symbol;
       const name = item.tokenMetadata?.name || networkDefault.name;
 
@@ -345,11 +351,16 @@ export async function fetchAlchemyBalances(
       const usdPriceObj = item.tokenPrices?.find(
         (p) => p.currency.toLowerCase() === "usd",
       );
-      const priceUsd = usdPriceObj ? Number.parseFloat(usdPriceObj.value) : undefined;
+      const priceUsd =
+        usdPriceObj && Number.isFinite(Number.parseFloat(usdPriceObj.value)) && Number.parseFloat(usdPriceObj.value) >= 0
+          ? Number.parseFloat(usdPriceObj.value)
+          : undefined;
       const formatted = formatTokenAmount(raw, decimals);
       const numFormatted = Number.parseFloat(formatted);
       const valueUsd =
-        priceUsd !== undefined && !Number.isNaN(numFormatted)
+        priceUsd !== undefined &&
+        !Number.isNaN(numFormatted) &&
+        Number.isFinite(numFormatted * priceUsd)
           ? Number.parseFloat((numFormatted * priceUsd).toFixed(2))
           : undefined;
 

@@ -10,7 +10,7 @@
  *     SOCKETS=500 SECONDS=600 bun run prices:load
  *
  * Environment / arguments (arguments win):
- *   PRICES_WS_URL        | --ws                   default ws://127.0.0.1:8787/ws
+ *   PRICES_WS_URL        | --ws                   default ws://127.0.0.1:8818/ws
  *   SOCKETS              | --sockets              default 500
  *   SECONDS              | --seconds              default 600
  *   ASSET_ID             | --asset                default nep141:wrap.near
@@ -41,7 +41,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 const DEFAULTS = {
-  ws: "ws://127.0.0.1:8787/ws",
+  ws: "ws://127.0.0.1:8818/ws",
   sockets: 500,
   seconds: 600,
   asset: "nep141:wrap.near",

@@ -247,7 +247,7 @@ describe("PortfolioView branches", () => {
     const html = ReactDOMServer.renderToStaticMarkup(<PortfolioView />);
 
     expect(html).toContain("Your wallet");
-    expect(html).toContain("Super account");
+    expect(html).toContain("Myntle account");
     expect(html).toContain("Watchlist");
     expect(html).toContain("myntle-logo.svg");
     expect(html).toContain("Your wallet holds $10.00 across 1 asset.");
@@ -284,12 +284,12 @@ describe("PortfolioView branches", () => {
     const html = ReactDOMServer.renderToStaticMarkup(<PortfolioView />);
 
     // The layout is the same page: its tabs, identity row, and gate.
-    expect(html).toContain("Super account");
+    expect(html).toContain("Myntle account");
     expect(html).toContain("Watchlist");
     expect(html).not.toContain("Your wallet");
     expect(html).toContain(ACCOUNT);
     expect(html).toContain("Copy address");
-    expect(html).toContain("Private balance locked");
+    expect(html).toContain("Myntle balance locked");
     // The passkey account reads its private ledger, and the watchlist is
     // session-scoped, so it stays available with no connected wallet.
     expect(state.usePortfolio).toHaveBeenCalledWith(null, null, false);
@@ -316,7 +316,7 @@ describe("PortfolioView branches", () => {
 
     const html = ReactDOMServer.renderToStaticMarkup(<PortfolioView />);
 
-    expect(html).toContain("Reading your super account.");
+    expect(html).toContain("Reading your Myntle account.");
     // The sample that measures the skeleton must never read as a balance.
     expect(html).not.toContain("$896.98");
     expect(html).not.toContain("$320.50");
@@ -338,7 +338,7 @@ describe("PortfolioView branches", () => {
         groups: [
           {
             id: "private-balance",
-            name: "Private balance",
+            name: "Myntle balance",
             icon: "near",
             items: [
               {
@@ -376,9 +376,9 @@ describe("PortfolioView branches", () => {
 
     const html = ReactDOMServer.renderToStaticMarkup(<PortfolioView />);
 
-    expect(html).toContain("Super account");
+    expect(html).toContain("Myntle account");
     expect(html).toContain("Watchlist");
-    expect(html).toContain("Your super account holds $2.50 across 1 asset.");
+    expect(html).toContain("Your Myntle account holds $2.50 across 1 asset.");
     expect(html).toContain("USDC");
     expect(html).toContain("$2.50");
   });

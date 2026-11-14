@@ -217,7 +217,7 @@ describe("passkey deposit on the sentence card", () => {
     expect(sentence).toContain("2");
     expect(sentence).toContain("USDC");
     expect(sentence).toContain("in your");
-    expect(sentence).toContain("Near Account");
+    expect(sentence).toContain("Myntle account");
     // No funding account exists for a passkey deposit, so no "from" clause —
     // and never the generic "your wallet" chip the wallet card falls back to.
     expect(sentence).not.toContain("from");
@@ -369,7 +369,7 @@ describe("passkey withdrawal on the sentence card", () => {
 
     expect(sentenceOf(html)).toContain("Withdraw");
     expect(sentenceOf(html)).toContain("from your");
-    expect(sentenceOf(html)).toContain("Near Account");
+    expect(sentenceOf(html)).toContain("Myntle account");
     expect(sentenceOf(html)).toContain("0xc8aE…3148");
     expect(html).toContain("Destination");
     // The drawer shortens the destination; the whole address stays one copy
@@ -648,10 +648,10 @@ describe("passkey swap on the sentence card", () => {
     })) satisfies SentenceApproval,
   };
 
-  it("reads an account-funded swap as money moving inside Near Account", () => {
+  it("reads an account-funded swap as money moving inside Myntle account", () => {
     const html = render(<SentenceTradeCard {...swapCard} />);
     expect(sentenceText(html)).toBe(
-      "Swap 14.44 USDC for 14.17 USDT in your Near Account",
+      "Swap 14.44 USDC for 14.17 USDT in your Myntle account",
     );
   });
 

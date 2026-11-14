@@ -65,7 +65,10 @@ function parsePools(body: unknown): Map<string, number> {
     const pool = (row as { pool?: unknown }).pool;
     const apy = (row as { apy?: unknown }).apy;
     if (typeof pool !== "string" || pool.length === 0) continue;
+    // A published rate must be finite and non-negative. Negative or absurd
+    // values are upstream data errors, never a yield to show.
     if (typeof apy !== "number" || !Number.isFinite(apy)) continue;
+    if (apy < 0 || apy > 1000) continue;
     pools.set(pool, apy);
   }
   return pools;

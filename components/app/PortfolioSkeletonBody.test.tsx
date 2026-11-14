@@ -25,7 +25,7 @@ vi.mock("skullet/react", () => ({
 
 describe("parsePortfolioTab", () => {
   it("maps the known tab values", () => {
-    expect(parsePortfolioTab("super")).toBe("Super account");
+    expect(parsePortfolioTab("super")).toBe("Myntle account");
     expect(parsePortfolioTab("watched")).toBe("Watchlist");
   });
 
@@ -51,13 +51,13 @@ describe("PortfolioSkeletonBody", () => {
     expect(html).not.toContain("Your wallet holds");
   });
 
-  it("names the super account on a super visit", () => {
+  it("names the Myntle account on a super visit", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
-      <PortfolioSkeletonBody snapshot={SAMPLE_PORTFOLIO} tab="Super account" />,
+      <PortfolioSkeletonBody snapshot={SAMPLE_PORTFOLIO} tab="Myntle account" />,
     );
 
-    expect(html).toContain("Super account");
-    expect(html).toContain("Your super account holds");
+    expect(html).toContain("Myntle account");
+    expect(html).toContain("Your Myntle account holds");
     expect(html).not.toContain("Your wallet holds");
   });
 

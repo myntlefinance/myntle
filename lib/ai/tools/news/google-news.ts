@@ -36,8 +36,8 @@ export function createGoogleNewsTool() {
         .number()
         .int()
         .min(1)
-        .max(8)
-        .default(5)
+        .max(10)
+        .default(10)
         .describe("Maximum items per block response."),
       searchId: z
         .string()

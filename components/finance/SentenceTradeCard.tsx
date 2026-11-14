@@ -292,7 +292,7 @@ export default function SentenceTradeCard({
    *
    * Present when the money path is an Intents route: the card asks the server
    * for a deposit address, or runs approve → sign → submit, and reads the
-   * record after. A swap funded by the user's Near Account arrives here for
+   * record after. A swap funded by the user's Myntle account arrives here for
    * every session kind, because the quote chooses the route; a wallet's chain
    * swap keeps the `/api/approve` branch below.
    */
@@ -1599,7 +1599,7 @@ export default function SentenceTradeCard({
   } | null =
     openId === "venue" ? (
       {
-        label: "Near Account details",
+        label: "Myntle account details",
         height: 150,
         body: <VenuePopup address={account?.address} />,
       }
@@ -1684,7 +1684,7 @@ export default function SentenceTradeCard({
           </>
         )}
         {sender === null ? "in" : "to"} your{" "}
-        {hover("venue", <VenueChip label="Near Account" />)}
+        {hover("venue", <VenueChip label="Myntle account" />)}
       </>
     ) : action === "withdraw" ? (
       <>
@@ -1693,7 +1693,7 @@ export default function SentenceTradeCard({
           "token-from",
           <TokenChip symbol={fromSymbol} badge={fromChain} />,
         )}{" "}
-        from your {hover("venue", <VenueChip label="Near Account" />)}{" "}
+        from your {hover("venue", <VenueChip label="Myntle account" />)}{" "}
         {shownRecipient ? (
           <>
             to{" "}
@@ -1729,7 +1729,7 @@ export default function SentenceTradeCard({
         {hover(
           "venue",
           <VenueChip
-            label={limit?.funding === "account" ? "Near Account" : "wallet"}
+            label={limit?.funding === "account" ? "Myntle account" : "wallet"}
           />,
         )}
       </>
@@ -1747,7 +1747,7 @@ export default function SentenceTradeCard({
         {intents ? "in your" : "from your"}{" "}
         {hover(
           "venue",
-          <VenueChip label={intents ? "Near Account" : "wallet"} />,
+          <VenueChip label={intents ? "Myntle account" : "wallet"} />,
         )}
       </>
     ) : (
@@ -1763,7 +1763,7 @@ export default function SentenceTradeCard({
           <TokenChip symbol={toSymbol} badge={toChain} />,
         )}{" "}
         {intents ? "in your" : "on"}{" "}
-        {hover("venue", <VenueChip label="Near Account" />)}
+        {hover("venue", <VenueChip label="Myntle account" />)}
       </>
     );
 
@@ -1838,7 +1838,7 @@ export default function SentenceTradeCard({
       ) : null}
       {figures.expiresAt ? (
         <DetailRow label="Valid until">
-          {new Date(deadline).toLocaleString()}
+          {formatDeadline(deadline)}
         </DetailRow>
       ) : null}
     </div>
@@ -2053,7 +2053,7 @@ export default function SentenceTradeCard({
                 ) : null}
                 {figures.expiresAt ? (
                   <DetailRow label="Deadline">
-                    {new Date(figures.expiresAt).toLocaleTimeString()}
+                    {formatDeadline(figures.expiresAt)}
                   </DetailRow>
                 ) : null}
                 {explorerUrls.length > 0 ? (
@@ -2170,7 +2170,7 @@ export default function SentenceTradeCard({
                     ) : null}
                     {limit.deadline ? (
                       <DetailRow label="Expires">
-                        {new Date(limit.deadline).toLocaleDateString()}
+                        {formatDeadline(limit.deadline)}
                       </DetailRow>
                     ) : null}
                   </>
@@ -2199,7 +2199,7 @@ export default function SentenceTradeCard({
                 ) : null}
                 {figures.expiresAt ? (
                   <DetailRow label="Price held until">
-                    {new Date(figures.expiresAt).toLocaleTimeString()}
+                    {formatDeadline(figures.expiresAt)}
                   </DetailRow>
                 ) : null}
                 {explorerUrls.length > 0 ? (
@@ -2264,7 +2264,6 @@ export default function SentenceTradeCard({
             aria-expanded={detailsOpen}
             onClick={toggleDetails}
             disabled={!detailsEnabled}
-            className="px-2.5 text-xs"
           >
             Details
           </Button>
@@ -2274,7 +2273,6 @@ export default function SentenceTradeCard({
               size="sm"
               onClick={() => void handleCancel()}
               disabled={cancelPending}
-              className="px-2.5 text-xs"
             >
               {cancelPending ? "Cancelling" : "Cancel"}
             </Button>
@@ -2294,7 +2292,7 @@ export default function SentenceTradeCard({
               <span className="sr-only" role="status">
                 Checking the record.
               </span>
-              <SkeletonBox width={76} height={20} radius={999} />
+              <SkeletonBox width={76} height={27} radius={999} />
             </>
           ) : awaiting && blocked === "sign-in" ? (
             onSignIn ? (
@@ -3369,7 +3367,7 @@ export function VenuePopup({ address }: { address?: string }) {
       <div className="flex justify-center pb-2">
         <YouPill />
       </div>
-      <p className="text-center text-xs text-ink-2">Near Account</p>
+      <p className="text-center text-xs text-ink-2">Myntle account</p>
       <div className="my-2 border-t border-line" aria-hidden="true" />
       <PopupRow label="Type">Near Intents</PopupRow>
       <PopupRow label="Contract">intents.near</PopupRow>
@@ -3445,6 +3443,26 @@ function rateOf(amountIn: string, amountOut: string): string | null {
 /** "Arbitrum One" is "Arbitrum" once the chain mark has said which chain. */
 function shortChainLabel(name: string): string {
   return name.replace(/\s+One$/, "");
+}
+
+/**
+ * Money-card deadlines in one fixed locale and timezone. The component is
+ * server-rendered, so the server (UTC) and the browser (local) would
+ * otherwise paint different strings for the same quote and mismatch on
+ * hydration. UTC keeps both renders identical and the signed figure
+ * unambiguous; the date is always included so a time is never dateless.
+ */
+export function formatDeadline(value: string | number): string {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return String(value);
+  return new Date(time).toLocaleString("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
 }
 
 /**

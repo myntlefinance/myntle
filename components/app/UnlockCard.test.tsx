@@ -109,13 +109,13 @@ describe("UnlockRequestCard", () => {
     );
 
     expect(html).toContain(
-      "Please unlock your super account to continue.",
+      "Please unlock your Myntle account to continue.",
     );
     expect(html).toContain("Unlock");
     expect(html).not.toContain("Prompt the agent");
   });
 
-  it("names the private balance for a passkey account", () => {
+  it("names the Myntle balance for a passkey account", () => {
     state.identity = passkeyIdentity;
     const html = ReactDOMServer.renderToStaticMarkup(
       <UnlockRequestCard
@@ -126,15 +126,15 @@ describe("UnlockRequestCard", () => {
       />,
     );
 
-    expect(html).toContain("Private balance locked");
+    expect(html).toContain("Myntle balance locked");
     expect(html).toContain(
-      "Please unlock your private balance to continue.",
+      "Please unlock your Myntle balance to continue.",
     );
-    expect(html).not.toContain("Super account");
+    expect(html).not.toContain("Myntle account");
     expect(html).not.toContain("wallet");
   });
 
-  it("says the private balance is unlocked for a passkey account", () => {
+  it("says the Myntle balance is unlocked for a passkey account", () => {
     state.identity = passkeyIdentity;
     state.unlocked = true;
     const html = ReactDOMServer.renderToStaticMarkup(
@@ -146,9 +146,9 @@ describe("UnlockRequestCard", () => {
       />,
     );
 
-    expect(html).toContain("Private balance unlocked");
-    expect(html).toContain("Myntle can read your private balance.");
-    expect(html).not.toContain("Super account");
+    expect(html).toContain("Myntle balance unlocked");
+    expect(html).toContain("The assistant can read your Myntle balance.");
+    expect(html).not.toContain("Myntle account");
   });
 
   it("keeps the wallet copy for a wallet account", () => {
@@ -162,9 +162,9 @@ describe("UnlockRequestCard", () => {
       />,
     );
 
-    expect(html).toContain("Super account locked");
+    expect(html).toContain("Myntle account locked");
     expect(html).toContain(
-      "Please unlock your super account to continue.",
+      "Please unlock your Myntle account to continue.",
     );
   });
 
@@ -181,7 +181,7 @@ describe("UnlockRequestCard", () => {
       />,
     );
 
-    expect(html).toContain("Super account unlocked");
+    expect(html).toContain("Myntle account unlocked");
     expect(html).not.toContain("Request expired.");
   });
 
@@ -198,7 +198,7 @@ describe("UnlockRequestCard", () => {
       />,
     );
 
-    expect(html).toContain("Super account unlocked");
+    expect(html).toContain("Myntle account unlocked");
     expect(html).not.toContain("Request expired.");
   });
 
@@ -215,7 +215,7 @@ describe("UnlockRequestCard", () => {
     );
 
     expect(html).toContain("Request expired.");
-    expect(html).not.toContain("Super account unlocked");
+    expect(html).not.toContain("Myntle account unlocked");
   });
 
   it("keeps the unlocked wallet copy for a wallet account", () => {
@@ -230,9 +230,9 @@ describe("UnlockRequestCard", () => {
       />,
     );
 
-    expect(html).toContain("Super account unlocked");
-    expect(html).toContain("Myntle has access to your super account.");
-    expect(html).not.toContain("Private balance unlocked");
+    expect(html).toContain("Myntle account unlocked");
+    expect(html).toContain("The assistant can sign for your Myntle account.");
+    expect(html).not.toContain("Myntle balance unlocked");
   });
 
   it("forces the lock action while the private read refuses a live session", () => {
@@ -248,10 +248,10 @@ describe("UnlockRequestCard", () => {
       />,
     );
 
-    expect(html).toContain("Super account locked");
-    expect(html).toContain("Please unlock your super account to continue.");
+    expect(html).toContain("Myntle account locked");
+    expect(html).toContain("Please unlock your Myntle account to continue.");
     expect(html).toContain("Unlock");
-    expect(html).not.toContain("Super account unlocked");
+    expect(html).not.toContain("Myntle account unlocked");
   });
 
   it("lets the live gate show the unlocked state when the read succeeds", () => {
@@ -266,7 +266,7 @@ describe("UnlockRequestCard", () => {
       />,
     );
 
-    expect(html).toContain("Super account unlocked");
-    expect(html).not.toContain("Super account locked");
+    expect(html).toContain("Myntle account unlocked");
+    expect(html).not.toContain("Myntle account locked");
   });
 });

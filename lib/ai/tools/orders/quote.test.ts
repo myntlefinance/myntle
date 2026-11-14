@@ -239,7 +239,7 @@ describe("get_limit_order_quote", () => {
         price: "150",
         funding: "wallet",
       }),
-    ).rejects.toThrow("Place the order from the Near Account instead.");
+    ).rejects.toThrow("Place the order from the Myntle account instead.");
     expect(createQuoteMock).not.toHaveBeenCalled();
   });
 

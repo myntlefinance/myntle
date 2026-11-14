@@ -36,7 +36,7 @@ export async function chatRequestHeaders(input: {
   return token ? { "x-intents-access-token": token } : {};
 }
 
-/** Whether the private balance is unlocked for the signed-in account. */
+/** Whether the Myntle balance is unlocked for the signed-in account. */
 export function chatSuperUnlocked(input: {
   identity: SessionIdentity | null;
   account: ChatTransportAccount;

@@ -49,12 +49,13 @@ const SOURCES: Source[] = [
   { key: "web", name: "Web search", desc: "Real-time news and info", glyph: "globe" },
 ];
 
+// reuse later
 const COMMANDS = [
-  { key: "compare", name: "/compare", desc: "Flavor vs. last summer" },
-  { key: "churn-plan", name: "/churn-plan", desc: "Draft a churn schedule" },
-  { key: "restock", name: "/restock", desc: "Build a reorder list" },
-  { key: "draft-email", name: "/draft-email", desc: "Write a supplier email" },
-  { key: "summarize", name: "/summarize", desc: "Digest the thread so far" },
+  { key: "swap", name: "/swap", desc: "Swap tokens across chains" },
+  { key: "portfolio", name: "/portfolio", desc: "View token balances and allocation" },
+  { key: "history", name: "/history", desc: "View settled transactions" },
+  { key: "quote", name: "/quote", desc: "Price a cross-chain swap" },
+  { key: "orders", name: "/orders", desc: "Check resting limit orders" },
 ];
 
 export type AttachedFile = {

@@ -91,7 +91,7 @@ import { focusComposer, FOCUS_COMPOSER_EVENT } from "@/lib/composer";
  * the answer out of live components. Everything is fake data.
  * ───────────────────────────────────────────────────────── */
 
-const NAME = "Shane";
+const NAME = "there";
 
 /* ── shared bits ──────────────────────────────────────────── */
 
@@ -606,7 +606,9 @@ function EmptyState({ onSend, shuffle, offset, live }: { onSend: (text: string, 
     <div className="mx-auto flex min-h-full w-full flex-col justify-center px-4 py-10 sm:px-8 lg:px-12">
       <div className="mx-auto w-full max-w-[720px]">
         <h1 className="text-[26px] font-normal tracking-[-0.02em] text-ink">
-          <span className="home-reveal block text-ink-3" style={homeRevealStyle(stage >= 1, revealParams.reveal)}>{live ? "Your money, in plain language" : `Hello ${NAME}`}</span>
+          {live ? null : (
+            <span className="home-reveal block text-ink-3" style={homeRevealStyle(stage >= 1, revealParams.reveal)}>{`Hello ${NAME}`}</span>
+          )}
           <span className="home-reveal block" style={homeRevealStyle(stage >= 2, revealParams.reveal)}>{live ? "Ask for a trade and watch it settle." : "What can I help you with?"}</span>
         </h1>
 
@@ -1450,6 +1452,9 @@ export default function Harness({
       )}
       <div
         ref={scrollRef}
+        role="log"
+        aria-live="polite"
+        aria-label="Chat thread"
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-slim [scrollbar-gutter:stable]"
       >
         {loadingThread ? (

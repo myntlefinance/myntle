@@ -312,8 +312,8 @@ The transaction timeline is not driven by the conversation stream. It is driven 
 
 - **Do** put the number a decision turns on on screen in tabular figures, and give it more weight than the label beside it.
 - **Do** mark a settlement state with the semantic colour for that state and with nothing else on the screen competing for it.
-- **Do** write complete sentences in every heading, button, empty state, and error message. A button reads "Swap 100 USDC for NEAR", never "Confirm", and an error reads "This swap would exceed your daily limit of 200 USDC", never "Limit exceeded".
-- **Do** show the minimum amount out next to the amount out, the contract id beneath its ticker, and the deadline in every card where the user is about to authorise a spend.
+- **Do** write complete sentences in every heading, empty state, and error message, and keep every button label to two words. A button reads "Swap", never "Confirm that you want to swap", and an error reads "This swap would exceed your daily limit of 200 USDC", never "Limit exceeded".
+- **Do** show the minimum amount out next to the amount out and the deadline in every card where the user is about to authorise a spend.
 - **Do** reach for the vocabulary of the room when naming a surface: a row, a column, an entry, a balance, a receipt.
 - **Do** keep the accent for the one live element in a region, and use a hairline ring plus a shadow on every surface.
 

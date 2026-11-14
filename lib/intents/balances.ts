@@ -22,6 +22,34 @@ export type IntentsBalancesResult = {
   message?: string;
 };
 
+const EVM_CHAINS = new Set([
+  "evm",
+  "eth",
+  "ethereum",
+  "base",
+  "arbitrum",
+  "arb",
+  "optimism",
+  "op",
+  "polygon",
+  "pol",
+  "matic",
+  "bsc",
+  "bnb",
+  "avax",
+  "avalanche",
+  "gno",
+  "gnosis",
+  "scroll",
+  "linea",
+  "zksync",
+  "blast",
+  "mantle",
+  "celo",
+  "unichain",
+  "soneium",
+]);
+
 /**
  * The implicit account the verifier derives from a wallet key.
  *
@@ -35,18 +63,7 @@ export function intentsAccountId(
 ): string | null {
   const c = chain.toLowerCase();
   if (c === "near" || c === "near-mainnet") return address;
-  if (
-    c === "evm" ||
-    c === "eth" ||
-    c === "ethereum" ||
-    c === "base" ||
-    c === "arbitrum" ||
-    c === "arb" ||
-    c === "optimism" ||
-    c === "op" ||
-    c === "polygon" ||
-    c === "matic"
-  ) {
+  if (EVM_CHAINS.has(c)) {
     return address.toLowerCase();
   }
   if (c === "solana" || c === "sol" || c === "solana-mainnet") {
