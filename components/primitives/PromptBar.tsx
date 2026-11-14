@@ -235,7 +235,6 @@ export default function PromptBar({
   const pill = variant === "Pill";
   const [draft, setDraft] = useState("");
   const [dismissed, setDismissed] = useState(false);
-  const [plusOpen, setPlusOpen] = useState(false);
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [connected, setConnected] = useState(false);
@@ -465,7 +464,6 @@ export default function PromptBar({
       typeToFocusComposer(input, event.key, (nextVal) => {
         setDraft(nextVal);
         setDismissed(false);
-        setPlusOpen(false);
       });
     };
 
@@ -474,8 +472,8 @@ export default function PromptBar({
   }, []);
 
   const token = dismissed ? null : parseToken(draft);
-  const menu: "at" | "slash" | null = plusOpen ? "at" : token?.kind ?? null;
-  const query = plusOpen ? "" : token?.query ?? "";
+  const menu: "at" | "slash" | null = token?.kind ?? null;
+  const query = token?.query ?? "";
 
   const rows: { key: string; name: string; desc: string }[] =
     menu === "at"
@@ -539,8 +537,8 @@ export default function PromptBar({
     const measure = measureRef.current;
     if (!input || !controls || !measure) return;
 
-    const fixedControlsWidth = 28 * 3;
-    const inlineGaps = 3 * 4;
+    const fixedControlsWidth = 28 * 2;
+    const inlineGaps = 2 * 4;
     const inlineInputWidth = controls.clientWidth - fixedControlsWidth - inlineGaps;
     const needsFullWidth = draft.includes("\n") || measure.offsetWidth + 8 > inlineInputWidth;
     if (needsFullWidth !== expanded) {
@@ -555,27 +553,10 @@ export default function PromptBar({
     input.style.setProperty("overflow-y", contentHeight > maxHeight ? "auto" : "hidden");
   }, [draft, expanded]);
 
-  /* clicking anywhere outside the composer closes the plus menu */
-  useEffect(() => {
-    if (!plusOpen) return;
-    const close = (event: PointerEvent) => {
-      if (!(event.target as Element).closest("[data-promptbar]")) {
-        setPlusOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, [plusOpen]);
-
-  const closeMenus = () => {
-    setPlusOpen(false);
-  };
-
   const pick = (row: { key: string; name: string }) => {
     const source = SOURCES.find((s) => s.key === row.key);
     if (source?.attach) {
       if (token) setDraft(draft.slice(0, token.start));
-      setPlusOpen(false);
       setDismissed(false);
       openFilePicker();
       return;
@@ -584,7 +565,6 @@ export default function PromptBar({
     } else {
       setDraft(`${token ? draft.slice(0, token.start) : draft}${row.name} `);
     }
-    setPlusOpen(false);
     setDismissed(false);
     inputRef.current?.focus();
   };
@@ -598,7 +578,6 @@ export default function PromptBar({
     setDraft("");
     setAttachments([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
-    closeMenus();
 
     if (isDesktop()) {
       inputRef.current?.focus();
@@ -734,7 +713,7 @@ export default function PromptBar({
           </div>
         )}
 
-        {/* real file picker — opened from the + menu's Add photos & files row */}
+        {/* real file picker — opened from the @ menu's Add photos & files row */}
         <input
           ref={fileInputRef}
           type="file"
@@ -788,23 +767,8 @@ export default function PromptBar({
 
         <div
           ref={controlsRef}
-          className="grid grid-cols-[28px_minmax(0,1fr)_28px_28px] items-end gap-x-1 gap-y-1.5"
+          className="grid grid-cols-[minmax(0,1fr)_28px_28px] items-end gap-x-1 gap-y-1.5"
         >
-          <button
-            type="button"
-            aria-label="Add attachments and sources"
-            aria-expanded={plusOpen}
-            onClick={() => {
-              setPlusOpen((current) => !current);
-              inputRef.current?.focus();
-            }}
-            className={`flex size-7 shrink-0 items-center justify-center justify-self-start text-ink-3 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-ink active:scale-[0.94] ${
-              pill ? "rounded-full" : "rounded-[8px]"
-            } ${plusOpen ? "bg-hover text-ink" : ""} ${wide ? "col-start-1 row-start-2" : "col-start-1 row-start-1"}`}
-          >
-            <Icon size={16} strokeWidth={2}><path d="M12 5v14M5 12h14" /></Icon>
-          </button>
-
           <textarea
             ref={inputRef}
             rows={1}
@@ -812,7 +776,6 @@ export default function PromptBar({
             onChange={(event) => {
               setDraft(event.target.value);
               setDismissed(false);
-              setPlusOpen(false);
             }}
             onKeyDown={(event) => {
               if (menu && rows.length > 0) {
@@ -830,7 +793,6 @@ export default function PromptBar({
               }
               if (event.key === "Escape") {
                 setDismissed(true);
-                closeMenus();
                 return;
               }
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -841,7 +803,7 @@ export default function PromptBar({
             placeholder={listening ? "Listening…" : placeholder ?? "Write a message…"}
             aria-label="Prompt"
             className={`${tall ? "min-h-[68px] px-2 py-2 text-[14px] leading-5" : "min-h-7 px-1 py-[5px] text-[13px] leading-[18px]"} scroll-slim min-w-0 w-full resize-none bg-transparent text-ink outline-none [overflow-wrap:anywhere] placeholder:text-ink-3 ${
-              wide ? "col-span-full col-start-1 row-start-1" : "col-start-2 row-start-1"
+              wide ? "col-span-full col-start-1 row-start-1" : "col-start-1 row-start-1"
             }`}
           />
 
@@ -853,7 +815,7 @@ export default function PromptBar({
             onClick={() => setListening((current) => !current)}
             className={`flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] ${
               pill ? "rounded-full" : "rounded-[8px]"
-            } ${listening ? "bg-accent-tint text-accent-ink" : "text-ink-3 hover:bg-hover hover:text-ink"} ${wide ? "col-start-3 row-start-2" : "col-start-3 row-start-1"}`}
+            } ${listening ? "bg-accent-tint text-accent-ink" : "text-ink-3 hover:bg-hover hover:text-ink"} ${wide ? "col-start-2 row-start-2" : "col-start-2 row-start-1"}`}
           >
             {listening ? (
               <span className="flex h-3.5 items-center gap-[2.5px]">
@@ -885,7 +847,7 @@ export default function PromptBar({
             onClick={send}
             className={`flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-200 enabled:active:scale-[0.94] ${
               pill ? "rounded-full" : "rounded-[8px]"
-            } ${wide ? "col-start-4 row-start-2" : "col-start-4 row-start-1"}`}
+            } ${wide ? "col-start-3 row-start-2" : "col-start-3 row-start-1"}`}
             style={{
               background: canSend ? "var(--ink)" : "var(--line-strong)",
               color: canSend ? "var(--surface)" : "var(--ink-2)",
