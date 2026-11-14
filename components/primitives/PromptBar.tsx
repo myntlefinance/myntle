@@ -17,9 +17,9 @@ import { shortAddr } from "@/lib/trade/identity";
 
 /* ─────────────────────────────────────────────────────────
  * PROMPT BAR
- * A composer with real controls: attach, @ data sources,
+ * A composer with real controls: attach, @ files & web,
  * / commands, dictation, and send.
- * Type @ or / to open the menus; ↑↓ + Enter to pick.
+ * Press + or type @ or / to open the menus; ↑↓ + Enter to pick.
  * Variants: Rounded (card radius) · Pill (full radius).
  * ───────────────────────────────────────────────────────── */
 
@@ -33,39 +33,7 @@ function Icon({ children, size = 15, strokeWidth = 1.8 }: { children: React.Reac
 
 const GLYPHS: Record<string, React.ReactNode> = {
   clip: <path d="m21.4 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />,
-  chart: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
-  layers: <g><path d="M12 2 2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5M2 12l10 5 10-5" /></g>,
   globe: <g><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></g>,
-};
-
-/* real product marks, inline so the file stays self-contained */
-const BRANDS: Record<string, React.ReactNode> = {
-  figma: (
-    <svg width="11" height="16" viewBox="0 0 38 57" aria-hidden="true">
-      <path d="M9.5 57A9.5 9.5 0 0 0 19 47.5V38H9.5a9.5 9.5 0 0 0 0 19z" fill="#0ACF83" />
-      <path d="M0 28.5A9.5 9.5 0 0 1 9.5 19H19v19H9.5A9.5 9.5 0 0 1 0 28.5z" fill="#A259FF" />
-      <path d="M0 9.5A9.5 9.5 0 0 1 9.5 0H19v19H9.5A9.5 9.5 0 0 1 0 9.5z" fill="#F24E1E" />
-      <path d="M19 0h9.5a9.5 9.5 0 1 1 0 19H19V0z" fill="#FF7262" />
-      <path d="M38 28.5a9.5 9.5 0 1 1-19 0 9.5 9.5 0 0 1 19 0z" fill="#1ABCFE" />
-    </svg>
-  ),
-  slack: (
-    <svg width="15" height="15" viewBox="0 0 127 127" aria-hidden="true">
-      <path d="M27.2 80c0 7.3-5.9 13.2-13.2 13.2C6.7 93.2.8 87.3.8 80c0-7.3 5.9-13.2 13.2-13.2h13.2V80zm6.6 0c0-7.3 5.9-13.2 13.2-13.2 7.3 0 13.2 5.9 13.2 13.2v33c0 7.3-5.9 13.2-13.2 13.2-7.3 0-13.2-5.9-13.2-13.2V80z" fill="#E01E5A" />
-      <path d="M47 27.2c-7.3 0-13.2-5.9-13.2-13.2C33.8 6.7 39.7.8 47 .8c7.3 0 13.2 5.9 13.2 13.2v13.2H47zm0 6.7c7.3 0 13.2 5.9 13.2 13.2 0 7.3-5.9 13.2-13.2 13.2H13.9C6.6 60.3.7 54.4.7 47.1c0-7.3 5.9-13.2 13.2-13.2H47z" fill="#36C5F0" />
-      <path d="M99.9 47.1c0-7.3 5.9-13.2 13.2-13.2 7.3 0 13.2 5.9 13.2 13.2 0 7.3-5.9 13.2-13.2 13.2H99.9V47.1zm-6.6 0c0 7.3-5.9 13.2-13.2 13.2-7.3 0-13.2-5.9-13.2-13.2V13.9C66.9 6.6 72.8.7 80.1.7c7.3 0 13.2 5.9 13.2 13.2v33.2z" fill="#2EB67D" />
-      <path d="M80.1 99.8c7.3 0 13.2 5.9 13.2 13.2 0 7.3-5.9 13.2-13.2 13.2-7.3 0-13.2-5.9-13.2-13.2V99.8h13.2zm0-6.6c-7.3 0-13.2-5.9-13.2-13.2 0-7.3 5.9-13.2 13.2-13.2h33.1c7.3 0 13.2 5.9 13.2 13.2 0 7.3-5.9 13.2-13.2 13.2H80.1z" fill="#ECB22E" />
-    </svg>
-  ),
-  gmail: (
-    <svg width="15" height="12" viewBox="0 0 256 193" aria-hidden="true">
-      <path d="M58.182 192.05V93.14L27.507 65.077 0 49.504v125.091c0 9.658 7.825 17.455 17.455 17.455h40.727Z" fill="#4285F4" />
-      <path d="M197.818 192.05h40.727c9.659 0 17.455-7.826 17.455-17.455V49.505l-31.156 17.837-27.026 25.798v98.91Z" fill="#34A853" />
-      <path d="m58.182 93.14-4.174-38.647 4.174-36.989L128 69.868l69.818-52.364 4.669 34.992-4.669 40.644L128 145.504 58.182 93.14Z" fill="#EA4335" />
-      <path d="M197.818 17.504V93.14L256 49.504V26.231c0-21.585-24.64-33.89-41.89-20.945l-16.292 12.218Z" fill="#FBBC04" />
-      <path d="m0 49.504 26.759 20.07L58.182 93.14V17.504L41.89 5.286C24.61-7.66 0 4.646 0 26.23v23.273Z" fill="#C5221F" />
-    </svg>
-  ),
 };
 
 type Source = {
@@ -73,19 +41,12 @@ type Source = {
   name: string;
   desc: string;
   glyph?: string;
-  brand?: string;
   attach?: boolean;
-  connect?: boolean;
 };
 
 const SOURCES: Source[] = [
-  { key: "attach", name: "Add photos & files", desc: "Upload from your computer", glyph: "clip", attach: true },
-  { key: "scoop", name: "Scoop Data", desc: "Sales & churn metrics", glyph: "chart" },
-  { key: "flavors", name: "Flavor records", desc: "26 makers, tags, links", glyph: "layers" },
+  { key: "attach", name: "Upload files", desc: "Images, documents, and data", glyph: "clip", attach: true },
   { key: "web", name: "Web search", desc: "Real-time news and info", glyph: "globe" },
-  { key: "figma", name: "Figma", desc: "Design-to-code workflows", brand: "figma" },
-  { key: "slack", name: "Slack", desc: "Read and manage Slack", brand: "slack" },
-  { key: "gmail", name: "Gmail", desc: "Read and manage Gmail", brand: "gmail", connect: true },
 ];
 
 const COMMANDS = [
@@ -187,15 +148,11 @@ const DICTATION = "Compare pistachio weekends to last summer";
 const AUTO_STEPS: {
   draft: string;
   active?: number;
-  connect?: boolean;
   hold: number;
 }[] = [
-  { draft: "", connect: false, hold: 1100 },
+  { draft: "", hold: 1100 },
   { draft: "@", active: 0, hold: 900 },
-  { draft: "@", active: 1, hold: 620 },
-  { draft: "@", active: 4, hold: 620 },
-  { draft: "@", active: 6, hold: 700 },
-  { draft: "@", active: 6, connect: true, hold: 1000 },
+  { draft: "@", active: 1, hold: 900 },
   { draft: "", hold: 700 },
   { draft: "/", active: 0, hold: 900 },
   { draft: "/", active: 1, hold: 620 },
@@ -235,9 +192,9 @@ export default function PromptBar({
   const pill = variant === "Pill";
   const [draft, setDraft] = useState("");
   const [dismissed, setDismissed] = useState(false);
+  const [plusOpen, setPlusOpen] = useState(false);
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [connected, setConnected] = useState(false);
   const [active, setActive] = useState(0);
   const [listening, setListening] = useState(false);
   const [auto, setAuto] = useState(demo);
@@ -464,6 +421,7 @@ export default function PromptBar({
       typeToFocusComposer(input, event.key, (nextVal) => {
         setDraft(nextVal);
         setDismissed(false);
+        setPlusOpen(false);
       });
     };
 
@@ -472,8 +430,8 @@ export default function PromptBar({
   }, []);
 
   const token = dismissed ? null : parseToken(draft);
-  const menu: "at" | "slash" | null = token?.kind ?? null;
-  const query = token?.query ?? "";
+  const menu: "at" | "slash" | null = plusOpen ? "at" : token?.kind ?? null;
+  const query = plusOpen ? "" : token?.query ?? "";
 
   const rows: { key: string; name: string; desc: string }[] =
     menu === "at"
@@ -500,7 +458,7 @@ export default function PromptBar({
   useLayoutEffect(() => {
     const target = rowRefs.current[active];
     if (target) setRowBox({ top: target.offsetTop, height: target.offsetHeight });
-  }, [menu, query, active, connected, rows.length]);
+  }, [menu, query, active, rows.length]);
 
   /* autoplay: the step applies on the pass that selects it, and the effect
    * only advances the clock after its hold — same timing, no sync set. */
@@ -510,7 +468,6 @@ export default function PromptBar({
     const step = AUTO_STEPS[autoStep % AUTO_STEPS.length];
     setDraft(step.draft);
     if (step.active !== undefined) setActive(step.active);
-    if (step.connect !== undefined) setConnected(step.connect);
   }
   useEffect(() => {
     if (!auto) return;
@@ -537,8 +494,8 @@ export default function PromptBar({
     const measure = measureRef.current;
     if (!input || !controls || !measure) return;
 
-    const fixedControlsWidth = 28 * 2;
-    const inlineGaps = 2 * 4;
+    const fixedControlsWidth = 28 * 3;
+    const inlineGaps = 3 * 4;
     const inlineInputWidth = controls.clientWidth - fixedControlsWidth - inlineGaps;
     const needsFullWidth = draft.includes("\n") || measure.offsetWidth + 8 > inlineInputWidth;
     if (needsFullWidth !== expanded) {
@@ -553,10 +510,27 @@ export default function PromptBar({
     input.style.setProperty("overflow-y", contentHeight > maxHeight ? "auto" : "hidden");
   }, [draft, expanded]);
 
+  /* clicking anywhere outside the composer closes the plus menu */
+  useEffect(() => {
+    if (!plusOpen) return;
+    const close = (event: PointerEvent) => {
+      if (!(event.target as Element).closest("[data-promptbar]")) {
+        setPlusOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [plusOpen]);
+
+  const closeMenus = () => {
+    setPlusOpen(false);
+  };
+
   const pick = (row: { key: string; name: string }) => {
     const source = SOURCES.find((s) => s.key === row.key);
     if (source?.attach) {
       if (token) setDraft(draft.slice(0, token.start));
+      setPlusOpen(false);
       setDismissed(false);
       openFilePicker();
       return;
@@ -565,6 +539,7 @@ export default function PromptBar({
     } else {
       setDraft(`${token ? draft.slice(0, token.start) : draft}${row.name} `);
     }
+    setPlusOpen(false);
     setDismissed(false);
     inputRef.current?.focus();
   };
@@ -578,6 +553,7 @@ export default function PromptBar({
     setDraft("");
     setAttachments([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
+    closeMenus();
 
     if (isDesktop()) {
       inputRef.current?.focus();
@@ -634,28 +610,13 @@ export default function PromptBar({
               >
                 {source && (
                   <span className="flex size-5.5 shrink-0 items-center justify-center text-ink-2">
-                    {source.brand ? BRANDS[source.brand] : <Icon size={15}>{GLYPHS[source.glyph ?? "clip"]}</Icon>}
+                    <Icon size={15}>{GLYPHS[source.glyph ?? "clip"]}</Icon>
                   </span>
                 )}
                 <span className="shrink-0 text-[12.5px] font-medium text-ink">
                   {row.name}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[12px] text-ink-3">{row.desc}</span>
-                {source?.connect && (
-                  <span
-                    role="button"
-                    tabIndex={-1}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setConnected((current) => !current);
-                    }}
-                    className={`shrink-0 text-[12px] font-medium transition-colors duration-100 ${
-                      connected ? "text-green" : "text-accent-ink hover:underline"
-                    }`}
-                  >
-                    {connected ? "Connected" : "Connect"}
-                  </span>
-                )}
               </button>
             );
           })}
@@ -664,9 +625,11 @@ export default function PromptBar({
               No matches for “{query}”
             </div>
           )}
-          <div className="mt-1 border-t border-line px-2 pt-1.5 pb-1 text-[11px] text-ink-3">
-            {menu === "at" ? "Type to search sources & files" : "Type to search commands"}
-          </div>
+          {menu === "slash" && (
+            <div className="mt-1 border-t border-line px-2 pt-1.5 pb-1 text-[11px] text-ink-3">
+              Type to search commands
+            </div>
+          )}
         </div>
       )}
 
@@ -713,7 +676,7 @@ export default function PromptBar({
           </div>
         )}
 
-        {/* real file picker — opened from the @ menu's Add photos & files row */}
+        {/* real file picker — opened from the + menu's Upload files row */}
         <input
           ref={fileInputRef}
           type="file"
@@ -767,8 +730,24 @@ export default function PromptBar({
 
         <div
           ref={controlsRef}
-          className="grid grid-cols-[minmax(0,1fr)_28px_28px] items-end gap-x-1 gap-y-1.5"
+          className="grid grid-cols-[28px_minmax(0,1fr)_28px_28px] items-end gap-x-1 gap-y-1.5"
         >
+          {/* + opens the same two rows as @: upload files, web search */}
+          <button
+            type="button"
+            aria-label="Upload files or search the web"
+            aria-expanded={plusOpen}
+            onClick={() => {
+              setPlusOpen((current) => !current);
+              if (isDesktop()) inputRef.current?.focus();
+            }}
+            className={`flex size-7 shrink-0 items-center justify-center justify-self-start text-ink-3 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-ink active:scale-[0.94] ${
+              pill ? "rounded-full" : "rounded-[8px]"
+            } ${plusOpen ? "bg-hover text-ink" : ""} ${wide ? "col-start-1 row-start-2" : "col-start-1 row-start-1"}`}
+          >
+            <Icon size={16} strokeWidth={2}><path d="M12 5v14M5 12h14" /></Icon>
+          </button>
+
           <textarea
             ref={inputRef}
             rows={1}
@@ -776,6 +755,7 @@ export default function PromptBar({
             onChange={(event) => {
               setDraft(event.target.value);
               setDismissed(false);
+              setPlusOpen(false);
             }}
             onKeyDown={(event) => {
               if (menu && rows.length > 0) {
@@ -793,6 +773,7 @@ export default function PromptBar({
               }
               if (event.key === "Escape") {
                 setDismissed(true);
+                closeMenus();
                 return;
               }
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -803,7 +784,7 @@ export default function PromptBar({
             placeholder={listening ? "Listening…" : placeholder ?? "Write a message…"}
             aria-label="Prompt"
             className={`${tall ? "min-h-[68px] px-2 py-2 text-[14px] leading-5" : "min-h-7 px-1 py-[5px] text-[13px] leading-[18px]"} scroll-slim min-w-0 w-full resize-none bg-transparent text-ink outline-none [overflow-wrap:anywhere] placeholder:text-ink-3 ${
-              wide ? "col-span-full col-start-1 row-start-1" : "col-start-1 row-start-1"
+              wide ? "col-span-full col-start-1 row-start-1" : "col-start-2 row-start-1"
             }`}
           />
 
@@ -815,7 +796,7 @@ export default function PromptBar({
             onClick={() => setListening((current) => !current)}
             className={`flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] ${
               pill ? "rounded-full" : "rounded-[8px]"
-            } ${listening ? "bg-accent-tint text-accent-ink" : "text-ink-3 hover:bg-hover hover:text-ink"} ${wide ? "col-start-2 row-start-2" : "col-start-2 row-start-1"}`}
+            } ${listening ? "bg-accent-tint text-accent-ink" : "text-ink-3 hover:bg-hover hover:text-ink"} ${wide ? "col-start-3 row-start-2" : "col-start-3 row-start-1"}`}
           >
             {listening ? (
               <span className="flex h-3.5 items-center gap-[2.5px]">
@@ -847,7 +828,7 @@ export default function PromptBar({
             onClick={send}
             className={`flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-200 enabled:active:scale-[0.94] ${
               pill ? "rounded-full" : "rounded-[8px]"
-            } ${wide ? "col-start-3 row-start-2" : "col-start-3 row-start-1"}`}
+            } ${wide ? "col-start-4 row-start-2" : "col-start-4 row-start-1"}`}
             style={{
               background: canSend ? "var(--ink)" : "var(--line-strong)",
               color: canSend ? "var(--surface)" : "var(--ink-2)",
