@@ -22,7 +22,7 @@
   </a>
 </p>
 
-Myntle is for someone who already holds tokens, whether they keep them in a wallet or want to start with a passkey. You can create an account with a passkey on the device you are using, or connect a wallet you already have. Either way, the same conversation works: you need no account on the chain that settles the trade, no gas on a new network, and no faucet.
+Myntle is for someone who wants easy finance, whether use a wallet or want to start with a passkey. You can create an account with a passkey on the device you are using, or connect a wallet you already have. Either way, the same conversation works: you need no account on the chain that settles the trade, no gas on a new network, and no faucet.
 
 > The assistant can propose a trade and look things up, but it cannot sign or move money. A trade is finished only when the settlement record says so.
 
@@ -36,7 +36,13 @@ You type something like swapping a hundred USDC for NEAR, and the assistant turn
 
 ### Start with a passkey or a wallet
 
-A passkey account is created with your device's authenticator, so there is nothing to install and no extension to connect. If you already have a wallet, it connects through wagmi and viem on EVM, the Wallet Standard on Solana, and near-connect on NEAR, all behind the same interface. The conversation does not change with the account, because every account can sign the intent that settles the trade.
+A passkey account is created with your device's authenticator, so there is nothing to install and no extension to connect. 
+If you already have a wallet, it connects through:
+- wagmi and viem on EVM, 
+- the Wallet Standard on Solana, and 
+- near-connect on NEAR, all behind the same interface. 
+
+The conversation does not change with the account, because every account can sign the intent that settles the trade.
 
 <p align="center">
   <a href="docs/images/wallets.png">
@@ -44,11 +50,11 @@ A passkey account is created with your device's authenticator, so there is nothi
   </a>
 </p>
 
-The portfolio is the same account seen from another angle. It shows what the account holds on chain and in the private balance, and it can track any address read-only without asking for a signature.
+The portfolio is the same account seen from another angle. It shows what the account holds on chain and in the Myntle balance, and it can track any address read-only without asking for a signature.
 
 ### You approve the numbers, and the record decides
 
-The approval is bound to the quote the server saved, not to anything the browser sends back. If the values are changed in devtools, the server refuses with "The trade changed since it was priced." If the quote has expired, it refuses that too, and the card has already expired on screen. After you sign, the trade moves through quoted, authorized, submitted, pending, and settled only as the settlement source confirms each step. When funds arrive but the trade is never filled, the screen says the money is coming back instead of painting a success for half of the story.
+The approval is bound to the quote the server saved, not to anything the browser sends back. If the values are changed in devtools, the server refuses with *"The trade changed since it was priced."* If the quote has expired, it refuses that too, and the card has already expired on screen. After you sign, the trade moves through quoted, authorized, submitted, pending, and settled only as the settlement source confirms each step. When funds arrive but the trade is never filled, the screen says the money is coming back instead of painting a success for half of the story.
 
 ### A price you set, and yield you can see
 
@@ -62,11 +68,15 @@ A trade is not the only thing you can ask about. The same turn can search Google
 
 ### Privacy is the default
 
-Every trade quote is confidential, and there is no public mode to select. A trade between two external chains asks the verifier for basic or advanced confidentiality, and a trade that spends the balance inside NEAR Intents signs against `CONFIDENTIAL_INTENTS`. The interface calls that balance the Super account: it is unlocked in the browser, the access token never reaches the server, and the private read goes straight to 1Click.
+Every trade quote is confidential, and there is no public mode to select. A trade between two external chains asks the verifier for basic or advanced confidentiality, and a trade that spends the balance inside NEAR Intents signs against `CONFIDENTIAL_INTENTS`. The interface calls that balance the Myntle account: it is unlocked in the browser, the access token never reaches the server, and the private read goes straight to 1Click.
 
 ## How it works
 
-Myntle is four layers that can be replaced independently: a Next.js client that renders the conversation and the cards, a server route that owns the model and the tools, deterministic code that authorizes and executes a trade, and a durable workflow that reconciles the result.
+Myntle is four layers that can be replaced independently: 
+1. Next.js client that renders the conversation and the cards, 
+2. server route that owns the model and the tools, 
+3. deterministic code that authorizes and executes a trade, 
+4. durable workflow that reconciles the result.
 
 ```mermaid
 flowchart TB
@@ -101,7 +111,7 @@ flowchart TB
   chat --> db
 ```
 
-The chat turn is a workflow run rather than a response-owned stream, so a reload or a dropped connection resumes the same answer instead of cancelling it. The toolset holds twenty-two tools, scoped to the intent of each turn. Four of them can propose a movement of funds, and each one pauses for approval; the rest only read or ask you to unlock the Super account. No tool signs, and every trade passes through server validation before it can become a transaction.
+The chat turn is a workflow run rather than a response-owned stream, so a reload or a dropped connection resumes the same answer instead of cancelling it. The toolset holds twenty-two tools, scoped to the intent of each turn. Four of them can propose a movement of funds, and each one pauses for approval; the rest only read or ask you to unlock the Myntle account. No tool signs, and every trade passes through server validation before it can become a transaction.
 
 The approval routes validate the request against the connected account, and once the intent is signed and submitted, `swap-lifecycle` polls the settlement and records the outcome. The workflow holds no state of its own: everything is written to Postgres as it goes, a failed status poll is retried, and a settlement that failed on chain is final. The portfolio's price feed is a separate Cloudflare Worker that combines several sources behind one cache and a live stream; a trade quote always uses 1Click's own amount.
 
@@ -215,10 +225,10 @@ Start with `PRODUCT.md` for who the product is for and what it refuses to do, `D
 
 Prototype interface work in the lab before building it into the product. Create a component in `components/lab/samples/` that takes an optional variant, register it in `components/lab/registry.ts`, iterate at `/lab`, and move the finished version into `components/finance/`. Nothing in the application imports from the lab, so a prototype cannot break anything that ships.
 
-Keep tools narrow and keep the assistant away from money. Each tool does one job, only three can propose a movement of funds, and no new signing or network tool may be added. Model output never reaches a signature without passing through server validation, approvals stay cryptographically checked, and every agent call sets an explicit step bound.
+Keep tools narrow and keep the assistant away from money. Each tool does one job, only four can propose a movement of funds, and no new signing or network tool may be added. Model output never reaches a signature without passing through server validation, approvals stay cryptographically checked, and every agent call sets an explicit step bound.
 
 Do not commit secrets, do not sign a mainnet transaction or spend funds without an explicit instruction from the person in charge, and write interface copy as sentences a person could say out loud. If a line of text can be deleted without losing meaning, delete it, and keep numbers on screen to the ones the reader needs in order to decide.
 
 ## Credits
 
-The interface foundation comes from BeautifulUI. The primitives in `components/atoms/` and `components/primitives/`, the harness in `components/site/Harness.tsx` that this application drives with the live assistant, and the design tokens the finance screens build on are adapted from that system, and the finance screens themselves were built for this project. Settlement and quotes are NEAR Intents' 1Click, the model runs on NEAR AI Cloud, and durable execution uses the Workflow SDK.
+The interface foundation comes from [BeautifulUI](https://www.beautifului.dev/). The primitives in `components/atoms/` and `components/primitives/`, the harness in `components/site/Harness.tsx` that this application drives with the live assistant, and the design tokens the finance screens build on are adapted from that system, and the finance screens themselves were built for this project. Settlement and quotes are NEAR Intents' 1Click, the model runs on NEAR AI Cloud, and durable execution uses the Workflow SDK.
