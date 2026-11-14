@@ -19,6 +19,7 @@ import { conversationIdForUser } from "@/lib/db/conversations";
 import { getToolApproval, recordToolApproval } from "@/lib/db/tool-approvals";
 import {
   addEvent,
+  consumeQuote,
   createApproval,
   createQuote,
   createTransaction,
@@ -229,6 +230,28 @@ export async function POST(req: Request) {
   let expectedOut: string;
 
   try {
+    // The dry preview is single-use, exactly as on the direct route: the
+    // claim is atomic, one concurrent approval wins, and a replayed POST
+    // gets a 409 instead of a second transaction. It lands after the
+    // execution quote succeeded, so a failed pricing never burns the preview.
+    let claimed = false;
+    try {
+      claimed = await consumeQuote(stored.id, session.userId);
+    } catch {
+      console.error("[intents/approve] quote claim failed", {
+        quoteId: stored.id,
+      });
+      return NextResponse.json({ error: "An error occurred." }, { status: 500 });
+    }
+    if (!claimed) {
+      return NextResponse.json(
+        {
+          error: "stale",
+          message: "This quote was already approved. Please ask for a fresh quote.",
+        },
+        { status: 409 },
+      );
+    }
     wetQuoteId = await createQuote({
       userId: session.userId,
       conversationId,

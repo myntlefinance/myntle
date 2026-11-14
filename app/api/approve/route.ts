@@ -22,6 +22,7 @@ import {
   createApproval,
   createQuote,
   createTransaction,
+  consumeQuote,
   setTransactionRunId,
 } from "@/lib/db/transactions";
 
@@ -522,6 +523,27 @@ export async function POST(req: Request) {
   };
 
   try {
+    // The dry preview is single-use: replaying the signed POST must not mint
+    // a second trade. The claim is atomic, so of two concurrent approvals
+    // exactly one wins; the loser asks for a fresh quote. It lands here,
+    // after the signature and the fresh execution quote both checked out, so
+    // a failed validation never burns a preview the user can still use.
+    let claimed = false;
+    try {
+      claimed = await consumeQuote(body.quoteId, session.userId);
+    } catch {
+      console.error("[approve] quote claim failed");
+      return NextResponse.json({ error: "An error occurred." }, { status: 500 });
+    }
+    if (!claimed) {
+      return NextResponse.json(
+        {
+          error: "stale",
+          message: "This quote was already approved. Please ask for a fresh quote.",
+        },
+        { status: 409 },
+      );
+    }
     // The wet execution is recorded as its own quote row; the approval
     // links to it, while body.quoteId remains the dry preview it matched.
     const wetQuoteId = await createQuote({

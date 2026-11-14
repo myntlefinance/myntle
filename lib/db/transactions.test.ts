@@ -24,6 +24,9 @@ const state = vi.hoisted(() => ({
   updates: [] as Array<Record<string, unknown>>,
   rows: [] as Row[],
   missingColumn: true,
+  missingConsumedColumn: true,
+  consumeClaimed: false,
+  transitionClaimed: false,
   readError: null as null | { code?: string; message?: string },
 }));
 
@@ -49,7 +52,20 @@ vi.mock("./client", () => ({
                 },
               });
             }
-            return Promise.resolve({ data: state.rows, error: null });
+            const ordered = {
+              limit: (n: number) =>
+                Promise.resolve(
+                  state.readError
+                    ? { data: null, error: state.readError }
+                    : { data: state.rows.slice(0, n), error: null },
+                ),
+            };
+            // Awaitable for the legacy list reads, chainable for the
+            // newest-row lookup.
+            return Object.assign(ordered, {
+              then: (resolve: (v: unknown) => void) =>
+                resolve({ data: state.rows, error: null }),
+            });
           },
           limit: () =>
             Promise.resolve(
@@ -61,24 +77,57 @@ vi.mock("./client", () => ({
         return query;
       },
       update(patch: Record<string, unknown>) {
-        return {
-          eq: () => {
+        // Chainable for the atomic guards (`consumeQuote`,
+        // `transitionTransactionState`), awaitable for the legacy blind
+        // writes. `select` resolves the guard reads; the bare awaited
+        // chain resolves the legacy `{ error }` shape.
+        const query = {
+          eq: () => query,
+          is: () => query,
+          select: () => {
+            if ("consumed_at" in patch) {
+              if (state.missingConsumedColumn) {
+                return Promise.resolve({
+                  data: null,
+                  error: {
+                    code: "42703",
+                    message: "column quotes.consumed_at does not exist",
+                  },
+                });
+              }
+              if (state.consumeClaimed) {
+                return Promise.resolve({ data: [], error: null });
+              }
+              state.consumeClaimed = true;
+              return Promise.resolve({ data: [{ id: "q-1" }], error: null });
+            }
+            if (state.transitionClaimed) {
+              return Promise.resolve({ data: [], error: null });
+            }
+            state.transitionClaimed = true;
+            return Promise.resolve({ data: [{ id: "tx-1" }], error: null });
+          },
+        };
+        const legacy = Object.assign(query, {
+          then: (resolve: (v: unknown) => void) => {
             state.updates.push(patch);
             if (
               state.missingColumn &&
               "status_checked_at" in patch
             ) {
-              return Promise.resolve({
+              resolve({
                 error: {
                   code: "42703",
                   message:
                     "column transactions.status_checked_at does not exist",
                 },
               });
+              return;
             }
-            return Promise.resolve({ error: null });
+            resolve({ error: null });
           },
-        };
+        });
+        return legacy;
       },
     }),
   }),
@@ -109,6 +158,9 @@ beforeEach(() => {
   state.updates = [];
   state.rows = [row];
   state.missingColumn = true;
+  state.missingConsumedColumn = true;
+  state.consumeClaimed = false;
+  state.transitionClaimed = false;
   state.readError = null;
 });
 
@@ -182,6 +234,63 @@ describe("the refusal guard read", () => {
 
     await expect(
       hasToolApprovalSettlement("user-1", "aitxt-1"),
+    ).rejects.toThrow("The settlement could not be read.");
+  });
+});
+
+describe("single-use dry quotes (migration 014)", () => {
+  it("claims a preview exactly once", async () => {
+    state.missingConsumedColumn = false;
+    const { consumeQuote } = await import("./transactions");
+
+    await expect(consumeQuote("q-1", "user-1")).resolves.toBe(true);
+    await expect(consumeQuote("q-1", "user-1")).resolves.toBe(false);
+  });
+
+  it("proceeds unguarded with a warning before migration 014", async () => {
+    state.missingConsumedColumn = true;
+    const { consumeQuote } = await import("./transactions");
+
+    await expect(consumeQuote("q-1", "user-1")).resolves.toBe(true);
+  });
+});
+
+describe("conditional state transitions", () => {
+  it("lets exactly one concurrent submit win", async () => {
+    const { transitionTransactionState } = await import("./transactions");
+
+    await expect(
+      transitionTransactionState("tx-1", "awaiting_approval", "submitted"),
+    ).resolves.toBe(true);
+    await expect(
+      transitionTransactionState("tx-1", "awaiting_approval", "submitted"),
+    ).resolves.toBe(false);
+  });
+});
+
+describe("deposit idempotency lookup", () => {
+  it("returns the newest transaction for the proposal", async () => {
+    const { getTransactionByToolApprovalId } = await import("./transactions");
+
+    const found = await getTransactionByToolApprovalId("user-1", "aitxt-1");
+    expect(found?.id).toBe("tx-1");
+  });
+
+  it("returns null when the proposal never produced a transaction", async () => {
+    state.rows = [];
+    const { getTransactionByToolApprovalId } = await import("./transactions");
+
+    await expect(
+      getTransactionByToolApprovalId("user-1", "aitxt-1"),
+    ).resolves.toBeNull();
+  });
+
+  it("throws instead of minting over an unreadable record", async () => {
+    state.readError = { message: "connection failure" };
+    const { getTransactionByToolApprovalId } = await import("./transactions");
+
+    await expect(
+      getTransactionByToolApprovalId("user-1", "aitxt-1"),
     ).rejects.toThrow("The settlement could not be read.");
   });
 });

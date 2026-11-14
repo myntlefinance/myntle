@@ -16,6 +16,7 @@ import {
   createApproval,
   createQuote,
   createTransaction,
+  getTransactionByToolApprovalId,
   setTransactionRunId,
   setTransactionState,
 } from "@/lib/db/transactions";
@@ -101,6 +102,64 @@ export async function POST(req: Request) {
       },
       { status: 409 },
     );
+  }
+
+  // A repeated approval must return the same address, not a second one.
+  // The card rejoins its record by tool approval id, so a double click (or a
+  // retried request) that arrives after the first mint was recorded answers
+  // from the existing transaction instead of funding a new address. A record
+  // that already failed is not an answer: the next attempt mints again.
+  if (body.approvalId) {
+    try {
+      const existing = await getTransactionByToolApprovalId(
+        session.userId,
+        body.approvalId,
+      );
+      if (
+        existing &&
+        existing.state !== "failed" &&
+        existing.state !== "expired"
+      ) {
+        const refs = (existing.refs ?? {}) as Record<string, unknown>;
+        const sameAsset =
+          typeof refs.assetId === "string"
+            ? refs.assetId === body.assetId
+            : existing.origin_asset === body.assetId;
+        const sameAmount =
+          typeof refs.amount === "string"
+            ? refs.amount === body.amount
+            : true;
+        if (sameAsset && sameAmount) {
+          return NextResponse.json({
+            transactionId: existing.id,
+            depositAddress: existing.deposit_address,
+            depositMemo:
+              typeof refs.depositMemo === "string" ? refs.depositMemo : null,
+            expiresAt: typeof refs.expiresAt === "string" ? refs.expiresAt : null,
+            amountInRaw: typeof refs.amountInRaw === "string" ? refs.amountInRaw : body.amount,
+            tokenContract: typeof refs.tokenContract === "string" ? refs.tokenContract : null,
+            chainId: typeof refs.chainId === "number" ? refs.chainId : null,
+            chainName: typeof refs.chainName === "string" ? refs.chainName : null,
+            chainSlug: typeof refs.chainSlug === "string" ? refs.chainSlug : null,
+            decimals: typeof refs.decimals === "number" ? refs.decimals : null,
+            symbol: typeof refs.symbol === "string" ? refs.symbol : null,
+            amountIn: existing.amount_in,
+            runId: existing.workflow_run_id,
+          });
+        }
+        console.error("[intents/deposit] approval exists for another asset", {
+          transactionId: existing.id,
+        });
+        return NextResponse.json({ error: DEPOSIT_ERROR }, { status: 400 });
+      }
+    } catch (error) {
+      // The lookup guards a double mint, never the mint itself: a failed
+      // read falls through and mints, exactly as before.
+      console.error(
+        "[intents/deposit] existing-deposit lookup failed",
+        error instanceof Error ? error.message.slice(0, 200) : "unknown",
+      );
+    }
   }
 
   // The catalogue is the authority on which assets can be priced. An id that

@@ -5,6 +5,7 @@ const {
   getTransactionMock,
   updateTransactionRefsMock,
   setTransactionStateMock,
+  transitionTransactionStateMock,
   addEventMock,
   setTransactionRunIdMock,
   submitIntentMock,
@@ -20,6 +21,7 @@ const {
   getTransactionMock: vi.fn(),
   updateTransactionRefsMock: vi.fn(),
   setTransactionStateMock: vi.fn(),
+  transitionTransactionStateMock: vi.fn(async () => true),
   addEventMock: vi.fn(),
   setTransactionRunIdMock: vi.fn(),
   submitIntentMock: vi.fn(),
@@ -53,6 +55,7 @@ vi.mock("@/lib/db/transactions", () => ({
   getTransaction: getTransactionMock,
   updateTransactionRefs: updateTransactionRefsMock,
   setTransactionState: setTransactionStateMock,
+  transitionTransactionState: transitionTransactionStateMock,
   addEvent: addEventMock,
   setTransactionRunId: setTransactionRunIdMock,
 }));

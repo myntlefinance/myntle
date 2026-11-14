@@ -24,6 +24,7 @@ import {
 } from "@/lib/db/tool-approvals";
 import {
   addEvent,
+  consumeQuote,
   createApproval,
   createTransaction,
   getQuote,
@@ -308,6 +309,26 @@ export async function POST(req: Request) {
 
   const state = funding === "wallet" ? "submitted" : "awaiting_approval";
   let transactionId: string;
+
+  // The dry preview is single-use, as on the swap routes: the claim is
+  // atomic, one concurrent creation wins, and a replayed POST gets a 409
+  // instead of a second order. It lands after the order was created and
+  // matched, so a failed creation never burns the preview.
+  try {
+    const claimed = await consumeQuote(stored.id, session.userId);
+    if (!claimed) {
+      return NextResponse.json(
+        {
+          error: "stale",
+          message: "This quote was already approved. Please ask for a fresh quote.",
+        },
+        { status: 409 },
+      );
+    }
+  } catch {
+    console.error("[orders] quote claim failed", { quoteId: stored.id });
+    return NextResponse.json({ error: ORDER_ERROR }, { status: 500 });
+  }
 
   try {
     const approvalId = await createApproval({

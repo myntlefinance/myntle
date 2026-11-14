@@ -15,6 +15,7 @@ import {
   getTransaction,
   setTransactionRunId,
   setTransactionState,
+  transitionTransactionState,
   updateTransactionRefs,
 } from "@/lib/db/transactions";
 import {
@@ -481,7 +482,39 @@ export async function POST(req: Request) {
       signedAt: new Date().toISOString(),
       standard: verification.standard,
     });
-    await setTransactionState(tx.id, "submitted");
+    // The claim is atomic: of two concurrent submits exactly one moves the
+    // row out of `awaiting_approval`. The loser re-reads the winner's record
+    // below instead of writing a second submission and starting a second
+    // settlement workflow.
+    const claimed = await transitionTransactionState(
+      tx.id,
+      "awaiting_approval",
+      "submitted",
+    );
+    if (!claimed) {
+      const current = await getTransaction(session.userId, tx.id).catch(
+        () => null,
+      );
+      const winnerHash = (current?.tx.refs as { intentHash?: unknown })
+        ?.intentHash;
+      if (typeof winnerHash === "string" && winnerHash === submitted.intentHash) {
+        return NextResponse.json({
+          transactionId: tx.id,
+          intentHash: winnerHash,
+          runId: current?.tx.workflow_run_id ?? null,
+        });
+      }
+      console.error("[intents/submit] submit lost the race", {
+        transactionId: tx.id,
+      });
+      return NextResponse.json(
+        {
+          error: "conflict",
+          message: "This transaction has already been submitted.",
+        },
+        { status: 409 },
+      );
+    }
     await addEvent(
       tx.id,
       "submitted",

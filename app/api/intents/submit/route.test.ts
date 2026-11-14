@@ -5,6 +5,7 @@ const {
   getTransactionMock,
   updateTransactionRefsMock,
   setTransactionStateMock,
+  transitionTransactionStateMock,
   addEventMock,
   setTransactionRunIdMock,
   submitIntentMock,
@@ -18,6 +19,7 @@ const {
   getTransactionMock: vi.fn(),
   updateTransactionRefsMock: vi.fn(),
   setTransactionStateMock: vi.fn(),
+  transitionTransactionStateMock: vi.fn(async () => true),
   addEventMock: vi.fn(),
   setTransactionRunIdMock: vi.fn(),
   submitIntentMock: vi.fn(),
@@ -49,6 +51,7 @@ vi.mock("@/lib/db/transactions", () => ({
   getTransaction: getTransactionMock,
   updateTransactionRefs: updateTransactionRefsMock,
   setTransactionState: setTransactionStateMock,
+  transitionTransactionState: transitionTransactionStateMock,
   addEvent: addEventMock,
   setTransactionRunId: setTransactionRunIdMock,
 }));
@@ -245,8 +248,11 @@ describe("/api/intents/submit", () => {
       signedAt: expect.any(String),
       standard: "erc191",
     });
-    expect(setTransactionStateMock).toHaveBeenCalledWith(
+    // The state move is a conditional claim, not a blind write: only the
+    // winner of two concurrent submits leaves `awaiting_approval`.
+    expect(transitionTransactionStateMock).toHaveBeenCalledWith(
       TRANSACTION_ID,
+      "awaiting_approval",
       "submitted",
     );
     expect(addEventMock).toHaveBeenCalledWith(
@@ -344,6 +350,44 @@ describe("/api/intents/submit", () => {
       TRANSACTION_ID,
       "run-1",
     );
+  });
+
+  it("answers a lost submit race from the winner's record", async () => {
+    getTransactionMock
+      .mockResolvedValueOnce(tx())
+      .mockResolvedValueOnce(
+        tx({
+          state: "submitted",
+          workflow_run_id: "run-0",
+          refs: {
+            ...tx().tx.refs,
+            intentHash: "server-hash",
+          },
+        }),
+      );
+    verifyIntentMock.mockResolvedValue({ ok: true, standard: "erc191" });
+    submitIntentMock.mockResolvedValue({
+      intentHash: "server-hash",
+      correlationId: "corr",
+    });
+    // Once only: later tests keep the default claimed-true behavior.
+    transitionTransactionStateMock.mockResolvedValueOnce(false);
+
+    const res = await POST(
+      request({ transactionId: TRANSACTION_ID, signedData: SIGNED_DATA }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      transactionId: TRANSACTION_ID,
+      intentHash: "server-hash",
+      runId: "run-0",
+    });
+    // The money was already enqueued by this call, but the record and the
+    // workflow belong to the winner: no second submission record, no event,
+    // and no second settlement reader.
+    expect(addEventMock).not.toHaveBeenCalled();
+    expect(startMock).not.toHaveBeenCalled();
   });
 
   it("rejects a different intent after submitted", async () => {

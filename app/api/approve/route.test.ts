@@ -11,6 +11,7 @@ const {
   createApprovalMock,
   createQuoteMock,
   createTransactionMock,
+  consumeQuoteMock,
   createExecutionQuoteMock,
   getAssetsMock,
   startMock,
@@ -25,6 +26,7 @@ const {
   createApprovalMock: vi.fn(),
   createQuoteMock: vi.fn(),
   createTransactionMock: vi.fn(),
+  consumeQuoteMock: vi.fn(async () => true),
   createExecutionQuoteMock: vi.fn(),
   getAssetsMock: vi.fn(),
   startMock: vi.fn(),
@@ -48,6 +50,7 @@ vi.mock("@/lib/db/transactions", () => ({
   createApproval: createApprovalMock,
   createQuote: createQuoteMock,
   createTransaction: createTransactionMock,
+  consumeQuote: consumeQuoteMock,
   setTransactionRunId: vi.fn(),
 }));
 
@@ -897,5 +900,49 @@ describe("/api/approve EVM canonicalisation", () => {
         refundTo: solana,
       }),
     );
+  });
+});
+
+describe("/api/approve single-use quote", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireSessionMock.mockResolvedValue(walletSession);
+    getToolApprovalMock.mockResolvedValue(null);
+    conversationIdForUserMock.mockResolvedValue(null);
+    verifyWalletSignatureMock.mockResolvedValue(undefined);
+    getAssetsMock.mockResolvedValue([]);
+    createApprovalMock.mockResolvedValue("ap-1");
+    createQuoteMock.mockResolvedValue(QUOTE_ID);
+    createTransactionMock.mockResolvedValue({ id: "tx-1" });
+    startMock.mockResolvedValue({ runId: "run-1" });
+    createExecutionQuoteMock.mockResolvedValue(approveExecution());
+  });
+
+  it("refuses a replayed approval of an already-consumed quote", async () => {
+    const stored = storedQuote("chain");
+    getQuoteMock.mockResolvedValue(stored);
+    const body = matchedApprovalBody(stored);
+    const request = () =>
+      POST(
+        new Request("http://localhost/api/approve", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+
+    const first = await request();
+    expect(first.status).toBe(200);
+    expect(consumeQuoteMock).toHaveBeenCalledWith(QUOTE_ID, "user-1");
+    expect(createTransactionMock).toHaveBeenCalledTimes(1);
+
+    // The same signed POST arrives again: the preview is already consumed.
+    consumeQuoteMock.mockResolvedValue(false);
+    const second = await request();
+
+    expect(second.status).toBe(409);
+    const replay = (await second.json()) as { error?: string };
+    expect(replay.error).toBe("stale");
+    expect(createTransactionMock).toHaveBeenCalledTimes(1);
   });
 });

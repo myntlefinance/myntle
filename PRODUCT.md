@@ -48,7 +48,7 @@ What the product does, and the boundaries it must not cross.
 
 **The wallet layer.** Three adapters behind one interface: EVM through wagmi and viem, Solana through the Wallet Standard, and NEAR through near-connect. The application holds no private keys, and a wallet address on its own is never treated as proof of ownership. Sign-in uses a single-use random nonce bound to the origin, the address, the chain, and an expiry, with the signature verified server-side and the nonce consumed.
 
-**The assistant.** One route handler owns the model, the tool registry, and the approval policy. The registry is six tools: five that read, and one that proposes. Every call to the model sets an explicit step bound, because the framework default of one step ends the assistant after a single tool round and the failure is silent. A tool that fails is reported as a failed tool rather than guessed around.
+**The assistant.** One route handler owns the model, the tool registry, and the approval policy. The registry is twenty-two tools: eighteen read, and four propose a movement of funds (swap, limit order, deposit, withdrawal). Every proposing tool pauses for approval, and every agent call sets an explicit step bound, because the framework default of one step ends the assistant after a single tool round and the failure is silent. A tool that fails is reported as a failed tool rather than guessed around.
 
 **Approvals.** The one write tool is configured for user approval, and the stream call carries a server-held approval secret so that the server can verify it issued the approval it is being shown. The client resubmits the whole conversation on every turn, so a modified client could otherwise fabricate an approval, which is why the parameters are recomputed on the server from the stored quote and compared against what the user actually saw. An approval is bound to concrete parameters, a quote expiry, and a slippage bound.
 
@@ -58,9 +58,9 @@ What the product does, and the boundaries it must not cross.
 
 **Durability.** The swap lifecycle runs as a durable workflow that submits, sleeps, polls, and reconciles. The workflow holds no state of its own and writes everything to the database as it goes. A workflow that is already running stays on the code version it started with, because resuming a decision into different code is how approvals go wrong; a bug fix cancels the running trade and restarts it on the new code. A failed status poll is retried, and a settlement that failed on chain is recorded as final and is not retried. A successful deposit is not a successful trade: when funds arrive and the trade is never filled, the money comes back, and the screen has to say so rather than showing a green tick for one step of the story.
 
-**The conversation is the product.** The first release is a conversation, a quote card, an approval card, and a transaction timeline. There is no portfolio page and no settings screen, because a second interface would compete with the first one for the time the money path needs.
+**The conversation is the product.** The release is a conversation, a quote card, an approval card, a transaction timeline, and a portfolio with history and trash. The chat is where money moves; the portfolio is where it is read. There is no settings screen, because a second configuration surface would compete with the decision the approval card needs.
 
-**Undecided or out of scope for now.** Limit orders and perpetuals are on the same API as the swap and are the first things to be cut. The cross-chain route, the chat history, the insight cards, and the durable agent with resumable streams are all later than the swap path. Passkey and social sign-in, embedded wallets, and a mobile client are excluded from this release. The readme, the landing page, and the recorded demonstration are still to be written.
+**Undecided or out of scope for now.** Perpetuals and stocks are not offered; the assistant says so plainly rather than proposing one. Autonomous execution without a human approval is a later mode, not a replacement for the approval card. Social sign-in, embedded wallets, and a mobile client are excluded from this release.
 
 ## Brand Commitments
 
@@ -84,7 +84,7 @@ The documentation set in `context/` is the strongest evidence in the project, an
 
 The running code is the second body of evidence. The chat route calls the real model on NEAR AI Cloud with the real tool registry, the approval policy, and the explicit step bound. The settlement service reads the live asset catalogue, prices a real quote, and maps the real status vocabulary. Three wallet adapters exist behind one registry. The approve route starts a durable workflow that submits, sleeps, and polls. The interface drives the real assistant rather than the scripted scenarios the harness ships with.
 
-What the build does not have yet is as important as what it does. The finance components are an empty folder, the auth, wallet, transaction, and agent routes are placeholders, the database layer and its migrations are unwritten, and there is no readme, no landing page, and no recorded demonstration. There are no users, no testimonials, no usage figures, no benchmarks, no pricing, and no deployment claims, and none of those may be invented to fill the gap. There is no logo or brand asset yet, and `public/` is empty.
+What the build does not have yet is as important as what it does. There are no users, no testimonials, no usage figures, no benchmarks, no pricing, and no deployment claims, and none of those may be invented to fill the gap. There is no logo or brand asset yet. Everything else the readme and the demonstration show is backed by the implementation.
 
 ## Product Principles
 

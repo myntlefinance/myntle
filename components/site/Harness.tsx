@@ -18,6 +18,7 @@ import {
   IconCoins,
   IconDatabase,
   IconGavel,
+  IconMenu,
   IconPencil,
   IconRefresh,
   IconRepeat,
@@ -25,6 +26,7 @@ import {
   IconSettings,
   IconTicket,
   IconWallet,
+  IconX,
 } from "@tabler/icons-react";
 import { LiveResponse } from "@/components/app/LiveResponse";
 import { unlockResolvedAfter } from "@/lib/ai/messages/continuation";
@@ -43,6 +45,7 @@ import {
   type ClusteredMessage,
 } from "@/components/app/TimestampPill";
 import dynamic from "next/dynamic";
+import { createPortal } from "react-dom";
 import ApprovalCard from "@/components/primitives/ApprovalCard";
 // Demo-only primitives load in a separate chunk so the live chat bundle
 // never downloads them. They render only when `live == null`.
@@ -921,6 +924,22 @@ export default function Harness({
   const [demoMessages, setDemoMessages] = useState<Msg[]>([]);
   const [demoTitle, setDemoTitle] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
+  /* mobile navigation drawer; the sidebar is desktop-only below `lg` */
+  const [navOpen, setNavOpen] = useState(false);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setNavOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [navOpen]);
   /* spreadsheet: which view/property is open in the right inspector (null = chat) */
   const [propView, setPropView] = useState<string | null>(null);
   /* "use this harness" open-source modal */
@@ -1015,6 +1034,9 @@ export default function Harness({
   const pickRecent = (scenarioId: ScenarioId, label: string, prompt = label) => {
     setDemoTitle(label);
     setPropView(null);
+    // Event-handler only: this runs from sidebar/drawer clicks, never
+    // during render, so the timestamp is the click time, not render impurity.
+    // eslint-disable-next-line react-hooks/purity
     const now = Date.now();
     setDemoMessages([
       { id: (msgIdRef.current += 1), role: "user", text: prompt, timestamp: now },
@@ -1688,49 +1710,131 @@ export default function Harness({
   );
 };
 
+  /* The sidebar is shared by the desktop rail and the mobile drawer, so
+   * the two can never drift apart. `onNavigate` closes the drawer after
+   * any navigation taken from inside it. */
+  const renderSidebar = (className: string, onNavigate?: () => void) => (
+    <SidebarNav
+      fill
+      className={className}
+      recents={
+        live
+          ? (threads && threads.length > 0
+              ? threads.map((t) => ({ id: t.id, label: t.label ?? "New chat" }))
+              : title
+                ? [{ id: "current", label: title }]
+                : [])
+          : RECENTS
+      }
+      activeTitle={displayTitle}
+      activeId={live ? (activeChatId ?? null) : undefined}
+      onPick={
+        live
+          ? onPickThread
+            ? (id) => {
+                onNavigate?.();
+                onPickThread(id);
+              }
+            : undefined
+          : (id, label, prompt) => {
+              onNavigate?.();
+              pickRecent(id as ScenarioId, label, prompt);
+            }
+      }
+      onHoverThread={live ? onHoverThread : undefined}
+      onRenameChat={live ? onRenameThread : undefined}
+      onDeleteChat={live ? onDeleteThread : undefined}
+      trashCount={live ? (trashCount ?? 0) : 0}
+      trashActive={trashActive}
+      onOpenTrash={
+        live
+          ? onOpenTrash
+            ? () => {
+                onNavigate?.();
+                onOpenTrash();
+              }
+            : undefined
+          : undefined
+      }
+      portfolioActive={portfolioActive}
+      onOpenPortfolio={
+        live
+          ? onOpenPortfolio
+            ? () => {
+                onNavigate?.();
+                onOpenPortfolio();
+              }
+            : undefined
+          : undefined
+      }
+      historyActive={historyActive}
+      onOpenHistory={
+        live
+          ? onOpenHistory
+            ? () => {
+                onNavigate?.();
+                onOpenHistory();
+              }
+            : undefined
+          : undefined
+      }
+      onNewChat={() => {
+        onNavigate?.();
+        if (live) onNewChat?.();
+        else newDemoChat();
+        focusComposer({ clearDraft: true });
+      }}
+      footerLabel="Fork this"
+      onFooterClick={footer ? () => {} : () => setUseOpen(true)}
+      footer={footer}
+      footerCompact={footerCompact}
+    />
+  );
+
   return (
     <main className="flex h-[100dvh] gap-0 bg-canvas p-2.5 text-ink lg:pl-0">
-      <SidebarNav
-        fill
-        className="hidden lg:flex"
-        recents={
-          live
-            ? (threads && threads.length > 0
-                ? threads.map((t) => ({ id: t.id, label: t.label ?? "New chat" }))
-                : title
-                  ? [{ id: "current", label: title }]
-                  : [])
-            : RECENTS
-        }
-        activeTitle={displayTitle}
-        activeId={live ? (activeChatId ?? null) : undefined}
-        onPick={
-          live
-            ? onPickThread
-              ? (id) => onPickThread(id)
-              : undefined
-            : (id, label, prompt) => pickRecent(id as ScenarioId, label, prompt)
-        }
-        onHoverThread={live ? onHoverThread : undefined}
-        onRenameChat={live ? onRenameThread : undefined}
-        onDeleteChat={live ? onDeleteThread : undefined}
-        trashCount={live ? (trashCount ?? 0) : 0}
-        trashActive={trashActive}
-        onOpenTrash={live ? onOpenTrash : undefined}
-        portfolioActive={portfolioActive}
-        onOpenPortfolio={live ? onOpenPortfolio : undefined}
-        historyActive={historyActive}
-        onOpenHistory={live ? onOpenHistory : undefined}
-        onNewChat={() => {
-          if (live) onNewChat?.();
-          else newDemoChat();
-          focusComposer({ clearDraft: true });
-        }}
-        footerLabel="Fork this"
-        onFooterClick={footer ? () => {} : () => setUseOpen(true)}
-        footer={footer}
-        footerCompact={footerCompact}
-      />
+      {/* mobile navigation: the rail is desktop-only, so a static menu
+        button top-left opens it as a drawer below `lg` */}
+      <button
+        type="button"
+        aria-label="Open navigation"
+        onClick={() => setNavOpen(true)}
+        className="fixed left-3 top-3 z-40 flex size-9 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink shadow-sm lg:hidden"
+      >
+        <IconMenu size={18} stroke={2} aria-hidden />
+      </button>
+      {renderSidebar("hidden lg:flex")}
+      {navOpen
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[90] lg:hidden"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Navigation"
+            >
+              <div
+                className="absolute inset-0 bg-black/60"
+                style={{ animation: "fade-in 180ms ease-out both" }}
+                onClick={() => setNavOpen(false)}
+              />
+              <div className="absolute inset-y-0 left-0 w-[300px] max-w-[85vw] bg-canvas py-2.5 pl-2.5">
+                <div className="relative h-full">
+                  {renderSidebar("flex h-full", () => setNavOpen(false))}
+                  <button
+                    type="button"
+                    aria-label="Close navigation"
+                    onClick={() => setNavOpen(false)}
+                    autoFocus
+                    className="absolute right-3 top-3 flex size-7 shrink-0 items-center justify-center rounded-[7px] text-ink-3 transition-colors duration-100 hover:bg-hover hover:text-ink"
+                  >
+                    <IconX size={15} aria-hidden />
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
 
       <div className="flex min-w-0 flex-1 flex-col gap-2.5">
         {/* panels row — main pane + docked side pane */}

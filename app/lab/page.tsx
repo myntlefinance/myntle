@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { notFound } from "next/navigation";
 import { ProvidersLoader } from "../providers-loader";
 import { LabFrame } from "@/components/lab/LabFrame";
 import { LAB } from "@/components/lab/registry";
@@ -62,6 +63,11 @@ function readSource(file: string): string {
 }
 
 export default function LabPage() {
+  // Prototypes never ship: a production build answers 404, same as the
+  // dev-wallet route, so prototype markup cannot leak into the submission.
+  if (process.env.NODE_ENV === "production") {
+    notFound();
+  }
   return (
     <ProvidersLoader>
     <main className="min-h-[100dvh] bg-page text-ink">

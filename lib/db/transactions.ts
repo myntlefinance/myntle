@@ -225,6 +225,136 @@ export async function setTransactionState(
 }
 
 /**
+ * Whether the database has the quote-consumption column.
+ *
+ * Migration 014 adds it. A database that has not run the migration must not
+ * break approvals: the claim degrades to a warning and the approval proceeds
+ * unguarded, exactly as before. Once the column exists the guard is armed.
+ */
+let quoteConsumedAtColumn: boolean | null = null;
+let warnedMissingConsumedColumn = false;
+
+function missingConsumedAtColumn(error: {
+  code?: string;
+  message?: string;
+} | null): boolean {
+  if (!error) return false;
+  return /consumed_at/.test(error.message ?? "");
+}
+
+function noteMissingConsumedColumn(): void {
+  quoteConsumedAtColumn = false;
+  if (warnedMissingConsumedColumn) return;
+  warnedMissingConsumedColumn = true;
+  console.warn(
+    "[transactions] consumed_at is missing; apply " +
+      "supabase/migrations/014_quote_consumption.sql. Approvals proceed " +
+      "without the single-use guard until then.",
+  );
+}
+
+/**
+ * Claims a dry preview for exactly one approval.
+ *
+ * The update is atomic: two concurrent approvals of the same preview race
+ * on `consumed_at IS NULL`, exactly one wins, and the loser must ask for a
+ * fresh quote. Call it after every priced figure is validated and the
+ * external mint succeeded, just before writing the approval records, so a
+ * failed validation or mint never burns a preview the user can still use.
+ *
+ * Returns true when this call won the claim. Throws on a real database
+ * error; a database that predates migration 014 warns once and returns
+ * true, preserving the old behavior until the migration lands.
+ */
+export async function consumeQuote(
+  id: string,
+  userId: string,
+): Promise<boolean> {
+  const sb = getSupabaseAdmin();
+  if (quoteConsumedAtColumn !== false) {
+    const { data, error } = await sb
+      .from("quotes")
+      .update({ consumed_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("user_id", userId)
+      .is("consumed_at", null)
+      .select("id");
+    if (!error) {
+      quoteConsumedAtColumn = true;
+      return Array.isArray(data) && data.length > 0;
+    }
+    if (missingConsumedAtColumn(error)) {
+      noteMissingConsumedColumn();
+      return true;
+    }
+    console.error("[transactions] quote consume failed", {
+      code: error.code,
+      message: error.message?.slice(0, 200),
+    });
+    throw new Error("The quote could not be claimed.");
+  }
+  return true;
+}
+
+/**
+ * Moves a transaction between states only from the expected state.
+ *
+ * A plain `setTransactionState` is a blind write: two concurrent submits both
+ * read `awaiting_approval` and both proceed to submit and start a workflow.
+ * The conditional update makes the first writer win; the loser re-reads the
+ * row and answers from the winner's record instead of writing a second one.
+ * Returns true when this call moved the row.
+ */
+export async function transitionTransactionState(
+  id: string,
+  fromState: TxState,
+  toState: TxState,
+): Promise<boolean> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from("transactions")
+    .update({ state: toState })
+    .eq("id", id)
+    .eq("state", fromState)
+    .select("id");
+  if (error) {
+    console.error("[transactions] conditional state write failed", {
+      code: error.code,
+      message: error.message?.slice(0, 200),
+    });
+    throw new Error("The transaction state could not be saved.");
+  }
+  return Array.isArray(data) && data.length > 0;
+}
+
+/**
+ * The newest transaction answering one proposal, if any.
+ *
+ * The deposit route has no stored dry quote to consume: the card names an
+ * asset and an amount, and every POST would otherwise mint a fresh address.
+ * Answering a repeated approval from the existing record makes a double
+ * click (or a retried request) return the same address instead of a second
+ * one. Newest wins so a record repaired after a failure is the one that
+ * answers.
+ */
+export async function getTransactionByToolApprovalId(
+  userId: string,
+  toolApprovalId: string,
+): Promise<TxRow | null> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from("transactions")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("tool_approval_id", toolApprovalId)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) throw new Error("The settlement could not be read.");
+  const rows = (data ?? []) as TxRow[];
+  return rows.length > 0 ? rows[0] : null;
+}
+
+/**
  * Whether the database has the dedicated status-check column.
  *
  * Migration 007 adds it. A database that has not run the migration must not

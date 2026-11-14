@@ -7,6 +7,7 @@ const {
   createQuoteMock,
   createApprovalMock,
   createTransactionMock,
+  getTransactionByToolApprovalIdMock,
   setTransactionRunIdMock,
   setTransactionStateMock,
   startMock,
@@ -21,6 +22,9 @@ const {
   createQuoteMock: vi.fn(),
   createApprovalMock: vi.fn(),
   createTransactionMock: vi.fn(),
+  getTransactionByToolApprovalIdMock: vi.fn(
+    async (): Promise<unknown> => null,
+  ),
   setTransactionRunIdMock: vi.fn(),
   setTransactionStateMock: vi.fn(),
   startMock: vi.fn(),
@@ -48,6 +52,7 @@ vi.mock("@/lib/db/transactions", () => ({
   createQuote: createQuoteMock,
   createApproval: createApprovalMock,
   createTransaction: createTransactionMock,
+  getTransactionByToolApprovalId: getTransactionByToolApprovalIdMock,
   setTransactionRunId: setTransactionRunIdMock,
   setTransactionState: setTransactionStateMock,
 }));
@@ -418,5 +423,111 @@ describe("/api/intents/deposit", () => {
 
     expect(setTransactionStateMock).not.toHaveBeenCalled();
     expect(startMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("/api/intents/deposit idempotency", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireSessionMock.mockResolvedValue(session);
+    getAssetsMock.mockResolvedValue([
+      {
+        assetId: ASSET_ID,
+        symbol: "USDC",
+        decimals: 6,
+        chain: "near",
+        price: 1,
+        contractAddress: "usdc.near",
+      },
+    ]);
+    createExecutionQuoteMock.mockResolvedValue(execution);
+    startMock.mockResolvedValue({ runId: "run-1" });
+    conversationIdForUserMock.mockResolvedValue(CONVERSATION_ID);
+    getToolApprovalMock.mockResolvedValue(null);
+  });
+
+  it("returns the existing address instead of minting a second one", async () => {
+    getTransactionByToolApprovalIdMock.mockResolvedValue({
+      id: TRANSACTION_ID,
+      user_id: "user-1",
+      state: "submitted",
+      deposit_address: DEPOSIT,
+      workflow_run_id: "run-1",
+      origin_asset: ASSET_ID,
+      amount_in: "1",
+      refs: {
+        mode: "confidential-external",
+        assetId: ASSET_ID,
+        amount: "1000000",
+        depositMemo: null,
+        expiresAt: EXPIRES_AT,
+        amountInRaw: "1000000",
+        tokenContract: "usdc.near",
+        chainId: null,
+        chainName: null,
+        chainSlug: "near",
+        decimals: 6,
+        symbol: "USDC",
+      },
+      outcome: {},
+    });
+
+    const res = await POST(
+      request({
+        assetId: ASSET_ID,
+        amount: "1000000",
+        approvalId: "aitxt-1",
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      transactionId: TRANSACTION_ID,
+      depositAddress: DEPOSIT,
+      depositMemo: null,
+      expiresAt: EXPIRES_AT,
+      amountInRaw: "1000000",
+      tokenContract: "usdc.near",
+      chainId: null,
+      chainName: null,
+      chainSlug: "near",
+      decimals: 6,
+      symbol: "USDC",
+      amountIn: "1",
+      runId: "run-1",
+    });
+    expect(createExecutionQuoteMock).not.toHaveBeenCalled();
+    expect(createTransactionMock).not.toHaveBeenCalled();
+    expect(startMock).not.toHaveBeenCalled();
+  });
+
+  it("mints again when the earlier record failed", async () => {
+    getTransactionByToolApprovalIdMock.mockResolvedValue({
+      id: "old-tx",
+      state: "failed",
+      deposit_address: DEPOSIT,
+    });
+    createQuoteMock.mockResolvedValue("wet-quote-1");
+    createApprovalMock.mockResolvedValue("approval-1");
+    createTransactionMock.mockResolvedValue({
+      id: TRANSACTION_ID,
+      expected_out: execution.amountOutFormatted,
+    });
+    recordToolApprovalMock.mockResolvedValue({
+      decision: "approved",
+      toolName: "prepare_deposit",
+      decidedAt: new Date().toISOString(),
+    });
+
+    const res = await POST(
+      request({
+        assetId: ASSET_ID,
+        amount: "1000000",
+        approvalId: "aitxt-1",
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(createExecutionQuoteMock).toHaveBeenCalledTimes(1);
   });
 });

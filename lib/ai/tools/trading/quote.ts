@@ -325,8 +325,8 @@ export function createQuoteTool(context?: ToolContext) {
             status: "unavailable" as const,
             reason,
             message: minimum
-              ? `That deposit is below the minimum this vault can accept right now. Try at least ${minimum} ${earnVault.paymentSymbol}.`
-              : "That deposit is below the minimum this vault can accept right now. Try a larger amount.",
+              ? `That deposit looks below what this vault can accept right now. Try at least about ${minimum} ${earnVault.paymentSymbol} — the minimum moves with solver liquidity.`
+              : "That deposit looks below what this vault can accept right now. Try a larger amount.",
           };
         }
         return {

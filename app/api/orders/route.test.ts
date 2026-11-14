@@ -4,6 +4,7 @@ import { normalizeEvmAddress } from "@/lib/intents/destination";
 const {
   requireSessionMock,
   getQuoteMock,
+  consumeQuoteMock,
   createApprovalMock,
   createTransactionMock,
   setTransactionRunIdMock,
@@ -22,6 +23,7 @@ const {
 } = vi.hoisted(() => ({
   requireSessionMock: vi.fn(),
   getQuoteMock: vi.fn(),
+  consumeQuoteMock: vi.fn(async () => true),
   createApprovalMock: vi.fn(),
   createTransactionMock: vi.fn(),
   setTransactionRunIdMock: vi.fn(),
@@ -72,6 +74,7 @@ vi.mock("@/lib/db/tool-approvals", () => ({
 
 vi.mock("@/lib/db/transactions", () => ({
   getQuote: getQuoteMock,
+  consumeQuote: consumeQuoteMock,
   createApproval: createApprovalMock,
   createTransaction: createTransactionMock,
   setTransactionRunId: setTransactionRunIdMock,

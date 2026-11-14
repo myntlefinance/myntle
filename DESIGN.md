@@ -136,6 +136,11 @@ components:
 
 # Design System: Myntle
 
+> Visual tokens only. Interface copy rules (complete sentences, two-word
+> buttons, Less-is-More) live in AGENTS.md, which is the authority when the
+> two disagree. This file holds palette, type, layout, elevation, shapes,
+> and component specs, and nothing about wording.
+
 ## Overview
 
 **Creative North Star: "The Ledger Room"**
@@ -292,36 +297,9 @@ The components are compact, precise, and quiet. They read as instruments set int
 ### Navigation
 
 - **The sidebar** is a 224-pixel column collapsing to a 52-pixel rail. The rows are pills of 208 pixels with a 7-pixel radius, and the active row carries a Graphite Wash fill that slides between rows rather than blinking.
+- **On mobile the rail is unreachable, so a static menu button top-left opens the sidebar as a drawer.** The drawer reuses the same sidebar, closes on any navigation taken from inside it, on backdrop, on Escape, and on its close button.
 - **A segmented control** is a 32-pixel-tall full pill in the Recess colour with a Surface White thumb that slides on a 200-millisecond strong ease. The selected segment is Graphite and the unselected is Ash.
 
 ### Text Row
 
 The workhorse of every card, and the reason the layout has a spine. A label on the left in Slate at 14 pixels, a value on the right in Graphite at 14 pixels semibold with tabular figures, and optional metadata in Ash at 13 pixels. The row is 44 pixels tall with 8 pixels of vertical padding, and the value is baseline-aligned with its metadata.
-
-### Tool Chips
-
-The inline record of what the assistant did. Each step is one chip with a label in plain language, such as "Quoted a price", and a detail in Ash. The chip never shows the raw tool name.
-
-### Timeline
-
-The transaction timeline is not driven by the conversation stream. It is driven by the transaction record, because the outcome comes from the chain and not from the assistant, and the two can disagree. Its states are quoted, approved, submitted, deposit confirmed, processing, and then one of settled, refunded, incomplete deposit, or failed.
-
-## Do's and Don'ts
-
-### Do:
-
-- **Do** put the number a decision turns on on screen in tabular figures, and give it more weight than the label beside it.
-- **Do** mark a settlement state with the semantic colour for that state and with nothing else on the screen competing for it.
-- **Do** write complete sentences in every heading, empty state, and error message, and keep every button label to two words. A button reads "Swap", never "Confirm that you want to swap", and an error reads "This swap would exceed your daily limit of 200 USDC", never "Limit exceeded".
-- **Do** show the minimum amount out next to the amount out and the deadline in every card where the user is about to authorise a spend.
-- **Do** reach for the vocabulary of the room when naming a surface: a row, a column, an entry, a balance, a receipt.
-- **Do** keep the accent for the one live element in a region, and use a hairline ring plus a shadow on every surface.
-
-### Don't:
-
-- **Don't** use staccato fragments or slogan triplets anywhere. Not "Fast. Scalable. Decentralized.", not "Your money, in plain language." on its own, not "Limit exceeded". If it does not read as a sentence someone would say out loud, it is not finished.
-- **Don't** add a decorative element. No eyebrow label above a heading, no badge that carries no state, no chip that repeats the line beneath it, no icon that names nothing.
-- **Don't** show a number the user does not need for the decision in front of them, and never round a figure in a way that could change that decision.
-- **Don't** describe what might happen when you can describe what will. "This swap will send 100 USDC to the exchange" is the action; "This swap may or may not succeed" is the anxiety.
-- **Don't** reach for crypto-terminal neon, glassmorphism, gradient orbs, glass badges, or decorative illustration. They are not restylings of this system, they are a different one.
-- **Don't** drive the transaction timeline from the assistant's stream, and don't let a successful signature or a successful HTTP response become evidence that money moved.

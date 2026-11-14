@@ -260,6 +260,8 @@ Each tool takes an `icon` key from its `ToolStep`; the key is chosen per tool in
 
 Read these before changing anything. They contain verified facts, not opinions, and several of them contradict the original brief.
 
+`context/`, `plans/`, and `learnings/` are gitignored per-developer working notes, not committed history. A fresh clone will not have them; never treat a reference to them as a requirement, and never block on a file that only exists on one machine. The table below is what those notes held at the time of writing.
+
 | File | What it holds |
 |---|---|
 | `context/architecture-explained.md` | **Start here.** The whole system in plain language, with no jargon assumed. |
@@ -276,6 +278,10 @@ Read these before changing anything. They contain verified facts, not opinions, 
 ## Development wallet
 
 Before testing the wallet or auth flows, read `learnings/dev-wallet.md`. It covers the keyed provider that signs for real, how to switch accounts so the session rules can be exercised, and what it still cannot cover. The `learnings/` directory is gitignored, so a fresh clone will not have it.
+
+## PRODUCT.md discipline
+
+`PRODUCT.md` is the product copy of record, and it drifts every time the build grows. Update it in the same change as any major change: a new tool or a new money path, a new page or tab, a renamed user-facing concept, a scope line that is no longer true, or a number (tool counts, limits, minimums) the implementation no longer backs. Small fixes that change no claim are exempt. `DESIGN.md` holds visual tokens only and never needs a copy update; copy rules live here.
 
 ## Ground rules for agents
 
