@@ -1,0 +1,1 @@
+Myntle is a chat-first finance app where you can ask questions about your money, understand what's happening in the market, and even act on what you find, all from the same conversation.

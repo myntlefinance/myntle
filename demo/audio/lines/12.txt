@@ -1,0 +1,1 @@
+So I'm not just taking the app's word for it. I can actually see what was signed, what was executed, and what settled onchain. Live at app dot myntle dot xyz.

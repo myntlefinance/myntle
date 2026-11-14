@@ -1,0 +1,1 @@
+Once it's confirmed onchain, the execution record comes back into the conversation, and my deposit is reflected in the balance.

@@ -1,0 +1,1 @@
+Once I've reviewed everything, I can initiate the deposit. Myntle prepares the transaction and passes it to my connected wallet, where I can approve it.

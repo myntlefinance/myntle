@@ -1,0 +1,1 @@
+Myntle puts together the details in a single card, showing me which token I'm depositing, which network it's going through, and where those funds will end up.

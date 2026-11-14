@@ -1,0 +1,1 @@
+Myntle is a chat-first finance app. Ask what's happening, then ask for the trade.

@@ -1,0 +1,1 @@
+Here, the transaction is sent over Arbitrum, and I can follow its progress while it's being processed.

@@ -1,0 +1,1 @@
+I connect my wallet, and sign a message to authenticate my ownership.
