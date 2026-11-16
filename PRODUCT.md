@@ -8,7 +8,7 @@ web
 
 ## Users
 
-Myntle is for someone who already holds tokens and already has a wallet. That person is comfortable with crypto, but the application never assumes they know the mechanics behind it. Chain names, contract identifiers, decimal precision, and route internals stay available to anyone who wants them, and they are never a prerequisite for asking for a trade, approving one, or reading its outcome.
+Myntle is for someone who wants easy finance, whether they connect a wallet they already have or start with a passkey. That person is comfortable with crypto, but the application never assumes they know the mechanics behind it. Chain names, contract identifiers, decimal precision, and route internals stay available to anyone who wants them, and they are never a prerequisite for asking for a trade, approving one, or reading its outcome.
 
 The wallet may live on any of three chains. The user connects an EVM wallet, a Solana wallet, or a NEAR wallet, and the same conversation works for all of them, because every one of them can sign the intent that settles a trade. No NEAR account, no gas, and no faucet are required at any point.
 
@@ -26,11 +26,11 @@ A finished first release means one real swap on mainnet, end to end, from a conn
 
 ## Positioning
 
-The assistant is structurally unable to do the dangerous thing. No tool returns an address, no tool signs, and there is no generic signing tool and no generic RPC tool, and neither may be added. A competitor can copy the chat, the streaming, and the cards, but not the property that the model's own account of what happened is never the evidence for what happened.
+The assistant is structurally unable to do the dangerous thing. No tool returns the connected wallet, no tool signs, and there is no generic signing tool and no generic RPC tool, and neither may be added. A competitor can copy the chat, the streaming, and the cards, but not the property that the model's own account of what happened is never the evidence for what happened.
 
 The second property is that any wallet works. A user signs a message rather than a transaction, and the trade settles inside the verifier contract, so a person with a browser wallet can trade without an account on our chain, without gas, and without a faucet. A product that asks for a NEAR account first cannot say that.
 
-The third property is that the spending limit is honest about where it lives. The isolation, the revocation, and the expiry of an agent key are on-chain; the spending cap is enforced in application code. The readme has to say which is which, because describing a backend check as an on-chain limit would undermine every other claim in it.
+The third property is that the spending limit is honest about where it lives. Agent keys are scaffolded but not yet routed: when they ship, their isolation, revocation, and expiry live on-chain while the spending cap is enforced in application code. The readme has to say which is which, because describing a backend check as an on-chain limit would undermine every other claim in it.
 
 ## Operating Context
 
@@ -50,7 +50,7 @@ What the product does, and the boundaries it must not cross.
 
 **The assistant.** One route handler owns the model, the tool registry, and the approval policy. The registry is twenty-two tools: eighteen read, and four propose a movement of funds (swap, limit order, deposit, withdrawal). Every proposing tool pauses for approval, and every agent call sets an explicit step bound, because the framework default of one step ends the assistant after a single tool round and the failure is silent. A tool that fails is reported as a failed tool rather than guessed around.
 
-**Approvals.** The one write tool is configured for user approval, and the stream call carries a server-held approval secret so that the server can verify it issued the approval it is being shown. The client resubmits the whole conversation on every turn, so a modified client could otherwise fabricate an approval, which is why the parameters are recomputed on the server from the stored quote and compared against what the user actually saw. An approval is bound to concrete parameters, a quote expiry, and a slippage bound.
+**Approvals.** The four tools that propose a movement of funds are each configured for user approval, and the stream call carries a server-held approval secret so that the server can verify it issued the approval it is being shown. The client resubmits the whole conversation on every turn, so a modified client could otherwise fabricate an approval, which is why the parameters are recomputed on the server from the stored quote and compared against what the user actually saw. An approval is bound to concrete parameters, a quote expiry, and a slippage bound.
 
 **Execution.** The assistant never sees a wallet, an address, or a signature. Amount, asset, destination, and slippage are validated on the server against the connected account before anything is signed. The application constructs the transaction from trusted inputs rather than from anything the model produced. A human approves every transaction in the first release, and bounded autonomous execution arrives later as an additional mode rather than a replacement.
 
@@ -80,11 +80,11 @@ The visual world, the palette, the typography, and the component system are outs
 
 ## Evidence on Hand
 
-The documentation set in `context/` is the strongest evidence in the project, and it holds verified facts rather than opinions. `context/verification-report.md` is the research appendix, where every external claim carries its source, including the findings that overturned parts of the original brief. `context/architecture-explained.md` explains the whole system in plain language for a reader without a blockchain background, and the remaining files cover the architecture, the build playbook, the durable workflow engine and its traps, the wallet layer, the component decisions, the NEAR mainnet reality, the roadmap, and the decision log with the conditions that would reverse each choice.
+The documentation set in `context/` holds the research appendix and the working notes behind this product: the verification report, where every external claim carries its source, and the plain-language architecture, the build playbook, the durability traps, and the decision log. Those files are per-developer working notes and are not committed, so a fresh clone re-derives them from the `near-intents` skill and `docs.near-intents.org` rather than reading them here.
 
 The running code is the second body of evidence. The chat route calls the real model on NEAR AI Cloud with the real tool registry, the approval policy, and the explicit step bound. The settlement service reads the live asset catalogue, prices a real quote, and maps the real status vocabulary. Three wallet adapters exist behind one registry. The approve route starts a durable workflow that submits, sleeps, and polls. The interface drives the real assistant rather than the scripted scenarios the harness ships with.
 
-What the build does not have yet is as important as what it does. There are no users, no testimonials, no usage figures, no benchmarks, no pricing, and no deployment claims, and none of those may be invented to fill the gap. There is no logo or brand asset yet. Everything else the readme and the demonstration show is backed by the implementation.
+What the build does not have yet is as important as what it does. There are no users, no testimonials, no usage figures, no benchmarks, no pricing, and no deployment claims, and none of those may be invented to fill the gap. Everything else the readme and the demonstration show is backed by the implementation.
 
 ## Product Principles
 

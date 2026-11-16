@@ -6,10 +6,6 @@ import { getLivePrices } from "@/lib/prices/server";
 import type { ToolContext } from "../context";
 import type { Capability } from "../capability";
 
-const ONE_CLICK =
-  process.env.NEXT_PUBLIC_ONE_CLICK_BASE_URL ??
-  "https://1click.chaindefuser.com";
-
 export const GET_SUPER_BALANCES_CAPABILITY: Capability = {
   tool: "get_super_balances",
   tier: "read-private",
@@ -17,12 +13,6 @@ export const GET_SUPER_BALANCES_CAPABILITY: Capability = {
   approval: "none",
   attribution: "none",
   promptTerms: ["get_super_balances"],
-};
-
-type AccountBalance = {
-  tokenId?: string;
-  available?: string;
-  source?: string;
 };
 
 export type SuperBalance = {
@@ -95,23 +85,24 @@ export function createSuperBalancesTool(context?: ToolContext) {
       const token = context?.intentsAccessToken;
       if (!token) return locked(accountKind);
 
-      let res: Response;
+      let entries: Array<{ tokenId: string; available: string }>;
       try {
-        res = await fetch(`${ONE_CLICK}/v0/account/balances`, {
-          headers: { authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
+        const { fetchAccountBalances, AccountBalancesError } = await import(
+          "@/lib/intents/account-balances"
+        );
+        try {
+          entries = await fetchAccountBalances(token);
+        } catch (error) {
+          if (
+            error instanceof AccountBalancesError &&
+            error.status === 401
+          )
+            return locked(accountKind);
+          return failed();
+        }
       } catch {
         return failed();
       }
-
-      if (res.status === 401) return locked(accountKind);
-      if (!res.ok) return failed();
-
-      const data = (await res.json().catch(() => null)) as {
-        balances?: AccountBalance[];
-      } | null;
-      const entries = Array.isArray(data?.balances) ? data.balances : [];
       const catalogue = await getAssets().catch(() => []);
       const byId = new Map(catalogue.map((asset) => [asset.assetId, asset]));
 

@@ -22,6 +22,36 @@ const NATIVE_EXPLORERS: Record<string, (hash: string) => string> = {
   solana: (hash) => `https://solscan.io/tx/${hash}`,
 };
 
+const INTENTS_EXPLORER = "https://explorer.near-intents.org";
+
+/**
+ * The modes whose deposit address the Intents Explorer tracks under its
+ * masked pages. Verified live: `confidential-external` and
+ * `confidential-withdrawal` resolve (deposits, withdrawals, and swaps with
+ * a chain leg), while signed ledger moves (`confidential-intents`) and the
+ * legacy direct path return the explorer's empty state instead of a page.
+ */
+const MASKED_MODES = new Set([
+  "confidential-external",
+  "confidential-withdrawal",
+]);
+
+/**
+ * The NEAR Intents Explorer page for a trade: the masked-transaction view
+ * keyed by the minted deposit address. Only chain-touched modes resolve —
+ * a signed ledger move has no page, so this returns null rather than
+ * pointing at one.
+ */
+export function intentsExplorerTxUrl(
+  depositAddress?: string | null,
+  mode?: string | null,
+): string | null {
+  const address = (depositAddress ?? "").trim();
+  if (!address) return null;
+  if (!mode || !MASKED_MODES.has(mode.trim().toLowerCase())) return null;
+  return `${INTENTS_EXPLORER}/mask/${address}`;
+}
+
 /** The page a transaction hash lives on, when the chain is one we can name. */
 export function explorerTxUrl(
   chain: string | null | undefined,

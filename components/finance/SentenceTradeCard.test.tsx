@@ -99,11 +99,12 @@ describe("SentenceTradeCard", () => {
     expect(html).not.toContain("Rejected");
   });
 
-  it("shows the status badge in place of the buttons once decided", () => {
+  it("shows the status line and footer buttons once decided", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <SentenceTradeCard {...swapProps} state="denied" />,
     );
-    expect(html).toContain("Rejected");
+    expect(html).toContain("The proposal was rejected. Nothing was moved.");
+    expect(html).toContain(">Details<");
     expect(html).not.toContain(">Approve<");
   });
 

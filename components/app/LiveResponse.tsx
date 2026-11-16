@@ -631,6 +631,7 @@ export const LiveResponse = memo(function LiveResponseInner({
           state={accountTrade ? intentsState : walletState}
           transactionId={snap?.transactionId ?? a.transactionId}
           depositAddress={snap?.depositAddress ?? a.depositAddress ?? undefined}
+          mode={snap?.mode ?? undefined}
           initialExplorerUrls={snap?.explorerUrls}
           swapInput={a.status === "awaiting" ? a.swapInput : undefined}
           runApproval={
@@ -743,6 +744,7 @@ export const LiveResponse = memo(function LiveResponseInner({
           transactionId={snap?.transactionId}
           depositAddress={snap?.depositAddress ?? undefined}
           depositMeta={snap?.deposit ?? undefined}
+          mode={snap?.mode ?? undefined}
           initialExplorerUrls={snap?.explorerUrls}
           // Only the live chat has a composer. An expired address becomes one
           // sentence there, and a read-only transcript keeps the record.
@@ -833,6 +835,7 @@ export const LiveResponse = memo(function LiveResponseInner({
           expiresAt={withdrawal.expiresAt}
           state={state}
           transactionId={snap?.transactionId ?? withdrawal.transactionId}
+          mode={snap?.mode ?? undefined}
           initialExplorerUrls={snap?.explorerUrls}
           initialReceived={snap?.amountOut ?? undefined}
           runApproval={withdrawalApproval({
@@ -941,6 +944,7 @@ export const LiveResponse = memo(function LiveResponseInner({
           state={state}
           transactionId={snap?.transactionId ?? order.transactionId}
           depositAddress={snap?.depositAddress ?? order.depositAddress}
+          mode={snap?.mode ?? undefined}
           initialExplorerUrls={snap?.explorerUrls}
           limit={{
             side: order.side,

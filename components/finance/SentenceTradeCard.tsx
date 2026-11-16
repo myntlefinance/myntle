@@ -2,9 +2,19 @@
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { IconArrowForward, IconCheck, IconCopy, IconExternalLink, IconUserCircle, IconWallet } from "@tabler/icons-react";
+import {
+  IconAlertSquareRoundedFilled,
+  IconArrowForward,
+  IconCheck,
+  IconCopy,
+  IconExternalLink,
+  IconReceiptRefund,
+  IconRosetteDiscountCheckFilled,
+  IconUserCircle,
+  IconWallet,
+} from "@tabler/icons-react";
 import { SkeletonBox } from "skullet/react";
-import { Button } from "@/components/atoms/Button";
+import { Button, buttonVariants } from "@/components/atoms/Button";
 import { MessageActionButton } from "@/components/app/MessageActions";
 import { StatusPill } from "@/components/atoms/StatusPill";
 import { SpinnerRing } from "@/components/primitives/TaskRows";
@@ -45,6 +55,7 @@ import {
   needsFreshDepositAddress,
 } from "@/lib/intents/deposit-status";
 import { normalizeEvmAddress } from "@/lib/intents/destination";
+import { intentsExplorerTxUrl } from "@/lib/intents/explorer";
 import {
   activateWarmState,
   globalIsWarm,
@@ -160,6 +171,15 @@ const LABEL: Record<SentenceCardState, string> = {
   failed: "Failed",
 };
 
+/** The sheet's wash. Settled is green, refunded is neutral, the rest are red. */
+export function terminalTone(
+  state: SentenceCardState,
+): "green" | "red" | "neutral" {
+  if (state === "settled") return "green";
+  if (state === "refunded") return "neutral";
+  return "red";
+}
+
 /**
  * The state a card paints once the host reports the refusal's real outcome.
  *
@@ -210,6 +230,7 @@ export default function SentenceTradeCard({
   depositAddress,
   depositMemo,
   depositMeta,
+  mode,
   transactionId,
   approvalId,
   initialExplorerUrls,
@@ -270,6 +291,12 @@ export default function SentenceTradeCard({
    * card so the QR and Transfer survive a refresh.
    */
   depositMeta?: DepositMetadata | null;
+  /**
+   * The 1Click quote mode that settled this record, when the snapshot names
+   * one. The sheet reads it to decide whether the Intents Explorer carries
+   * a masked page for the deposit address.
+   */
+  mode?: string | null;
   transactionId?: string;
   /** Tool approval id, used to recall a settled outcome across reloads. */
   approvalId?: string;
@@ -1784,6 +1811,54 @@ export default function SentenceTradeCard({
   // A deposit has nothing to draw until the server issues its address, so
   // the Details control stays disabled instead of opening an empty drawer.
   const detailsEnabled = !(intents && action === "deposit") || !!deposit;
+  // A finished card keeps one status line and its footer. The sheet above the
+  // footer is the tinted one-liner — mark plus sentence — and the footer
+  // below carries the record controls. The drawer above keeps working, so
+  // Details still opens the record it was issued with. The View Txn link
+  // prefers the Intents Explorer's masked page for the minted address,
+  // which exists for chain-touched modes; a signed ledger move has no
+  // page, so those cards keep the chain explorer link instead. An expired
+  // card links only once a transfer was seen: an expired, unfunded
+  // address has no page anywhere yet.
+  const addressUrl = intentsExplorerTxUrl(deposit, mode);
+  const chainUrl = explorerUrls.length > 0 ? explorerUrls[0] : null;
+  const terminalSheet = isTerminalCardState(viewState)
+    ? {
+        tone: terminalTone(viewState),
+        body: terminalBodyText({
+          viewState,
+          action,
+          intents,
+          depositMessage,
+          submitError,
+          earnName: earn?.name,
+        }),
+        explorerUrl:
+          viewState === "expired" && !depositTransferSeen
+            ? chainUrl
+            : (addressUrl ?? chainUrl),
+        prompt:
+          depositTerminal && onPrompt ? (
+            <p className="mt-1.5 text-xs text-ink-2">
+              <button
+                type="button"
+                onClick={() => onPrompt(FRESH_DEPOSIT_PROMPT)}
+                className="group inline text-left font-medium text-ink transition-colors duration-100"
+              >
+                <span className="inline border-b border-dashed border-line-strong pb-0.5 transition-colors duration-100 group-hover:border-ink-3">
+                  <IconArrowForward
+                    size={13}
+                    stroke={2}
+                    className="mr-1 inline-block shrink-0 align-middle -translate-y-px"
+                    aria-hidden
+                  />
+                  {FRESH_DEPOSIT_PROMPT}
+                </span>
+              </button>
+            </p>
+          ) : null,
+      }
+    : null;
   // The record's own figures. They outlive the funding panel: an address
   // leaves the card, the terms it was issued under stay readable.
   const depositRecordRows = (
@@ -1860,7 +1935,8 @@ export default function SentenceTradeCard({
         >
           {sentence}
         </div>
-        {intents &&
+        {!terminalSheet &&
+        intents &&
         action === "deposit" &&
         ((!deposit && viewState === "awaiting") ||
           depositMessage ||
@@ -2225,12 +2301,13 @@ export default function SentenceTradeCard({
       </div>
 
       {/* error line — the card's last row, below every drawer, the way the
-          dialogs put their notice under the content it belongs to */}
+          dialogs put their notice under the content it belongs to. A finished
+          card already carries the failure in its sheet, so it stays quiet. */}
       <div
         className="grid transition-[grid-template-rows,opacity] duration-300"
         style={{
-          gridTemplateRows: submitError ? "1fr" : "0fr",
-          opacity: submitError ? 1 : 0,
+          gridTemplateRows: submitError && !terminalSheet ? "1fr" : "0fr",
+          opacity: submitError && !terminalSheet ? 1 : 0,
           transitionTimingFunction: "cubic-bezier(0.16, 1, 0.3, 1)",
         }}
       >
@@ -2253,6 +2330,46 @@ export default function SentenceTradeCard({
         </div>
       </div>
 
+      {terminalSheet ? (
+        <>
+          <div
+            className={`primitive-card-footer flex items-center gap-3 bg-surface ${
+              terminalSheet.explorerUrl ? "justify-between" : "justify-end"
+            }`}
+            style={{ paddingTop: 6, paddingBottom: 6 }}
+          >
+            <span className="-ml-0.5 flex shrink-0 items-center">
+              <Button
+                variant="outline"
+                size="sm"
+                aria-expanded={detailsOpen}
+                onClick={toggleDetails}
+                disabled={!detailsEnabled}
+              >
+                Details
+              </Button>
+            </span>
+            {terminalSheet.explorerUrl ? (
+              <span className="-mr-0.5 flex min-w-0 items-center">
+                <a
+                  href={terminalSheet.explorerUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={buttonVariants({ variant: "ghost", size: "sm" })}
+                >
+                  View Txn
+                </a>
+              </span>
+            ) : null}
+          </div>
+          <TerminalSheet
+            tone={terminalSheet.tone}
+            state={viewState}
+            body={terminalSheet.body}
+            prompt={terminalSheet.prompt}
+          />
+        </>
+      ) : (
       <div
         className="primitive-card-footer flex items-center justify-between gap-3 bg-surface"
         style={{ paddingTop: 6, paddingBottom: 6 }}
@@ -2368,6 +2485,7 @@ export default function SentenceTradeCard({
           )}
         </span>
       </div>
+      )}
 
       {fundOpen &&
       showTransfer &&
@@ -2483,6 +2601,83 @@ function usePreviewedName(
 function Amount({ children }: { children: React.ReactNode }) {
   return (
     <strong className="font-semibold tabular-nums text-ink">{children}</strong>
+  );
+}
+
+/* ── the terminal sheet ─────────────────────────────────────────
+ * The outcome treatment for a finished card: one mark, one headline, one
+ * sentence, and the record controls. The drawer look is static layout, the
+ * way the lab prototype paints it. */
+
+function TerminalMark({
+  tone,
+  state,
+}: {
+  tone: "green" | "red" | "neutral";
+  state: SentenceCardState;
+}) {
+  const Icon =
+    state === "refunded"
+      ? IconReceiptRefund
+      : state === "settled"
+        ? IconRosetteDiscountCheckFilled
+        : IconAlertSquareRoundedFilled;
+  return (
+    <Icon
+      size={18}
+      aria-hidden
+      className="shrink-0"
+      style={{
+        color:
+          tone === "green"
+            ? "var(--green)"
+            : tone === "red"
+              ? "var(--red)"
+              : "var(--ink-2)",
+      }}
+    />
+  );
+}
+
+function TerminalSheet({
+  tone,
+  state,
+  body,
+  prompt,
+}: {
+  tone: "green" | "red" | "neutral";
+  state: SentenceCardState;
+  body: string;
+  /** The fresh-address sentence, for a terminal deposit with a composer. */
+  prompt: React.ReactNode;
+}) {
+  return (
+    <div
+      className="mt-1.5 rounded-t-card border-t"
+      style={{
+        background:
+          tone === "green"
+            ? "color-mix(in oklch, var(--green) 12%, var(--surface))"
+            : tone === "red"
+              ? "color-mix(in oklch, var(--red) 12%, var(--surface))"
+              : "var(--field)",
+        borderColor:
+          tone === "green"
+            ? "color-mix(in oklch, var(--green) 28%, transparent)"
+            : tone === "red"
+              ? "color-mix(in oklch, var(--red) 28%, transparent)"
+              : "var(--line-strong)",
+        boxShadow: "0 -12px 32px -16px oklch(0 0 0 / 0.3)",
+      }}
+    >
+      <div className="px-3 pt-2.5 pb-2.5">
+        <div className="flex items-center gap-2">
+          <TerminalMark tone={tone} state={state} />
+          <p className="min-w-0 flex-1 text-xs font-medium text-ink">{body}</p>
+        </div>
+        {prompt}
+      </div>
+    </div>
   );
 }
 
@@ -2779,12 +2974,12 @@ export function failureMessage(
 ): string {
   if (intents) {
     if (action === "withdraw") {
-      return "The withdrawal did not settle. The record has the details.";
+      return "Transaction failed. Please try again.";
     }
     // A signed intent is a trade, never a deposit: nothing was sent to an
     // address, so the wallet deposit sentences would be a lie.
     if (action !== "deposit") {
-      return "The trade did not settle. The record has the details.";
+      return "Transaction failed. Please try again.";
     }
   }
   if (recordState === "incomplete_deposit") {
@@ -2794,6 +2989,73 @@ export function failureMessage(
     return "The settlement timed out before confirming.";
   }
   return "Deposit failed. Nothing was moved.";
+}
+
+/**
+ * The terminal sheet's sentence. Deposit states reuse the status block's own
+ * message (minus the "Success." the title already says); failures reuse the
+ * recorded failure; the rest name the outcome in one sentence.
+ */
+export function terminalBodyText(input: {
+  viewState: SentenceCardState;
+  action: TradeAction;
+  intents: boolean;
+  depositMessage: string | null;
+  submitError: string | null;
+  earnName?: string;
+}): string {
+  const {
+    viewState,
+    action,
+    intents,
+    depositMessage,
+    submitError,
+    earnName,
+  } = input;
+  if (
+    intents &&
+    action === "deposit" &&
+    viewState !== "denied" &&
+    depositMessage
+  ) {
+    return depositMessage.replace(/^Success\. /, "");
+  }
+  if (viewState === "failed" || viewState === "incomplete") {
+    return (
+      submitError ??
+      failureMessage(
+        viewState === "incomplete" ? "incomplete_deposit" : "failed",
+        action,
+        intents,
+      )
+    );
+  }
+  if (viewState === "refunded") {
+    return action === "deposit"
+      ? "The deposit was refunded."
+      : "The funds were returned.";
+  }
+  if (viewState === "expired") {
+    return action === "limit"
+      ? "The order expired."
+      : "This quote is no longer valid.";
+  }
+  if (viewState === "denied") {
+    return "The proposal was rejected. Nothing was moved.";
+  }
+  if (action === "withdraw") {
+    // Generic on purpose: the destination may be someone else's address,
+    // so the card never claims the reader received anything. The record's
+    // own figure stays in the drawer's Received row.
+    return "Your withdrawal was successful.";
+  }
+  if (action === "limit") return "The order filled.";
+  if (action === "earn") {
+    return earnName
+      ? `Your deposit is earning in ${earnName}.`
+      : "The deposit settled in the vault.";
+  }
+  return "The settlement is confirmed in the record.";
 }
 
 export type SentenceApprovalWiring = {

@@ -80,6 +80,8 @@ vi.mock("@/components/atoms/Button", async () => {
         props.children,
       );
     },
+    // The terminal sheet's View Txn link reads its classes from the same module.
+    buttonVariants: () => "",
   };
 });
 
@@ -547,10 +549,44 @@ describe("the deposit status table", () => {
     const html = render(waitingCard({ state: "settled", expiresAt: PAST }));
 
     expect(html).toContain(
-      "Success. Your deposit was detected and credited to your account.",
+      "Your deposit was detected and credited to your account.",
     );
     expect(html).not.toContain("Expired");
-    expect(html).toContain("Executed");
+    expect(html).not.toContain("Executed");
+  });
+
+  it("links View Txn to the funding transaction the record reported", () => {
+    const html = render(
+      waitingCard({
+        state: "settled",
+        expiresAt: PAST,
+        initialExplorerUrls: ["https://arbiscan.io/tx/0xabc"],
+      }),
+    );
+
+    expect(html).toContain(
+      "Your deposit was detected and credited to your account.",
+    );
+    expect(html).toContain("View Txn");
+    expect(html).toContain("https://arbiscan.io/tx/0xabc");
+  });
+
+  it("links View Txn to the masked page for a chain-funded deposit", () => {
+    const html = render(
+      waitingCard({
+        state: "settled",
+        expiresAt: PAST,
+        mode: "confidential-external",
+      }),
+    );
+
+    expect(html).toContain(
+      "Your deposit was detected and credited to your account.",
+    );
+    expect(html).toContain("View Txn");
+    expect(html).toContain(
+      `https://explorer.near-intents.org/mask/${DEPOSIT}`,
+    );
   });
 
   it("keeps detected status ahead of the clock", () => {
@@ -563,18 +599,15 @@ describe("the deposit status table", () => {
   it("names a short deposit, a refund, and a failed settlement separately", () => {
     const incomplete = render(waitingCard({ state: "incomplete" }));
     expect(incomplete).toContain("The deposit was below the required amount.");
-    expect(incomplete).toContain("Incomplete");
     expect(incomplete).not.toContain("Deposit failed");
 
     const refunded = render(waitingCard({ state: "refunded" }));
     expect(refunded).toContain("The deposit was refunded.");
-    expect(refunded).toContain("Refunded");
 
     const failed = render(waitingCard({ state: "failed" }));
     expect(failed).toContain(
       "The deposit did not settle. The record has the details.",
     );
-    expect(failed).toContain("Failed");
   });
 
   it("expires a pending address on its stored deadline", () => {
@@ -719,7 +752,7 @@ describe("a dead deposit address", () => {
     expect(html).not.toContain(FRESH_DEPOSIT_PROMPT);
   });
 
-  it("withdraws the address on every state that cannot fund it", () => {
+  it("withdraws the funding surface on every state that cannot fund it", () => {
     for (const dead of [
       "expired",
       "failed",
@@ -731,9 +764,12 @@ describe("a dead deposit address", () => {
       const html = render(
         waitingCard({ state: dead, onPrompt: () => {} }),
       );
-      expect(html, dead).not.toContain(DEPOSIT);
+      // No QR, no fund CTA, no wallet CTA: nothing here can be funded. The
+      // fixture reports no chain hash, so no View Txn either: the Intents
+      // Explorer indexes no page for a confidential deposit address.
       expect(html, dead).not.toContain("Deposit address QR code");
       expect(html, dead).not.toContain("Fund from wallet");
+      expect(html, dead).not.toContain("View Txn");
       expect(walletCta(html), dead).toBeNull();
     }
   });
@@ -751,13 +787,13 @@ describe("a refused deposit", () => {
   it("withdraws the funding panel and keeps the record's own rows", () => {
     const html = render(waitingCard({ state: "denied" }));
 
-    expect(html).toContain("Rejected");
-    // The address belonged to a proposal that was refused: no QR, no address,
-    // no copy control, and no funding CTA.
-    expect(html).not.toContain(DEPOSIT);
+    expect(html).toContain("The proposal was rejected. Nothing was moved.");
+    // The address belonged to a proposal that was refused: no QR, no copy
+    // control, no funding CTA, and no View Txn without a reported hash.
     expect(html).not.toContain("Deposit address QR code");
     expect(html).not.toContain('aria-label="Copy"');
     expect(html).not.toContain("Fund from wallet");
+    expect(html).not.toContain("View Txn");
     expect(walletCta(html)).toBeNull();
     // The terms the address was issued under stay readable.
     expect(html).toContain("Token");

@@ -24,48 +24,19 @@ export type LabEntry = {
 
 export const LAB: LabEntry[] = [
   {
-    id: "deposit-card",
-    title: "Deposit execution",
+    id: "button-tones",
+    title: "Button tones",
     caption:
-      "Funding the intents.near ledger with ft_transfer_call. Verified against the Verifier deposit mechanics; figures are sample data.",
-    file: "DepositCard.tsx",
-    variants: ["Awaiting", "Settling", "Settled"],
-    layout: "stack",
+      "Every button tone with its label and one-line usage, the three sizes, and how the sheet pair reads on the tinted fill.",
+    file: "ButtonVariants.tsx",
   },
   {
-    id: "swap-card",
-    title: "Swap execution",
+    id: "status-sheet",
+    title: "Terminal status sheet",
     caption:
-      "One variant per 1Click swap type: exact input, exact output with its slippage buffer, and the flex band. Verified against the swap-types reference.",
-    file: "SwapCard.tsx",
-    variants: ["Exact input", "Exact output", "Flex band"],
-    layout: "stack",
-  },
-  {
-    id: "bridge-card",
-    title: "Bridge execution",
-    caption:
-      "A same-ticker move across chains prices as an ordinary exact-input quote; no special endpoint exists. Verified live with a USDC to USDC quote.",
-    file: "BridgeCard.tsx",
-    variants: ["Awaiting", "Settled"],
-    layout: "stack",
-  },
-  {
-    id: "withdraw-card",
-    title: "Withdraw execution",
-    caption:
-      "Leaving the ledger for a chain address via ft_withdraw, with the msg parameter left out so refunds survive failures.",
-    file: "WithdrawCard.tsx",
-    variants: ["Awaiting", "Settled"],
-    layout: "stack",
-  },
-  {
-    id: "limit-order-card",
-    title: "Limit order execution",
-    caption:
-      "A resting GTC order with partial fills and async cancel. The shipped version is the sentence card's limit-order action; this prototype records the original shape.",
-    file: "LimitOrderCard.tsx",
-    variants: ["Open", "Partially filled", "Filled"],
+      "The sentence stays untouched on a taller card while success, failure, and error share one tinted bottom sheet with a single mark, headline, sentence, and View txn action.",
+    file: "StatusSheetCard.tsx",
+    variants: ["Success", "Failed", "Error"],
     layout: "stack",
   },
   {
@@ -85,20 +56,6 @@ export const LAB: LabEntry[] = [
     file: "AuthProbe.tsx",
   },
   {
-    id: "pill-wrapping",
-    title: "Pill line breaks",
-    caption:
-      "What happens when the venue pill meets the end of a line: an atomic pill moves whole, an inline pill splits into two fragments (cloned or sliced), and a pill whose label wraps inside stays one box but becomes two lines tall.",
-    file: "PillWrapping.tsx",
-    variants: [
-      "Atomic inline-flex",
-      "Inline, cloned",
-      "Inline, sliced",
-      "Label wraps inside",
-    ],
-    layout: "row",
-  },
-  {
     id: "unlock-card",
     title: "Unlock card states",
     caption:
@@ -114,24 +71,6 @@ export const LAB: LabEntry[] = [
       "Tabbed wallet and super account view built only from distilled primitives: segmented tabs, allocation bar, faceted filters, and search.",
     file: "PortfolioRevamp.tsx",
     variants: ["Your wallet", "Super account", "Empty"],
-    layout: "stack",
-  },
-  {
-    id: "morph-money",
-    title: "Morphing hero total",
-    caption:
-      "The portfolio total gliding between values by place value instead of cutting, with the masked and reduced-motion states staying plain.",
-    file: "MorphMoney.tsx",
-    variants: ["small-delta", "large-delta", "masked", "reduced-motion"],
-    layout: "row",
-  },
-  {
-    id: "watched-selector",
-    title: "Watched address selector",
-    caption:
-      "Three shapes for the watched list with the same two accounts: today's duplicated rows, deduped compact rows, and an overlay dropdown. The shipped cards live in components/finance/WatchedCards.tsx.",
-    file: "WatchedSelector.tsx",
-    variants: ["Rows", "Compact rows", "Dropdown"],
     layout: "stack",
   },
 ];

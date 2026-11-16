@@ -9,7 +9,9 @@ const eslintConfig = defineConfig([
     rules: {
       // These five come from the React Compiler ruleset in
       // eslint-plugin-react-hooks 7. They describe patterns that work today
-      // but block the compiler, so they stay advisory until we adopt it.
+      // but block the compiler. They are enforced as warnings, and
+      // `bun run lint` (`--max-warnings=0`) turns every warning into a
+      // failure, so they gate CI exactly like the errors below.
       "react-hooks/set-state-in-effect": "warn",
       "react-hooks/refs": "warn",
       "react-hooks/immutability": "warn",

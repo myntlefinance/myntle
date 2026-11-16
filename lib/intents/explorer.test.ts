@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { explorerTxUrl, settlementLinks } from "./explorer";
+import {
+  explorerTxUrl,
+  intentsExplorerTxUrl,
+  settlementLinks,
+} from "./explorer";
 
 /**
  * The links a settled trade shows.
@@ -74,5 +78,30 @@ describe("settlementLinks", () => {
         },
       ]),
     ).toEqual(["https://arbiscan.io/tx/0xabc"]);
+  });
+});
+
+describe("intentsExplorerTxUrl", () => {
+  it("keys the masked page by the deposit address for chain-touched modes", () => {
+    expect(intentsExplorerTxUrl("0xabc", "confidential-external")).toBe(
+      "https://explorer.near-intents.org/mask/0xabc",
+    );
+    expect(intentsExplorerTxUrl("0xabc", "confidential-withdrawal")).toBe(
+      "https://explorer.near-intents.org/mask/0xabc",
+    );
+  });
+
+  it("returns no page for signed ledger moves and the legacy path", () => {
+    expect(intentsExplorerTxUrl("0xabc", "confidential-intents")).toBeNull();
+    expect(intentsExplorerTxUrl("0xabc", "chain")).toBeNull();
+    expect(intentsExplorerTxUrl("0xabc", null)).toBeNull();
+    expect(intentsExplorerTxUrl("0xabc", undefined)).toBeNull();
+  });
+
+  it("refuses an address it cannot point at", () => {
+    expect(intentsExplorerTxUrl("", "confidential-external")).toBeNull();
+    expect(intentsExplorerTxUrl("   ", "confidential-external")).toBeNull();
+    expect(intentsExplorerTxUrl(null, "confidential-external")).toBeNull();
+    expect(intentsExplorerTxUrl(undefined, "confidential-external")).toBeNull();
   });
 });

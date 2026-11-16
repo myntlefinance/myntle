@@ -143,6 +143,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("get_quote funding", () => {
@@ -504,5 +505,119 @@ describe("get_quote funding", () => {
     );
     expect(quoteMock).not.toHaveBeenCalled();
     expect(createQuoteMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("get_quote balance gate", () => {
+  const unlockedContext: ToolContext = {
+    ...walletContext,
+    intentsAccessToken: "live-token",
+  };
+
+  function stubBalances(
+    balances: Array<{ tokenId: string; available: string }>,
+  ) {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ balances }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("prices the held variant without an extra read failing the trade", async () => {
+    const fetchMock = stubBalances([
+      { tokenId: "nep141:usdc", available: "25000000" },
+    ]);
+
+    const result = await run(unlockedContext);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(quoteMock).toHaveBeenCalledTimes(1);
+    expect(result.route).toBe("account");
+  });
+
+  it("refuses a variant the account cannot cover and names the held ones", async () => {
+    stubBalances([
+      { tokenId: "nep141:usdc", available: "1000000" },
+      { tokenId: "nep141:near-usdc", available: "50000000" },
+      { tokenId: "nep141:usdc-base", available: "100000000" },
+    ]);
+
+    const result = await run(unlockedContext);
+
+    expect(result).toMatchObject({
+      status: "unavailable",
+      reason: "insufficient-balance",
+    });
+    expect(result.message as string).toContain("nep141:usdc-base");
+    expect(result.message as string).toContain("100");
+    expect(quoteMock).not.toHaveBeenCalled();
+    expect(createQuoteMock).not.toHaveBeenCalled();
+  });
+
+  it("says plainly when the account holds none of that token", async () => {
+    stubBalances([]);
+
+    const result = await run(unlockedContext);
+
+    expect(result).toMatchObject({
+      status: "unavailable",
+      reason: "insufficient-balance",
+    });
+    expect(result.message as string).toContain("holds none");
+    expect(quoteMock).not.toHaveBeenCalled();
+  });
+
+  it("prices without the check when there is no access token", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await run(walletContext);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(quoteMock).toHaveBeenCalledTimes(1);
+    expect(result.route).toBe("account");
+  });
+
+  it("prices without the check when the balance cannot be read", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network down");
+      }),
+    );
+
+    const result = await run(unlockedContext);
+
+    expect(quoteMock).toHaveBeenCalledTimes(1);
+    expect(result.route).toBe("account");
+  });
+
+  it("prices without the check when the balance read is rejected", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) })),
+    );
+
+    const result = await run(unlockedContext);
+
+    expect(quoteMock).toHaveBeenCalledTimes(1);
+    expect(result.route).toBe("account");
+  });
+
+  it("never checks the Myntle balance for a wallet-funded quote", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await run(
+      { ...unlockedContext },
+      { funding: "wallet" },
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(quoteMock).toHaveBeenCalledTimes(1);
+    expect(result.route).toBe("wallet");
   });
 });

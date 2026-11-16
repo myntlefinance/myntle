@@ -28,6 +28,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Assert runtimes
+        run: node --version && bun --version
+
       - name: Install
         run: bun install --frozen-lockfile
 

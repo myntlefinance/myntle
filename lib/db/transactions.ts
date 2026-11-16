@@ -554,6 +554,12 @@ export type ToolApprovalSettlement = {
   deposit: DepositMetadata | null;
   /** The sender's registered funding hash, when the transfer was broadcast. */
   depositTxHash?: string | null;
+  /**
+   * The 1Click quote mode that settled this record. The card reads it to
+   * decide whether the Intents Explorer carries a masked page for the
+   * deposit address: chain-touched modes do, signed ledger moves do not.
+   */
+  mode?: string | null;
   /** The resting order's own progress, when the record is a limit order. */
   limit?: {
     orderId: string;
@@ -623,6 +629,7 @@ export async function listToolApprovalSettlements(
         ?.amountOut;
       const refs = (row.refs ?? {}) as Record<string, unknown>;
       const txHash = refs.txHash;
+      const mode = refs.mode;
       const orderOutcome = (row.outcome ?? {}) as Record<string, unknown>;
       const filledPercent = limitOrderFilledPercent(
         refs.side,
@@ -659,6 +666,7 @@ export async function listToolApprovalSettlements(
         statusCheckedAt: row.status_checked_at ?? null,
         amountOut: typeof amountOut === "string" ? amountOut : null,
         deposit: readDepositMetadata(row.refs, row.deposit_address),
+        mode: typeof mode === "string" && mode.length > 0 ? mode : null,
         depositTxHash:
           typeof txHash === "string" && txHash.length > 0 ? txHash : null,
         limit,

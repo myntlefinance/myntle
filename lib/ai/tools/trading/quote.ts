@@ -30,6 +30,98 @@ export type QuoteFunding = "account" | "wallet";
  */
 const QUOTE_CONFIDENTIALITY = "basic" as const;
 
+/**
+ * Refuses an account-funded quote the Myntle balance cannot cover.
+ *
+ * A ticker exists on several chains as several asset ids, and the balance
+ * holds each variant separately. Pricing a variant the account does not
+ * hold produces a signed transfer that cannot execute, which settles as a
+ * failed trade with nothing to refund. This gate runs before the quote is
+ * minted, and names the variants the account does hold so the model can
+ * re-quote one of those instead.
+ *
+ * Returns a refusal, or null to let the quote proceed. A missing token, a
+ * locked account, or an unreadable balance all proceed unchecked: the gate
+ * only refuses when it positively knows the variant is short. Settlement
+ * remains the backstop for everything the gate cannot see.
+ */
+async function accountBalanceGate(input: {
+  token: string;
+  fromAssetId: string;
+  amount: string;
+}): Promise<{ reason: string; message: string } | null> {
+  let needed: bigint;
+  try {
+    needed = BigInt(input.amount);
+  } catch {
+    return null;
+  }
+  if (needed <= 0n) return null;
+
+  let entries: Array<{ tokenId: string; available: string }>;
+  try {
+    const { fetchAccountBalances } = await import(
+      "@/lib/intents/account-balances"
+    );
+    entries = await fetchAccountBalances(input.token);
+  } catch {
+    return null;
+  }
+
+  const rawOf = (tokenId: string): bigint => {
+    const found = entries.find((e) => e.tokenId === tokenId);
+    if (!found) return 0n;
+    try {
+      return BigInt(found.available);
+    } catch {
+      return 0n;
+    }
+  };
+  if (rawOf(input.fromAssetId) >= needed) return null;
+
+  const { getAssets } = await import("@/lib/intents/service");
+  const { formatUnits } = await import("@/lib/intents/balances");
+  const catalogue = await getAssets().catch(() => []);
+  const byId = new Map(catalogue.map((asset) => [asset.assetId, asset]));
+  const from = byId.get(input.fromAssetId);
+  const symbol = from?.symbol ?? "that token";
+  const fromDecimals = from?.decimals ?? 0;
+
+  const held = entries
+    .filter((e) => {
+      const asset = byId.get(e.tokenId);
+      return (
+        asset?.symbol === from?.symbol &&
+        e.tokenId !== input.fromAssetId &&
+        rawOf(e.tokenId) > 0n
+      );
+    })
+    .map((e) => {
+      const asset = byId.get(e.tokenId);
+      return `${formatUnits(e.available, asset?.decimals ?? 0)} ${symbol} on ${asset?.chain ?? "another chain"} (${e.tokenId})`;
+    });
+
+  const neededFormatted =
+    fromDecimals > 0
+      ? formatUnits(input.amount, fromDecimals)
+      : input.amount;
+  if (held.length > 0) {
+    return {
+      reason: "insufficient-balance",
+      message:
+        `The Myntle account cannot cover ${neededFormatted} ${symbol} from ${input.fromAssetId}: it holds too little of that variant. ` +
+        `It does hold ${held.join("; ")}. Re-quote from one of those variants. ` +
+        `One trade spends one variant; to move more than one variant holds, propose separate swaps.`,
+    };
+  }
+  return {
+    reason: "insufficient-balance",
+    message:
+      `The Myntle account cannot cover ${neededFormatted} ${symbol} from ${input.fromAssetId}. ` +
+      `It holds none of that variant. Re-quote from a variant it holds, or ask for a deposit first.`,
+  };
+}
+
 export function createQuoteTool(context?: ToolContext) {
   const accountKind = context?.accountKind ?? "wallet";
 
@@ -290,6 +382,23 @@ export function createQuoteTool(context?: ToolContext) {
       }
 
       const mode: QuoteMode = accountFunded ? "confidential-intents" : "chain";
+
+      // The balance gate only applies to the account route: a wallet-funded
+      // quote spends the connected wallet, which this ledger cannot see.
+      if (accountFunded && context?.intentsAccessToken) {
+        const gate = await accountBalanceGate({
+          token: context.intentsAccessToken,
+          fromAssetId,
+          amount,
+        });
+        if (gate) {
+          return {
+            status: "unavailable" as const,
+            reason: gate.reason,
+            message: gate.message,
+          };
+        }
+      }
 
       const { quote } = await import("@/lib/intents/service");
       // A receipt token is a yield position, not a different execution

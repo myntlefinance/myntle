@@ -22,7 +22,7 @@
   </a>
 </p>
 
-Myntle is for someone who wants easy finance, whether use a wallet or want to start with a passkey. You can create an account with a passkey on the device you are using, or connect a wallet you already have. Either way, the same conversation works: you need no account on the chain that settles the trade, no gas on a new network, and no faucet.
+Myntle is for someone who wants easy finance, whether you use a wallet or want to start with a passkey. You can create an account with a passkey on the device you are using, or connect a wallet you already have. Either way, the same conversation works: you need no account on the chain that settles the trade, no gas on a new network, and no faucet.
 
 > The assistant can propose a trade and look things up, but it cannot sign or move money. A trade is finished only when the settlement record says so.
 
@@ -68,7 +68,7 @@ A trade is not the only thing you can ask about. The same turn can search Google
 
 ### Privacy is the default
 
-Every trade quote is confidential, and there is no public mode to select. A trade between two external chains asks the verifier for basic or advanced confidentiality, and a trade that spends the balance inside NEAR Intents signs against `CONFIDENTIAL_INTENTS`. The interface calls that balance the Myntle account: it is unlocked in the browser, the access token never reaches the server, and the private read goes straight to 1Click.
+Every trade quote is confidential, and there is no public mode to select. A trade between two external chains asks the verifier for basic or advanced confidentiality, and a trade that spends the balance inside NEAR Intents signs against `CONFIDENTIAL_INTENTS`. The interface calls that balance the Myntle account: it is unlocked in the browser, the per-turn access token is sealed before it reaches the server, the refresh token never leaves the browser, and the private read goes straight to 1Click.
 
 ## How it works
 
@@ -217,7 +217,7 @@ These checks need the install above and the keys in `.env.local`. The first four
 5. Outcomes differ: a failed trade paints failed, a refunded one paints refunded with the money-back meaning, and anything still moving keeps polling its record. Close the laptop mid-trade and reopen the transaction; the state moved on alone.
 6. Full loop: `bun run typecheck`, `bun run lint`, `bun run test`, and `bun run build` must all pass. The build compiles both workflows.
 
-For development without a browser extension, setting `DEV_WALLET_KEY` installs a keyed provider that signs the challenge for real. It covers EVM only, and the dev wallet route returns 404 in a production build.
+For development without a browser extension, setting `DEV_WALLET_KEY` installs a keyed provider that signs the challenge for real. It covers EVM only, and the dev wallet route answers 404 whenever the server runs a production build.
 
 ## Contributing
 

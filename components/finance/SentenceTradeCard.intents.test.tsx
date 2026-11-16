@@ -67,6 +67,8 @@ vi.mock("@/components/atoms/Button", async () => {
         props.children,
       );
     },
+    // The sheet's View txn link reads its classes from the same module.
+    buttonVariants: () => "",
   };
 });
 
@@ -546,7 +548,7 @@ describe("passkey withdrawal on the sentence card", () => {
       <SentenceTradeCard {...withdrawCard} state="failed" />,
     );
     expect(html).toContain(
-      "The withdrawal did not settle. The record has the details.",
+      "Transaction failed. Please try again.",
     );
     expect(html).not.toContain("Deposit failed");
   });
@@ -563,7 +565,7 @@ describe("passkey withdrawal on the sentence card", () => {
     ).toContain(">Submitted<");
     expect(
       render(<SentenceTradeCard {...withdrawCard} state="settled" />),
-    ).toContain(">Executed<");
+    ).toContain("Your withdrawal was successful.");
     expect(
       render(<SentenceTradeCard {...withdrawCard} state="settled" />),
     ).not.toContain(">Approved<");
@@ -710,10 +712,65 @@ describe("passkey swap on the sentence card", () => {
     expect(calls.txIds).toEqual([]);
   });
 
-  it("names a failed swap as a trade, not a deposit", () => {
+  it("names a failed swap plainly, not a deposit", () => {
     const html = render(<SentenceTradeCard {...swapCard} state="failed" />);
-    expect(html).toContain("The trade did not settle. The record has the details.");
+    expect(html).toContain("Transaction failed. Please try again.");
     expect(html).not.toContain("Deposit failed");
+  });
+
+  it("links a settled swap to the Intents Explorer masked page", () => {
+    const html = render(
+      <SentenceTradeCard
+        {...swapCard}
+        state="settled"
+        depositAddress="0xdepos1taddress"
+        mode="confidential-external"
+      />,
+    );
+    expect(html).toContain("The settlement is confirmed in the record.");
+    expect(html).toContain("View Txn");
+    expect(html).toContain(
+      "https://explorer.near-intents.org/mask/0xdepos1taddress",
+    );
+    expect(html).toContain("justify-between");
+  });
+
+  it("links a settled swap to the chain explorer for its reported hash", () => {
+    const html = render(
+      <SentenceTradeCard
+        {...swapCard}
+        state="settled"
+        initialExplorerUrls={["https://arbiscan.io/tx/0xabc"]}
+      />,
+    );
+    expect(html).toContain("The settlement is confirmed in the record.");
+    expect(html).toContain("View Txn");
+    expect(html).toContain("https://arbiscan.io/tx/0xabc");
+  });
+
+  it("offers no View Txn when a signed ledger move has no public page", () => {
+    const html = render(
+      <SentenceTradeCard
+        {...swapCard}
+        state="settled"
+        depositAddress="0xdepos1taddress"
+        mode="confidential-intents"
+      />,
+    );
+    expect(html).toContain("The settlement is confirmed in the record.");
+    expect(html).not.toContain("View Txn");
+    expect(html).toContain("justify-end");
+    // No empty trailing span: the gap must not push Details off the edge.
+    expect(html).not.toContain("-mr-0.5");
+  });
+
+  it("offers no View Txn when a settled swap names nothing to point at", () => {
+    const html = render(<SentenceTradeCard {...swapCard} state="settled" />);
+    expect(html).toContain("The settlement is confirmed in the record.");
+    expect(html).not.toContain("View Txn");
+    expect(html).toContain("justify-end");
+    // No empty trailing span: the gap must not push Details off the edge.
+    expect(html).not.toContain("-mr-0.5");
   });
 });
 
@@ -876,7 +933,7 @@ describe("the wallet branch under the same card", () => {
         requestedAt="2020-01-01T00:00:00.000Z"
       />,
     );
-    expect(html).toContain("Expired");
+    expect(html).toContain("This quote is no longer valid.");
     expect(html).not.toContain(">Approve<");
   });
 
@@ -888,7 +945,7 @@ describe("the wallet branch under the same card", () => {
         expiresAt="2020-01-01T00:00:00.000Z"
       />,
     );
-    expect(html).toContain("Expired");
+    expect(html).toContain("This quote is no longer valid.");
     expect(html).not.toContain(">Approve<");
     expect(html).not.toContain(">Reject<");
   });
@@ -897,7 +954,7 @@ describe("the wallet branch under the same card", () => {
 describe("failure copy", () => {
   it("is action-aware and leaves the wallet sentences alone", () => {
     expect(failureMessage("failed", "withdraw", true)).toBe(
-      "The withdrawal did not settle. The record has the details.",
+      "Transaction failed. Please try again.",
     );
     expect(failureMessage("incomplete_deposit", "deposit", true)).toBe(
       "The deposit arrived short of the quoted amount.",

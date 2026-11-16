@@ -51,6 +51,12 @@ export type SettlementSnapshot = {
   deposit?: DepositMetadata | null;
   /** The sender's registered funding hash, when the transfer was broadcast. */
   depositTxHash?: string | null;
+  /**
+   * The 1Click quote mode that settled this record, when the refs name one.
+   * The card reads it to decide whether the Intents Explorer carries a
+   * masked page for the deposit address.
+   */
+  mode?: string | null;
   /** The resting order's own progress, when the record is a limit order. */
   limit?: {
     orderId: string;

@@ -117,7 +117,7 @@ app/
   api/approve/route.ts           approval → starts the swap workflow
   api/tx/[id]/route.ts           transaction record + status
   api/auth/                      chain challenge, verification, session
-  api/agent/                     agent key, policy, revocation
+  api/agent/                     planned: agent key, policy, revocation (scaffold only, no routes yet)
   layout.tsx                     the frame
   (app)/layout.tsx               the shared provider boundary for app routes
   providers.tsx                  the wallet providers
@@ -166,11 +166,11 @@ Never build a component in the lab. The lab is where a component is decided.
 
 ## Conventions
 
-**Tools are narrow.** Each tool has one job and a zod schema. Read-only tools (`get_balances`, `get_supported_assets`, `get_quote`, `get_transaction_status`, `get_transaction_history`) run server-side without approval. Exactly one tool mutates state (`prepare_swap`), and it is configured with `toolApproval: { prepare_swap: 'user-approval' }`. There is no generic signing tool and no generic RPC tool, and neither may be added.
+**Tools are narrow.** Each tool has one job and a zod schema. The registry holds twenty-two tools; eighteen only read and run server-side without approval. Four propose a movement of funds (`prepare_swap`, `prepare_limit_order`, `prepare_deposit`, `prepare_withdrawal`), and each one pauses for user approval via the `TOOL_APPROVALS` map (`lib/ai/tools/approval-policy.ts`, spread into `toolApproval` on the `streamText` call). There is no generic signing tool and no generic RPC tool, and neither may be added. When the registry gains or loses a tool, update the counts here, in `PRODUCT.md`, and in the `README.md` tool table together.
 
 **News tools page, never trim.** `get_google_news`, `get_reddit_posts`, `get_x_posts`, and `get_x_user_posts` fetch the full result set once per turn into the per-turn block cache (`lib/news/block-cache.ts`), then serve it back in ~6k-char / ≤10-item blocks via `searchId + block`. Never `slice` an API response down to the display limit and discard the rest: the fetch is already paid for, the model can page with `searchId + block` (X also has `nextPage` via cursor), and refetching the same query returns the same first page. Field truncation follows the same rule — keep the full post text the API returns (X posts up to 2000 chars) rather than squeezing it into a 180-char title, so the model never needs another call to recover what we cut.
 
-**The model never sees a wallet.** No tool returns an address, and no tool signs. The assistant proposes a trade as two assets and an amount, and the application decides what to do with that. The wallet belongs to the interface layer.
+**The model never sees the connected wallet.** No tool returns the user's own address, and no tool signs. The name tools (`resolve_ens_name`, `resolve_sns_name`) do return public addresses, but only the ones the user asked about — never the connected account. The assistant proposes a trade as two assets and an amount, and the application decides what to do with that. The wallet belongs to the interface layer.
 
 **Approvals are cryptographically checked.** The client sends the whole conversation on every turn, so a modified client could fabricate an approval response. Any tool that moves money sets `experimental_toolApprovalSecret` on the `streamText` call so the server verifies that it issued the approval. Do not remove this.
 
