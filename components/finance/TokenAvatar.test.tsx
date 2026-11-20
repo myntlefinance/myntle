@@ -3,8 +3,7 @@ import React from "react";
 import ReactDOMServer from "react-dom/server";
 import { TokenAvatar } from "./TokenAvatar";
 import { NETWORK_ALIASES, NetworkIcon } from "./NetworkIcon";
-import { NETWORK_FILES } from "./iconFiles";
-import { UPLOADED_NETWORKS } from "./uploadedSvgs";
+import { BRAND_ICONS } from "./brandIcons.generated";
 
 describe("NetworkIcon", () => {
   it("renders direct inline vector SVG for known network", () => {
@@ -26,21 +25,29 @@ describe("NetworkIcon", () => {
     expect(html).toContain("#28A0F0");
   });
 
-  it("serves a network outside the inlined set from public/networks", () => {
+  it("serves a network outside the inlined set from public/brand", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <NetworkIcon network="gnosis" size={16} />,
     );
     expect(html).toContain("<img");
-    expect(html).toContain('src="/networks/gnosis.svg"');
+    expect(html).toContain('src="/brand/networks/gnosis.svg?v=');
     expect(html).not.toContain(">G<");
   });
 
-  it("serves a newly uploaded logo from public/networks", () => {
+  it("serves a newly uploaded logo from public/brand", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <NetworkIcon network="xlayer" size={16} />,
     );
     expect(html).toContain("<img");
-    expect(html).toContain('src="/networks/xlayer.svg"');
+    expect(html).toContain('src="/brand/networks/xlayer.svg?v=');
+  });
+
+  it("serves raster brand artwork as a file, never as inline SVG", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <NetworkIcon network="neonevm" size={16} />,
+    );
+    expect(html).toContain('src="/brand/networks/neonevm.png?v=');
+    expect(html).not.toContain("data:image/png;base64");
   });
 
   it("maps the catalogue slugs to the chain they settle on", () => {
@@ -64,19 +71,10 @@ describe("NetworkIcon", () => {
   });
 
   it("points every alias at a logo the app can draw", () => {
-    const available = new Set<string>([
-      ...NETWORK_FILES,
-      ...Object.keys(UPLOADED_NETWORKS),
-    ]);
-    /* An alias may target a canonical name that is itself declared but has
-     * no artwork yet (blast), so the identity entries count as valid. */
-    const declared = new Set(Object.keys(NETWORK_ALIASES));
     const dead = Object.entries(NETWORK_ALIASES)
       .filter(
         ([alias, canonical]) =>
-          alias !== canonical &&
-          !available.has(canonical) &&
-          !declared.has(canonical),
+          alias !== canonical && !BRAND_ICONS[`network:${canonical}`],
       )
       .map(([alias, canonical]) => `${alias} -> ${canonical}`);
     expect(dead).toEqual([]);
@@ -100,17 +98,17 @@ describe("TokenAvatar", () => {
     );
     expect(html).toContain("<svg");
     expect(html).toContain("bg-white");
-    expect(html).toContain("p-[3.5px]");
+    expect(html).toContain("padding:3.5px");
     expect(html).toContain("#343434");
     expect(html).not.toContain("<img");
   });
 
-  it("serves a token outside the inlined set from public/tokens", () => {
+  it("serves a token outside the inlined set from public/brand", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <TokenAvatar symbol="POL" size={28} />,
     );
     expect(html).toContain("<img");
-    expect(html).toContain('src="/tokens/pol.svg"');
+    expect(html).toContain('src="/brand/tokens/pol.svg?v=');
     expect(html).not.toContain("llamao");
   });
 
@@ -126,18 +124,64 @@ describe("TokenAvatar", () => {
     expect(html).toContain('src="https://assets.example.com/xyz.png"');
   });
 
-  it("falls back to DefiLlama CDN when contract and chain are provided", () => {
+  it("uses an exact contract match instead of the ticker alone", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <TokenAvatar
+        symbol="USDC"
+        chain="arb"
+        contractAddress="0xAF88D065E77C8CC2239327C5EDB3A432268E5831"
+        size={28}
+      />,
+    );
+    expect(html).toContain("#2775ca");
+    expect(html).not.toContain("<img");
+  });
+
+  it("uses an exact catalogue asset id when one is available", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <TokenAvatar
+        symbol="USDC"
+        assetId="nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near"
+        size={28}
+      />,
+    );
+    expect(html).toContain("#2775ca");
+  });
+
+  it("never lends a same-ticker logo to an unregistered contract", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <TokenAvatar
+        symbol="USDC"
+        chain="arb"
+        contractAddress="0x0000000000000000000000000000000000000001"
+        size={28}
+      />,
+    );
+    expect(html).toContain(">U<");
+    expect(html).not.toContain("<svg");
+    expect(html).not.toContain("<img");
+  });
+
+  it("never falls through an unknown asset id to a ticker match", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <TokenAvatar symbol="USDC" assetId="nep141:usdc.near" size={28} />,
+    );
+    expect(html).toContain(">U<");
+    expect(html).not.toContain("<svg");
+  });
+
+  it("does not construct a third-party icon URL for an unknown token", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <TokenAvatar
         symbol="PEPE"
         chain="ethereum"
         contractAddress="0x6982508145454ce325ddbe47a25d4ec3d2311933"
         size={28}
-      />
+      />,
     );
-    expect(html).toContain(
-      'src="https://icons.llamao.fi/token/ethereum:0x6982508145454ce325ddbe47a25d4ec3d2311933"',
-    );
+    expect(html).toContain(">P<");
+    expect(html).not.toContain("llamao");
+    expect(html).not.toContain("<img");
   });
 
   it("renders a single-letter fallback when no source is available", () => {

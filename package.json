@@ -16,7 +16,7 @@
     "start": "next start",
     "lint": "eslint --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "icons": "node scripts/build-icon-manifest.mjs",
+    "icons": "node scripts/icons/build.mjs",
     "test": "vitest run",
     "prices:dev": "wrangler dev --config cloudflare/prices/wrangler.jsonc",
     "prices:deploy": "wrangler deploy --config cloudflare/prices/wrangler.jsonc",

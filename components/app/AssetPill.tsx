@@ -6,10 +6,7 @@ import { ChipHover } from "@/components/finance/ChipHover";
 import { TokenPopup } from "@/components/finance/TokenPopup";
 import { prefetchSymbolPrice } from "@/components/app/useAssetPrice";
 import { prefetchTokenSeriesForSymbol } from "@/components/app/useTokenSeries";
-import {
-  resolveTokenFile,
-  resolveUploadedToken,
-} from "@/components/finance/TokenAvatar";
+import { resolveBrandIcon } from "@/components/finance/BrandIcon";
 import { extractChildrenText } from "@/components/app/markdownText";
 
 type AssetPillProps = {
@@ -66,8 +63,7 @@ export function AssetPill({ children, symbol, chain }: AssetPillProps) {
     if (!split) return <>{children ?? raw}</>;
     const candidate = split.ticker.toUpperCase();
     const known =
-      resolveUploadedToken(split.ticker) != null ||
-      resolveTokenFile(split.ticker) != null;
+      resolveBrandIcon({ kind: "token", symbol: split.ticker }) != null;
     const looksLikeTicker =
       TICKER.test(candidate) &&
       (split.ticker === split.ticker.toUpperCase() || known);

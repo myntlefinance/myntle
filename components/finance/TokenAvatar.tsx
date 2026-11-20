@@ -1,15 +1,20 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useId, useState, useMemo } from "react";
-import { NetworkIcon, isolateSvgIds } from "./NetworkIcon";
-import { TOKEN_FILES } from "./iconFiles";
-import { UPLOADED_TOKENS } from "./uploadedSvgs";
+import { useMemo, useState, type ReactNode } from "react";
+import { NetworkIcon } from "./NetworkIcon";
+import {
+  BrandIcon,
+  BrandMonogram,
+  resolveBrandIcon,
+  type BrandRef,
+} from "./BrandIcon";
 
 export type TokenAvatarProps = {
   symbol: string;
   name?: string;
+  /** A logo supplied by the balance source. No third-party icon URL is invented. */
   logo?: string | null;
+  assetId?: string | null;
   contractAddress?: string | null;
   chain?: string;
   networkBadge?: string;
@@ -17,132 +22,73 @@ export type TokenAvatarProps = {
   className?: string;
 };
 
-const TOKEN_FILE_SET = new Set<string>(TOKEN_FILES);
-
-/* Ethereum has a dark charcoal diamond on a transparent background with tight
- * vertical bounds, so it sits on a white disc. WBTC's black outer rings need
- * the same backing. */
-function tokenPaddingClass(key: string): string {
-  if (key === "eth") return "bg-white p-[3.5px]";
-  if (key === "wbtc") return "bg-white p-[2px]";
-  return "";
+function paddingClass(padding: number, backing: "white" | null): string {
+  return `${backing === "white" ? "bg-white" : ""} ${padding === 3.5 ? "p-[3.5px]" : padding === 2 ? "p-[2px]" : ""}`.trim();
 }
 
-/* Resolve a ticker to the file key used by the local supply. The key may be
- * inlined in uploadedSvgs.ts, served from public/tokens, or both. */
-function tokenKey(symbol: string): string | null {
-  if (!symbol) return null;
-  const s = symbol.trim().toLowerCase();
-
-  if (UPLOADED_TOKENS[s] || TOKEN_FILE_SET.has(s)) return s;
-  if (
-    s === "weth" ||
-    s === "vweth" ||
-    s === "steth" ||
-    s.startsWith("eth-") ||
-    s.endsWith("-eth")
-  ) {
-    return "eth";
-  }
-  if (
-    s === "btc" ||
-    s === "tbtc" ||
-    s === "cbtc" ||
-    s.startsWith("btc-") ||
-    s.endsWith("-btc")
-  ) {
-    return "wbtc";
-  }
-  if (s.includes("usdc")) return "usdc";
-  if (s.includes("usdt")) return "usdt";
-  if (s === "wnear" || s.startsWith("near-")) return "near";
-  if (s === "wsol" || s.startsWith("sol-") || s.endsWith("-sol")) return "sol";
-  if (s === "arbitrum") return "arb";
-  if (s === "optimism") return "op";
-  if (s === "hyperliquid") return "hype";
-  if (s === "pol" || s === "matic" || s === "polygon") return "pol";
-  return null;
-}
-
-/**
- * Resolves a token symbol to its official uploaded SVG vector and appropriate styling.
- */
+/** Compatibility helper for callers that need a curated inline token SVG. */
 export function resolveUploadedToken(symbol: string): {
   svg: string;
   paddingClass: string;
 } | null {
-  const key = tokenKey(symbol);
-  if (!key || !UPLOADED_TOKENS[key]) return null;
-
+  const resolved = resolveBrandIcon({ kind: "token", symbol });
+  if (!resolved?.svg) return null;
   return {
-    svg: UPLOADED_TOKENS[key],
-    paddingClass: tokenPaddingClass(key),
+    svg: resolved.svg,
+    paddingClass: paddingClass(resolved.padding, resolved.backing),
   };
 }
 
-/**
- * Resolves a token symbol to a local SVG served from public/tokens.
- * Used for the long tail that is not inlined in uploadedSvgs.ts.
- */
-export function resolveTokenFile(symbol: string): {
-  file: string;
-  paddingClass: string;
-} | null {
-  const key = tokenKey(symbol);
-  if (!key || !TOKEN_FILE_SET.has(key)) return null;
-
-  return {
-    file: key,
-    paddingClass: tokenPaddingClass(key),
-  };
+export function TokenSvg({ symbol, size = 28 }: { symbol: string; size?: number }): ReactNode {
+  const resolved = resolveBrandIcon({ kind: "token", symbol });
+  if (!resolved?.svg) return null;
+  return <BrandIcon of={{ kind: "token", symbol }} size={size} fallback={null} />;
 }
 
-/**
- * Direct inline vector SVG for curated tokens.
- * Renders pure mathematical vectors directly in the DOM, eliminating
- * rasterization blur, anti-aliasing bleeding, and cropped edges.
- */
-export function TokenSvg({
-  symbol,
-  size = 28,
+function RemoteLogo({
+  src,
+  label,
+  size,
+  fallback,
 }: {
-  symbol: string;
-  size?: number;
-}): ReactNode {
-  const resolved = resolveUploadedToken(symbol);
-  const uid = useId();
-  const svg = useMemo(
-    () => (resolved ? isolateSvgIds(resolved.svg, uid) : null),
-    [resolved, uid],
-  );
-  if (!resolved || !svg) return null;
-
+  src: string;
+  label: string;
+  size: number;
+  fallback: ReactNode;
+}) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (failedSrc === src) return <>{fallback}</>;
   return (
-    <div
-      className={`w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden [&>svg]:block [&>svg]:w-full [&>svg]:h-full select-none ${resolved.paddingClass}`}
+    <span
+      className="inline-flex h-full w-full shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/5"
       style={{ width: size, height: size }}
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element -- caller-supplied token metadata may use an arbitrary host, with a monogram fallback */}
+      <img
+        src={src}
+        alt={label}
+        width={size}
+        height={size}
+        className="h-full w-full rounded-full object-contain"
+        onError={() => setFailedSrc(src)}
+        loading="lazy"
+      />
+    </span>
   );
 }
 
-/**
- * Direct inline vector Token Avatar.
- * Renders official uploaded vector SVGs directly into the DOM for 100% sharpness.
- * Never uses <img> rasterization for uploaded / curated tokens.
- */
+/** A token brand mark with an optional network badge. */
 export function TokenAvatar({
   symbol,
   name,
   logo,
+  assetId,
   contractAddress,
   chain,
   networkBadge,
   size = 28,
   className = "",
 }: TokenAvatarProps) {
-  const [localFailed, setLocalFailed] = useState(false);
-  const [remoteFailed, setRemoteFailed] = useState(false);
   const sym = symbol.toUpperCase();
   const label = name || symbol;
   const badgeSize = Math.max(7, Math.round(size * 0.39));
@@ -150,28 +96,23 @@ export function TokenAvatar({
   // of the diameter and eats the glyph. Keep ring-1 until the badge is
   // large enough (~14px) to carry the wider ring.
   const badgeRing = badgeSize < 14 ? "ring-1" : "ring-2";
-  const monogram = sym.charAt(0);
-  const uid = useId();
-
-  // 1. Direct inline SVG lookup for curated / uploaded tokens (instant, zero rasterization)
-  const uploaded = useMemo(() => resolveUploadedToken(symbol), [symbol]);
-  const uploadedSvg = useMemo(
-    () => (uploaded ? isolateSvgIds(uploaded.svg, uid) : null),
-    [uploaded, uid],
+  const iconRef = useMemo<BrandRef>(
+    () => ({
+      kind: "token",
+      assetId,
+      chain,
+      contract: contractAddress,
+      symbol,
+    }),
+    [assetId, chain, contractAddress, symbol],
   );
-
-  // 2. Local file for the long tail in public/tokens
-  const localFile = useMemo(() => resolveTokenFile(symbol), [symbol]);
-
-  // 3. Candidate remote URL fallback for unlisted / dynamic tokens
-  const remoteUrl = useMemo(() => {
-    if (uploaded) return null;
-    if (logo) return logo;
-    if (contractAddress && chain) {
-      return `https://icons.llamao.fi/token/${chain}:${contractAddress}`;
-    }
-    return null;
-  }, [uploaded, logo, contractAddress, chain]);
+  const resolved = useMemo(() => resolveBrandIcon(iconRef), [iconRef]);
+  const monogram = <BrandMonogram label={sym || label} size={size} title={label} />;
+  const fallback = logo ? (
+    <RemoteLogo src={logo} label={label} size={size} fallback={monogram} />
+  ) : (
+    monogram
+  );
 
   return (
     <span
@@ -182,65 +123,26 @@ export function TokenAvatar({
       style={{ width: size, height: size }}
       title={label}
     >
-      {uploaded && uploadedSvg ? (
-        <span
-          className={`w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden [&>svg]:block [&>svg]:w-full [&>svg]:h-full select-none ${uploaded.paddingClass}`}
-          style={{ width: size, height: size }}
-          dangerouslySetInnerHTML={{ __html: uploadedSvg }}
+      {resolved ? (
+        <BrandIcon
+          of={iconRef}
+          size={size}
+          className="h-full w-full"
+          title={label}
+          fallback={fallback}
         />
-      ) : localFile && !localFailed ? (
-        <span
-          className={`w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden select-none ${localFile.paddingClass}`}
-          style={{ width: size, height: size }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element -- long-tail static SVG from public/tokens with onError fallback; SVGs gain nothing from next/image */}
-          <img
-            src={`/tokens/${localFile.file}.svg`}
-            alt={label}
-            width={size}
-            height={size}
-            className="w-full h-full object-contain rounded-full"
-            onError={() => setLocalFailed(true)}
-            loading="lazy"
-          />
-        </span>
-      ) : remoteUrl && !remoteFailed ? (
-        <span
-          className="w-full h-full inline-flex shrink-0 items-center justify-center rounded-full overflow-hidden bg-white/5"
-          style={{ width: size, height: size }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element -- dynamic remote token logo from an arbitrary host with onError fallback; cannot allowlist for next/image */}
-          <img
-            src={remoteUrl}
-            alt={label}
-            width={size}
-            height={size}
-            className="w-full h-full object-contain rounded-full"
-            onError={() => setRemoteFailed(true)}
-            loading="lazy"
-          />
-        </span>
       ) : (
-        <span
-          className="inline-flex shrink-0 items-center justify-center rounded-full bg-field font-semibold text-ink-2"
-          style={{
-            width: size,
-            height: size,
-            fontSize: Math.max(9, Math.round(size * 0.44)),
-          }}
-        >
-          {monogram}
-        </span>
+        fallback
       )}
 
       {/* Overlapping network badge at bottom-right corner */}
-      {networkBadge && (
+      {networkBadge ? (
         <span
           className={`absolute -bottom-0.5 -right-0.5 flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-surface ${badgeRing} ring-surface`}
         >
           <NetworkIcon network={networkBadge} size={badgeSize} />
         </span>
-      )}
+      ) : null}
     </span>
   );
 }
