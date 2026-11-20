@@ -137,7 +137,7 @@ export default function UnlockCardStates({
                 className="mr-1 inline-block shrink-0 align-middle -translate-y-px"
                 aria-hidden
               />
-              Prompt the agent for a new request.
+              Ask for a new request.
             </span>
           </button>
         </Body>

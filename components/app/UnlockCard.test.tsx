@@ -65,7 +65,7 @@ describe("UnlockRequestCard", () => {
     );
 
     expect(html).toContain("Request expired.");
-    expect(html).toContain("Prompt the agent for a new request.");
+    expect(html).toContain("Ask for a new request.");
     expect(html).toContain("new request.</span></button>");
     expect(html).toContain("border-dashed");
   });
@@ -81,7 +81,7 @@ describe("UnlockRequestCard", () => {
     );
 
     expect(html).toContain("Request expired.");
-    expect(html).toContain("Prompt the agent for a new request");
+    expect(html).toContain("Ask for a new request");
   });
 
   it("does not offer an action outside the live chat", () => {
@@ -95,7 +95,7 @@ describe("UnlockRequestCard", () => {
     );
 
     expect(html).toContain("Request expired.");
-    expect(html).not.toContain("Prompt the agent");
+    expect(html).not.toContain("Ask for a new request");
   });
 
   it("keeps the primary action while the request is fresh", () => {
@@ -112,7 +112,7 @@ describe("UnlockRequestCard", () => {
       "Please unlock your Myntle account to continue.",
     );
     expect(html).toContain("Unlock");
-    expect(html).not.toContain("Prompt the agent");
+    expect(html).not.toContain("Ask for a new request");
   });
 
   it("names the Myntle balance for a passkey account", () => {

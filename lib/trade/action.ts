@@ -45,3 +45,43 @@ export function actionTitle(action: TradeAction): string {
       return "Swap";
   }
 }
+
+/**
+ * The action named as a thing, for a sentence that reports on it.
+ *
+ * The action key cannot be interpolated as-is: `withdraw` is a verb, `limit`
+ * is an order rather than a transaction, and `earn` is a deposit into a vault.
+ * The record is exhaustive so a new action cannot ship without a sentence.
+ */
+export const ACTION_NOUN: Record<TradeAction, string> = {
+  deposit: "deposit",
+  swap: "swap",
+  bridge: "bridge",
+  withdraw: "withdrawal",
+  trade: "trade",
+  limit: "limit order",
+  earn: "deposit",
+};
+
+/** Terminal card copy once the user refuses a proposal. */
+export function rejectionSentence(action: TradeAction): string {
+  return `You rejected the ${ACTION_NOUN[action]}.`;
+}
+
+/**
+ * Terminal card copy once the action settles.
+ *
+ * The sentence says what finished, in the reader's own terms. It never names
+ * the store the application read the outcome from, because the reader is not
+ * deciding anything about a database.
+ */
+export function settledSentence(action: TradeAction): string {
+  return action === "limit"
+    ? "Your limit order filled."
+    : `Your ${ACTION_NOUN[action]} is complete.`;
+}
+
+/** Terminal card copy once the action fails. */
+export function failureSentence(action: TradeAction): string {
+  return `Your ${ACTION_NOUN[action]} failed. Please try again.`;
+}

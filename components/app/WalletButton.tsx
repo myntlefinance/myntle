@@ -787,7 +787,7 @@ function ConnectPicker({
         // The picker stays open on the confirmation, then hands straight to
         // sign-in: a fresh connection without a session is unsigned, and
         // leaving the user to find the Sign In button is a dead end.
-        setSuccess("Connected successfully.");
+        setSuccess("Wallet connected.");
         closeTimer.current = window.setTimeout(() => {
           onClose();
           onConnected();

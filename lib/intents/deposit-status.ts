@@ -227,11 +227,11 @@ const MESSAGE: Record<
   Exclude<DepositPhase, "awaiting" | "waiting">,
   string
 > = {
-  detected: "Deposit detected. Processing…",
-  settled: "Success. Your deposit was detected and credited to your account.",
-  incomplete: "The deposit was below the required amount.",
-  refunded: "The deposit was refunded.",
-  failed: "The deposit did not settle. The record has the details.",
+  detected: "Your deposit arrived. Processing…",
+  settled: "Your deposit is in your Myntle account.",
+  incomplete: "Your deposit was below the required amount.",
+  refunded: "Your deposit was refunded.",
+  failed: "Your deposit did not go through. Open Details to see why.",
   // The invitation to replace the address is the action the card draws
   // beside this sentence, not part of it: the same words are sent as the
   // prompt, and a surface with no composer says only what happened.

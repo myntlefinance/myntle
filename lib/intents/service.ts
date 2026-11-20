@@ -462,7 +462,7 @@ export async function createExecutionQuote(params: {
 }): Promise<ExecutionQuote> {
   const { formatted, raw } = await requestQuote({ ...params, dry: false });
   if (!raw.depositAddress) {
-    throw new Error("Unable to execute trade. Please try again.");
+    throw new Error("The trade could not be prepared. Please try again.");
   }
   return { ...formatted, depositAddress: raw.depositAddress, depositMemo: raw.depositMemo ?? null };
 }

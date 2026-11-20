@@ -151,17 +151,17 @@ describe("deposit copy", () => {
     expect(depositStatusMessage("waiting")).toBeNull();
     expect(depositStatusMessage("awaiting")).toBeNull();
     expect(depositStatusMessage("detected")).toBe(
-      "Deposit detected. Processing…",
+      "Your deposit arrived. Processing…",
     );
     expect(depositStatusMessage("settled")).toBe(
-      "Success. Your deposit was detected and credited to your account.",
+      "Your deposit is in your Myntle account.",
     );
     expect(depositStatusMessage("incomplete")).toBe(
-      "The deposit was below the required amount.",
+      "Your deposit was below the required amount.",
     );
-    expect(depositStatusMessage("refunded")).toBe("The deposit was refunded.");
+    expect(depositStatusMessage("refunded")).toBe("Your deposit was refunded.");
     expect(depositStatusMessage("failed")).toBe(
-      "The deposit did not settle. The record has the details.",
+      "Your deposit did not go through. Open Details to see why.",
     );
     expect(depositStatusMessage("expired")).toBe("Expired.");
     expect(FRESH_DEPOSIT_PROMPT).toBe(

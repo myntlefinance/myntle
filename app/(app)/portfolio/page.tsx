@@ -3,7 +3,7 @@ import { parsePortfolioTab } from "@/components/app/portfolioTabs";
 
 export const metadata = {
   title: "Portfolio",
-  description: "Wallet and NEAR Intents settlement ledger balances.",
+  description: "Your wallet and Myntle account balances.",
   robots: { index: false, follow: false },
 };
 
