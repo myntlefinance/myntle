@@ -126,3 +126,40 @@ describe("anti-corruption boundary", () => {
     }
   });
 });
+
+/**
+ * The watchlist's privacy boundary.
+ *
+ * The selected address lives in memory and falls back to the stored default,
+ * so a copied link can never carry it. The watched tab reads the public
+ * ledger only; the private ledger and its unlock flow belong to the portfolio
+ * host, never to this tab. Both rules are structural, so they are checked here
+ * rather than through a render that could only see one branch.
+ */
+describe("watchlist privacy boundary", () => {
+  it("keeps the watched tab off the URL and the private ledger", () => {
+    const tab = readFileSync(
+      join(ROOT, "components", "app", "WatchedTab.tsx"),
+      "utf8",
+    );
+
+    for (const forbidden of [
+      "window.location",
+      "URLSearchParams",
+      "?address=",
+      "watchKey",
+      "useSuperPrivateBalances",
+      "fetchSessionPortfolio",
+      "fetchPasskeyPortfolio",
+      "usePasskeyPortfolio",
+      "SuperUnlock",
+      "UnlockRequestCard",
+      "User-Session",
+      "user-session",
+    ]) {
+      expect(tab, `WatchedTab must not reference ${forbidden}`).not.toContain(
+        forbidden,
+      );
+    }
+  });
+});

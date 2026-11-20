@@ -110,8 +110,6 @@ describe("adapter registry", () => {
     );
     expect(empty.balances).toEqual([]);
     expect("error" in empty).toBe(false);
-    expect(typeof getEvmRpcPort().getEnsAddress).toBe("function");
-    expect(typeof getSolanaRpcPort().getEndpoint()).toBe("string");
     // The real name resolver validates locally: a bad suffix fails
     // without a network call. The old stub threw "not wired yet".
     await expect(

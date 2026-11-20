@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
+import type {
+  LanguageModelV3CallOptions,
+  LanguageModelV3StreamPart,
+} from "@ai-sdk/provider";
 import { MockLanguageModelV3 } from "ai/test";
 import type { UIMessage, UIMessageChunk } from "ai";
 import { sealTurnSecret } from "@/lib/ai/turn-secret";
@@ -84,7 +87,10 @@ vi.mock("@/lib/db/client", () => ({
 
 import { runChatTurnStep } from "./chat-turn";
 
-function textModel(deltas: string[]) {
+function textModel(
+  deltas: string[],
+  onCall?: (prompt: LanguageModelV3CallOptions["prompt"]) => void,
+) {
   const parts: LanguageModelV3StreamPart[] = [
     { type: "stream-start", warnings: [] },
     { type: "text-start", id: "t1" },
@@ -110,14 +116,17 @@ function textModel(deltas: string[]) {
   ];
 
   return new MockLanguageModelV3({
-    doStream: async () => ({
-      stream: new ReadableStream<LanguageModelV3StreamPart>({
-        start(controller) {
-          for (const part of parts) controller.enqueue(part);
-          controller.close();
-        },
-      }),
-    }),
+    doStream: async (options) => {
+      onCall?.(options.prompt);
+      return {
+        stream: new ReadableStream<LanguageModelV3StreamPart>({
+          start(controller) {
+            for (const part of parts) controller.enqueue(part);
+            controller.close();
+          },
+        }),
+      };
+    },
   });
 }
 
@@ -228,8 +237,13 @@ describe("runChatTurnStep", () => {
     );
   });
 
-  it("sanitises the history before converting it for the model", async () => {
-    nearAI.mockReturnValue(textModel(["ok"]));
+  it("gives the model the sanitised history, not the raw one", async () => {
+    let prompt: LanguageModelV3CallOptions["prompt"] = [];
+    nearAI.mockReturnValue(
+      textModel(["ok"], (sent) => {
+        prompt = sent;
+      }),
+    );
     const sentinel = [
       {
         id: "sanitized",
@@ -239,9 +253,22 @@ describe("runChatTurnStep", () => {
     ] as UIMessage[];
     sanitizeHistoricalToolData.mockReturnValue(sentinel);
 
-    await runChatTurnStep(baseInput, new WritableStream<UIMessageChunk>());
+    await runChatTurnStep(
+      {
+        ...baseInput,
+        messages: [
+          {
+            id: "u-raw",
+            role: "user",
+            parts: [{ type: "text", text: "raw secret" }],
+          },
+        ],
+      },
+      new WritableStream<UIMessageChunk>(),
+    );
 
-    expect(sanitizeHistoricalToolData).toHaveBeenCalledTimes(1);
-    expect(convertToModelMessages).toHaveBeenCalledWith(sentinel);
+    const modelInput = JSON.stringify(prompt);
+    expect(modelInput).toContain("sanitized sentinel");
+    expect(modelInput).not.toContain("raw secret");
   });
 });

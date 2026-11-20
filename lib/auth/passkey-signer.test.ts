@@ -6,7 +6,6 @@ import {
   base64UrlDecode,
   base64UrlEncode,
   encodeP256PublicKey,
-  payloadChallenge,
   payloadDigest,
   verifyP256Signature,
   webAuthnSignedMessage,
@@ -36,6 +35,13 @@ const ORIGIN = "https://myntle.xyz";
 // never a parse-and-restringify round trip.
 const PAYLOAD =
   ' { "verifying_contract" : "intents.far", "signer_id": "0x4f3a", "deadline": "2026-11-05T11:28:18.215Z" } ';
+
+// SHA-256 of PAYLOAD, computed with Node's crypto rather than the signer's
+// own helper. The signer must produce this digest even if the helper drifts.
+const PAYLOAD_DIGEST = hexToBytes(
+  "0xe0539827e915724be32adc91c523d6ce722efa3f88c1237790e846f0efff2a63",
+);
+const PAYLOAD_CHALLENGE = "4FOYJ-kVckvjKtyRxSPWznIu-j-IwSN3kOhG8O__KmM";
 
 type CeremonyFixture = {
   challenge?: Uint8Array;
@@ -126,7 +132,7 @@ describe("signIntentWithPasskey", () => {
 
     const options = optionsOf(get);
     const challenge = new Uint8Array(options.challenge as ArrayBuffer);
-    expect(challenge).toEqual(payloadDigest(PAYLOAD));
+    expect(challenge).toEqual(PAYLOAD_DIGEST);
     expect(challenge).toHaveLength(32);
     expect(options.rpId).toBe(RP_ID);
     expect(options.userVerification).toBe("required");
@@ -185,7 +191,7 @@ describe("signIntentWithPasskey", () => {
       origin: string;
     };
     expect(clientData.type).toBe("webauthn.get");
-    expect(clientData.challenge).toBe(payloadChallenge(PAYLOAD));
+    expect(clientData.challenge).toBe(PAYLOAD_CHALLENGE);
     expect(clientData.origin).toBe(ORIGIN);
 
     const authData = base64UrlDecode(signed.authenticator_data);

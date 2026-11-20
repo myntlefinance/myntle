@@ -62,11 +62,8 @@ describe("sns on-chain derivation", () => {
   });
 
   it("supports one subdomain level", () => {
-    const sub = deriveSnsDomainKey("vault.bonfida.sns");
-    expect(sub).not.toBe(deriveSnsDomainKey("bonfida.sns"));
-    expect(deriveSnsDomainKey("vault.bonfida.sns")).toBe(sub);
-    expect(deriveRecordV1Key("vault.bonfida.sns")).toBe(
-      deriveRecordV1Key("vault.bonfida.sns"),
+    expect(deriveSnsDomainKey("vault.bonfida.sns")).not.toBe(
+      deriveSnsDomainKey("bonfida.sns"),
     );
   });
 

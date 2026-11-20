@@ -18,10 +18,6 @@ type BalancesBody = {
 
 const balancesCache = new Map<string, { at: number; body: BalancesBody }>();
 
-export function __clearBalancesCacheForTests() {
-  balancesCache.clear();
-}
-
 export async function GET(req: Request) {
   const session = await requireSession(req);
   if (!session) {

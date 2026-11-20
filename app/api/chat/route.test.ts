@@ -116,8 +116,7 @@ describe("POST /api/chat", () => {
       "run-1",
     );
 
-    const [workflow, args] = startMock.mock.calls[0];
-    expect(typeof workflow).toBe("function");
+    const [, args] = startMock.mock.calls[0];
     const input = args[0];
     expect(input).toMatchObject({
       conversationId: "conv-1",

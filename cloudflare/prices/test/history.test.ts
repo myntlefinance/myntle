@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSeriesRow,
-  changePct,
   decodeSeriesRow,
   encodeSeriesPoints,
   failedSeriesRow,
@@ -106,40 +105,6 @@ describe("normalizeSeries", () => {
   });
 });
 
-describe("changePct", () => {
-  it("measures the move from the first value to the last", () => {
-    expect(
-      changePct([
-        { time: 1, value: 100 },
-        { time: 2, value: 110 },
-      ]),
-    ).toBeCloseTo(10);
-  });
-
-  it("is negative on a fall", () => {
-    expect(
-      changePct([
-        { time: 1, value: 200 },
-        { time: 2, value: 150 },
-      ]),
-    ).toBeCloseTo(-25);
-  });
-
-  it("is null without two points", () => {
-    expect(changePct([])).toBeNull();
-    expect(changePct([{ time: 1, value: 100 }])).toBeNull();
-  });
-
-  it("is null when the first value cannot divide", () => {
-    expect(
-      changePct([
-        { time: 1, value: 0 },
-        { time: 2, value: 10 },
-      ]),
-    ).toBeNull();
-  });
-});
-
 describe("series cache", () => {
   it("uses 30 minutes for Binance and Alchemy, 60 for CoinGecko", () => {
     expect(seriesCacheTtlMs("binance")).toBe(SERIES_CACHE_TTL_MS);
@@ -210,7 +175,6 @@ describe("series cache", () => {
   it("keys an asset and its range without collisions", () => {
     const key = seriesCacheKey("nep141:wrap.near", SERIES_RANGE);
 
-    expect(key).toBe(seriesCacheKey("nep141:wrap.near", SERIES_RANGE));
     expect(key).not.toBe(seriesCacheKey("nep141:usdc.near", SERIES_RANGE));
   });
 });

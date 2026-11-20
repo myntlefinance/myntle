@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
@@ -132,44 +130,6 @@ describe("WatchedTab", () => {
     expect(html).not.toContain("Watching Vault");
     expect(html).not.toContain("Search assets");
     expect(html).not.toContain("animate-pulse");
-  });
-
-  describe("no address in the URL", () => {
-    it("never reads or writes an address param", () => {
-      const root = join(__dirname, "..", "..");
-      const tab = readFileSync(join(root, "components/app/WatchedTab.tsx"), "utf8");
-      // The selection lives in memory and falls back to the stored
-      // default: a copied link can never carry an address.
-      for (const forbidden of [
-        "window.location",
-        "URLSearchParams",
-        "?address=",
-        "watchKey",
-      ]) {
-        expect(tab, `WatchedTab must not reference ${forbidden}`).not.toContain(
-          forbidden,
-        );
-      }
-    });
-  });
-
-  it("reads the public ledger only, never the private one", () => {
-    const root = join(__dirname, "..", "..");
-    const tab = readFileSync(join(root, "components/app/WatchedTab.tsx"), "utf8");
-    for (const forbidden of [
-      "useSuperPrivateBalances",
-      "fetchSessionPortfolio",
-      "fetchPasskeyPortfolio",
-      "usePasskeyPortfolio",
-      "SuperUnlock",
-      "UnlockRequestCard",
-      "User-Session",
-      "user-session",
-    ]) {
-      expect(tab, `WatchedTab must not reference ${forbidden}`).not.toContain(
-        forbidden,
-      );
-    }
   });
 
   it("names the next step when nothing is selected", () => {

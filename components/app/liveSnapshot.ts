@@ -655,9 +655,3 @@ export function useLiveSnapshot(
   return live;
 }
 
-/** Clears the catalogue row cache. Never call this in the app. */
-export function __resetLiveSnapshotForTests(): void {
-  rowCache.clear();
-  rowInflight.clear();
-  symbolInflight.clear();
-}

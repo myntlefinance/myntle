@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  defaultWatchLabel,
   isEnsNameInput,
   isSnsNameInput,
   isWatchChain,
@@ -96,7 +95,7 @@ describe("isWatchChain", () => {
 describe("normalizeWatchLabel", () => {
   it("defaults an empty label to the truncated address", () => {
     expect(normalizeWatchLabel(undefined, "evm", CHECKSUMMED)).toBe(
-      defaultWatchLabel("evm", CHECKSUMMED),
+      "0xaf88…5831",
     );
     expect(normalizeWatchLabel("   ", "near", "alice.near")).toBe("alice.near");
   });

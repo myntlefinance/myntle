@@ -6,8 +6,6 @@ import {
   NAME_RESOLUTION_REASONS,
   RESOLVED_NAME_TTL_MS,
   UNREGISTERED_NAME_TTL_MS,
-  type NameResolverPort,
-  type ResolvedName,
 } from "./names";
 
 describe("name port contract", () => {
@@ -62,28 +60,5 @@ describe("name port contract", () => {
         retryable: true,
       }),
     ).toBe(false);
-  });
-
-  it("resolves through the port signature", async () => {
-    const stub: NameResolverPort = {
-      async resolveName(chain, input): Promise<ResolvedName | null> {
-        if (input === "unregistered.eth") return null;
-        return {
-          address:
-            chain === "evm"
-              ? "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
-              : "Fw1ETanDZafof7xEULsnq9UY6o71Tpds89tNwPkWLb1v",
-          name: input,
-          resolvedAt: new Date().toISOString(),
-        };
-      },
-    };
-
-    const hit = await stub.resolveName("evm", "vitalik.eth");
-    expect(hit?.address).toBe("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045");
-    expect(Number.isNaN(Date.parse(hit?.resolvedAt ?? ""))).toBe(false);
-
-    const miss = await stub.resolveName("evm", "unregistered.eth");
-    expect(miss).toBeNull();
   });
 });
