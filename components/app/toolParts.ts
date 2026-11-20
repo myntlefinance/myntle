@@ -86,6 +86,7 @@ export function assetName(assetId: string, symbols: Map<string, string>): string
 export type AssetMeta = {
   symbol: string;
   chain?: string;
+  contractAddress?: string;
   priceUsd?: number;
   /** When the catalogue observed the unit price, in milliseconds. */
   priceAsOf?: number;
@@ -107,6 +108,7 @@ export function harvestAssetMeta(
         assetId?: unknown;
         symbol?: unknown;
         chain?: unknown;
+        contractAddress?: unknown;
         priceUsd?: unknown;
         price?: unknown;
         priceAsOf?: unknown;
@@ -119,6 +121,11 @@ export function harvestAssetMeta(
       meta.set(asset.assetId, {
         symbol: (asset.symbol as string).toUpperCase(),
         chain: typeof asset.chain === "string" ? asset.chain : undefined,
+        contractAddress:
+          typeof asset.contractAddress === "string" &&
+          asset.contractAddress.length > 0
+            ? asset.contractAddress
+            : undefined,
         priceUsd:
           typeof asset.priceUsd === "number"
             ? asset.priceUsd
@@ -159,21 +166,4 @@ export function formatNum(raw: string): string {
     return n.toExponential(2);
   }
   return String(Number(n.toPrecision(4)));
-}
-
-/** Display truncation for money. Whole units, at most six decimals with
- * trailing zeros cut, thousands grouped. Anything unparsable passes
- * through untouched. Display-only: signed and bound values stay raw. */
-export function formatAmount(raw: string): string {
-  const n = Number(raw.replace(/,/g, ""));
-  if (!Number.isFinite(n)) return raw;
-  if (n === 0) return "0";
-  const abs = Math.abs(n);
-  if (abs >= 1000) {
-    return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
-  }
-  if (abs >= 1) {
-    return String(Number(n.toFixed(6)));
-  }
-  return String(Number(n.toPrecision(6)));
 }

@@ -12,19 +12,21 @@ import { networkDisplayName } from "@/lib/wallet/balances";
 
 /** The token hover card: ticker, chain, unit price, and the 24-hour line.
  * `history` is optional so a caller can supply its own series; otherwise the
- * card fetches one when it opens, and an empty list renders Liveline's own
+ * card fetches one when it opens, and an empty list renders the chart's own
  * “No data to display” state. When `price` is not supplied, the catalogue
  * resolves the ticker and the live store keeps the unit price current while
  * the card is on screen. */
 export function TokenPopup({
   symbol,
   chain,
+  assetId,
   price,
   history,
   changePct,
 }: {
   symbol: string;
   chain?: string;
+  assetId?: string;
   price?: string;
   history?: LivelinePoint[];
   changePct?: number | null;
@@ -49,15 +51,18 @@ export function TokenPopup({
   // Each prop is an independent override: a caller may supply the line, the
   // percent, or both, and the chart derives one from the other when absent.
   const chartChangePct = changePct ?? series.changePct;
-  // The chart remounts per series identity. The catalogue id is canonical;
-  // the requested ticker and chain still distinguish a caller-supplied line
-  // from the next card's line before a catalogue row has resolved.
-  const chartSeriesId = asset.historyAssetId ?? `${symbol}@${chain ?? ""}`;
 
   return (
     <div ref={rootRef}>
       <div className="mb-1 flex items-center gap-2">
-        <TokenAvatar symbol={symbol} networkBadge={chain} size={24} />
+        <TokenAvatar
+          symbol={symbol}
+          assetId={assetId ?? asset.assetId}
+          contractAddress={asset.contractAddress}
+          chain={chain}
+          networkBadge={chain}
+          size={24}
+        />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <p className="truncate text-sm font-medium leading-tight text-ink">
@@ -76,11 +81,7 @@ export function TokenPopup({
           ) : null}
         </div>
       </div>
-      <TokenPriceChart
-        points={chartPoints}
-        changePct={chartChangePct}
-        seriesId={chartSeriesId}
-      />
+      <TokenPriceChart points={chartPoints} changePct={chartChangePct} />
     </div>
   );
 }

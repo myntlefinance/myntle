@@ -9,10 +9,14 @@ import { TokenAvatar } from "./TokenAvatar";
 export function TokenChip({
   symbol,
   badge,
+  assetId,
+  contractAddress,
   className,
 }: {
   symbol: string;
   badge?: string;
+  assetId?: string;
+  contractAddress?: string;
   className?: string;
 }) {
   return (
@@ -24,7 +28,14 @@ export function TokenChip({
       )}
     >
       <span aria-hidden="true" className="inline-flex shrink-0">
-        <TokenAvatar symbol={symbol} networkBadge={badge} size={18} />
+        <TokenAvatar
+          symbol={symbol}
+          assetId={assetId}
+          contractAddress={contractAddress}
+          chain={badge}
+          networkBadge={badge}
+          size={18}
+        />
       </span>
       <span>{symbol}</span>
     </span>

@@ -414,6 +414,9 @@ export function AssetMatrix({
                           <TokenAvatar
                             symbol={item.symbol}
                             name={item.name}
+                            logo={item.logo}
+                            contractAddress={item.contractAddress}
+                            chain={item.chain}
                             networkBadge={group.icon}
                             size={28}
                           />

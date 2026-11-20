@@ -179,6 +179,7 @@ export function useSymbolAsset(
 ): {
   assetId: string | undefined;
   historyAssetId: string | undefined;
+  contractAddress: string | null | undefined;
   priceUsd: number | undefined;
   quote: LiveQuote | undefined;
 } {
@@ -221,6 +222,7 @@ export function useSymbolAsset(
   return {
     assetId: asset?.assetId,
     historyAssetId: historyAsset?.assetId,
+    contractAddress: asset?.contractAddress,
     priceUsd: resolveSymbolPrice(asset, quote) ?? fallbackPrice,
     quote,
   };

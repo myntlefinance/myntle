@@ -52,6 +52,11 @@ function hydrate(): void {
       cache.set(id, {
         symbol: value.symbol.toUpperCase(),
         chain: typeof value.chain === "string" ? value.chain : undefined,
+        contractAddress:
+          typeof value.contractAddress === "string" &&
+          value.contractAddress.length > 0
+            ? value.contractAddress
+            : undefined,
         priceUsd:
           typeof value.priceUsd === "number" ? value.priceUsd : undefined,
         decimals:
@@ -76,6 +81,7 @@ function persist(): void {
       entries[id] = {
         symbol: meta.symbol,
         chain: meta.chain,
+        contractAddress: meta.contractAddress,
         priceUsd: meta.priceUsd,
         decimals: meta.decimals,
       };
@@ -137,6 +143,7 @@ export function useAssetMetaResolution(
                   assetId: string;
                   symbol: string;
                   chain: string;
+                  contractAddress?: string;
                   decimals?: number;
                   priceUsd: number;
                 }>;
@@ -155,6 +162,10 @@ export function useAssetMetaResolution(
           cache.set(a.assetId, {
             symbol: a.symbol,
             chain: a.chain,
+            contractAddress:
+              typeof a.contractAddress === "string" && a.contractAddress.length > 0
+                ? a.contractAddress
+                : undefined,
             priceUsd: typeof a.priceUsd === "number" ? a.priceUsd : undefined,
             decimals:
               typeof a.decimals === "number" && Number.isInteger(a.decimals)
