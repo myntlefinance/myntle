@@ -103,7 +103,7 @@ describe("SentenceTradeCard", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <SentenceTradeCard {...swapProps} state="denied" />,
     );
-    expect(html).toContain("The proposal was rejected. Nothing was moved.");
+    expect(html).toContain("You rejected the swap.");
     expect(html).toContain(">Details<");
     expect(html).not.toContain(">Approve<");
   });
@@ -208,13 +208,13 @@ describe("direct approval failure", () => {
 
   it("keeps the card's own fallback when the body has no real message", () => {
     expect(directApprovalFailure({ error: "An error occurred." })).toBe(
-      "Unable to execute trade. Please try again.",
+      "The trade could not be sent. Please try again.",
     );
     expect(directApprovalFailure(null)).toBe(
-      "Unable to execute trade. Please try again.",
+      "The trade could not be sent. Please try again.",
     );
     expect(directApprovalFailure({ message: "   " })).toBe(
-      "Unable to execute trade. Please try again.",
+      "The trade could not be sent. Please try again.",
     );
   });
 });
@@ -308,7 +308,7 @@ describe("TokenPopup", () => {
     expect(html).toContain("Arbitrum");
     expect(html).toContain("$1.00");
     expect(html).toContain("24h");
-    expect(html).toContain("<canvas");
+    expect(html).toContain('aria-label="24 hour price chart');
     // Popup rows center; baselining lets image and truncation baselines
     // float the value above the label.
     expect(html).not.toContain("items-baseline");
@@ -452,6 +452,20 @@ describe("VenuePopup", () => {
     expect(html).toContain("Swap");
     expect(html).toContain(" for ");
   });
+
+  it("keeps each amount and its ticker in one inline group", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <SentenceTradeCard {...swapProps} amountIn="14" amountOut="13.993034" />,
+    );
+    // The sentence may wrap between words, never between a figure and the
+    // pill that names its asset.
+    expect(html).toMatch(
+      /whitespace-nowrap"><strong[^>]*>14<\/strong> <span[^>]*aria-haspopup="dialog"/,
+    );
+    expect(html).toMatch(
+      /whitespace-nowrap"><strong[^>]*>13\.993034<\/strong> <span[^>]*aria-haspopup="dialog"/,
+    );
+  });
 });
 
 describe("wallet names", () => {
@@ -496,11 +510,12 @@ describe("wallet names", () => {
     expect(html).toContain('width="18" height="18"');
   });
 
-  it("falls back to the generic glyph with no brand mark", () => {
+  it("falls back to the generic glyph with no wallet brand mark", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <SentenceTradeCard {...depositProps} />,
     );
-    expect(html).not.toContain("<img");
+    expect(html).toContain("tabler-icon-wallet");
+    expect(html).not.toContain('src="https://example.com/mm.png"');
   });
 
   it("shows a NEAR named account in full", () => {

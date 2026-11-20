@@ -8,6 +8,7 @@
  * signed in.
  */
 
+import { formatRawAmount, isStableSymbol } from "@/lib/format/amount";
 import { evmChainForSlug } from "../evm-chains";
 
 export type FundingChainKind = "evm" | "solana" | "near";
@@ -82,34 +83,14 @@ export function fundingChainKind(
   return null;
 }
 
-/** A raw token amount as a decimal string, with trailing zeroes trimmed. */
-export function formatRawAmount(
-  raw: bigint,
-  decimals: number,
-  maxFractionDigits = 6,
-): string {
-  if (decimals <= 0) return raw.toString();
-  const negative = raw < 0n;
-  const value = negative ? -raw : raw;
-  const base = 10n ** BigInt(decimals);
-  const whole = value / base;
-  const fraction = (value % base).toString().padStart(decimals, "0");
-  const trimmed = fraction.replace(/0+$/, "");
-  const shown =
-    trimmed.length > maxFractionDigits
-      ? trimmed.slice(0, maxFractionDigits).replace(/0+$/, "")
-      : trimmed;
-  const text = shown.length > 0 ? `${whole}.${shown}` : whole.toString();
-  return negative ? `-${text}` : text;
-}
-
 export function tokenShortfall(
   need: bigint,
   have: bigint,
   decimals: number,
   symbol: string,
 ): string {
-  return `Need ${formatRawAmount(need, decimals)} ${symbol}, wallet has ${formatRawAmount(have, decimals)}`;
+  const stable = isStableSymbol(symbol);
+  return `Need ${formatRawAmount(need, decimals, { stable })} ${symbol}, wallet has ${formatRawAmount(have, decimals, { stable })}`;
 }
 
 export function gasShortfall(
@@ -119,7 +100,7 @@ export function gasShortfall(
   symbol: string,
   includingAmount = false,
 ): string {
-  return `Need about ${formatRawAmount(need, decimals, 4)} ${symbol} ${includingAmount ? "including gas" : "for gas"}, wallet has ${formatRawAmount(have, decimals, 4)} ${symbol}.`;
+  return `Need about ${formatRawAmount(need, decimals, { maxFractionDigits: 4 })} ${symbol} ${includingAmount ? "including gas" : "for gas"}, wallet has ${formatRawAmount(have, decimals, { maxFractionDigits: 4 })} ${symbol}.`;
 }
 
 /** The dialog state a balance check maps to. */

@@ -1,12 +1,12 @@
 import type { UIMessage } from "ai";
 import { parseTradeAction, type TradeAction } from "@/lib/trade/action";
+import { formatAmount, isStableSymbol } from "@/lib/format/amount";
 import { formatUsdPrice } from "@/lib/format/price";
 import type { DepositMetadata } from "@/lib/intents/deposit-metadata";
 import { normalizeEvmAddress } from "@/lib/intents/destination";
 import { isNameLikeValue } from "@/lib/names/detect";
 import {
   assetName,
-  formatAmount,
   inputOf,
   outputOf,
   stateOf,
@@ -339,13 +339,19 @@ export function collectApprovals(
       toAssetId,
       toSymbol,
       toChain: meta.get(toAssetId)?.chain,
-      amountIn: quotedIn ? formatAmount(quotedIn) : "—",
+      amountIn: quotedIn
+        ? formatAmount(quotedIn, { stable: isStableSymbol(fromSymbol) })
+        : "—",
       amountInUsd: quotedIn ? usd(quotedIn, meta.get(fromAssetId)?.priceUsd) : undefined,
-      amountOut: rawOut ? formatAmount(rawOut) : "—",
+      amountOut: rawOut
+        ? formatAmount(rawOut, { stable: isStableSymbol(toSymbol) })
+        : "—",
       amountOutUsd: asUsd(str(quoted?.amountOutUsd)),
       fromPriceUsd: formatUsdPrice(meta.get(fromAssetId)?.priceUsd),
       toPriceUsd: formatUsdPrice(meta.get(toAssetId)?.priceUsd),
-      minAmountOut: rawMin ? formatAmount(rawMin) : undefined,
+      minAmountOut: rawMin
+        ? formatAmount(rawMin, { stable: isStableSymbol(toSymbol) })
+        : undefined,
       minAmountOutRaw: str(quoted?.minAmountOutRaw) ?? undefined,
       route,
       accountKind:
@@ -616,21 +622,34 @@ export function collectWithdrawals(
     const destinationName = str(quoted?.destinationName) || undefined;
     const destinationChain = str(quoted?.destinationChain) || undefined;
 
+    const fromSymbol = assetName(fromAssetId, symbols);
+    const toSymbol = assetName(toAssetId, symbols);
+    const amountIn = str(quoted?.amountIn);
+    const amountOut = str(quoted?.amountOut);
+    const minAmountOut = str(quoted?.minAmountOut);
+    const fee = str(quoted?.withdrawFeeFormatted);
+
     out.push({
       approvalId,
       status,
       requestedAt,
       fromAssetId,
       toAssetId,
-      fromSymbol: assetName(fromAssetId, symbols),
-      toSymbol: assetName(toAssetId, symbols),
+      fromSymbol,
+      toSymbol,
       fromChain: meta.get(fromAssetId)?.chain,
       toChain: meta.get(toAssetId)?.chain,
       amount,
-      amountIn: str(quoted?.amountIn) || undefined,
-      amountOut: str(quoted?.amountOut) || undefined,
-      minAmountOut: str(quoted?.minAmountOut) || undefined,
-      fee: str(quoted?.withdrawFeeFormatted) || undefined,
+      amountIn: amountIn
+        ? formatAmount(amountIn, { stable: isStableSymbol(fromSymbol) })
+        : undefined,
+      amountOut: amountOut
+        ? formatAmount(amountOut, { stable: isStableSymbol(toSymbol) })
+        : undefined,
+      minAmountOut: minAmountOut
+        ? formatAmount(minAmountOut, { stable: isStableSymbol(toSymbol) })
+        : undefined,
+      fee: fee ? formatAmount(fee, { stable: isStableSymbol(fromSymbol) }) : undefined,
       destination,
       destinationName,
       destinationChain,

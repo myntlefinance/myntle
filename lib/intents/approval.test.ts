@@ -5,7 +5,6 @@ import {
   approveIntentsTrade,
   approveIntentsWithdrawal,
   createIntentsDeposit,
-  formatRawAmount,
 } from "./approval";
 import { WALLET_NOT_CONNECTED } from "./wallet-signer";
 
@@ -953,17 +952,3 @@ describe("createIntentsDeposit", () => {
   });
 });
 
-/* ------------------------------------------------------------------ */
-/* display                                                             */
-/* ------------------------------------------------------------------ */
-
-describe("formatRawAmount", () => {
-  it("shows a smallest-unit amount as whole units without rounding up", () => {
-    expect(formatRawAmount("1000000", 6)).toBe("1");
-    expect(formatRawAmount("1500000", 6)).toBe("1.5");
-    expect(formatRawAmount("1234567", 6)).toBe("1.234567");
-    expect(formatRawAmount("999999", 6)).toBe("0.999999");
-    expect(formatRawAmount("1", 0)).toBe("1");
-    expect(formatRawAmount("abc", 6)).toBe("abc");
-  });
-});

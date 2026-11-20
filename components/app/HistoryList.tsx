@@ -1,6 +1,7 @@
 "use client";
 
 import { StatusPill } from "@/components/atoms/StatusPill";
+import { formatAmount, isStableSymbol } from "@/lib/format/amount";
 import { networkDisplayName } from "@/lib/wallet/balances";
 import { assetName, type AssetMeta } from "@/components/app/toolParts";
 import {
@@ -50,6 +51,12 @@ export function HistoryList({
           ? assetName(row.destinationAsset, symbols)
           : "—";
         const out = row.amountOut ?? row.expectedOut;
+        const amountIn = row.amountIn
+          ? formatAmount(row.amountIn, { stable: isStableSymbol(from) })
+          : null;
+        const amountOut = out
+          ? formatAmount(out, { stable: isStableSymbol(to) })
+          : null;
         const fromChain = row.originAsset
           ? meta.get(row.originAsset)?.chain
           : undefined;
@@ -69,17 +76,23 @@ export function HistoryList({
             <div className="flex items-start justify-between gap-3">
               <p className="min-w-0 text-[14px] leading-snug text-ink">
                 <strong className="font-semibold tabular-nums">
-                  {row.amountIn ?? "—"} {from}
+                  {amountIn ?? "—"} {from}
                 </strong>{" "}
                 <span className="text-ink-3">→</span>{" "}
                 <strong className="font-semibold tabular-nums">
-                  {out ?? "—"} {to}
+                  {amountOut ?? "—"} {to}
                 </strong>
                 <span className="text-[12.5px] text-ink-3">{route}</span>
               </p>
               <StatusPill tone={tone}>{label}</StatusPill>
             </div>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-3">
+            {/* The time and explorer link are the row's detail. The
+              * skeleton keeps the line's height and draws nothing for
+              * it, so each card is the trade and its status. */}
+            <div
+              className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-3"
+              {...{ "skullet-ignore": "" }}
+            >
               {formatWhen(row.createdAt) ? (
                 <time>{formatWhen(row.createdAt)}</time>
               ) : null}

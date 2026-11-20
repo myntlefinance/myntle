@@ -24,7 +24,7 @@ import {
   withdrawalApproval,
 } from "@/components/finance/sentence-approval";
 import { collectLimitOrders } from "@/components/app/limitOrders";
-import { formatRawAmount } from "@/lib/intents/approval";
+import { formatRawAmount, isStableSymbol } from "@/lib/format/amount";
 import { depositCardStateForRecord } from "@/lib/intents/deposit-status";
 import { signIntentForSession } from "@/lib/intents/session-signer";
 import AssetMatrix from "@/components/finance/AssetMatrix";
@@ -338,7 +338,11 @@ export const LiveResponse = memo(function LiveResponseInner({
   // whole units when the catalogue told us the exponent.
   const rawAmountLabel = (assetId: string, amount: string) => {
     const decimals = assetMeta.get(assetId)?.decimals;
-    return decimals !== undefined ? formatRawAmount(amount, decimals) : amount;
+    return decimals !== undefined
+      ? formatRawAmount(amount, decimals, {
+          stable: isStableSymbol(assetName(assetId, symbols)),
+        })
+      : amount;
   };
 
   // The unlock card ages on the message's own clock, so it behaves the same
@@ -610,8 +614,10 @@ export const LiveResponse = memo(function LiveResponseInner({
           conversationId={conversationId}
           decisionPending={cardPending(a.approvalId)}
           active={interactive && !superseded}
+          fromAssetId={a.fromAssetId}
           fromSymbol={a.fromSymbol}
           fromChain={a.fromChain}
+          toAssetId={a.toAssetId}
           toSymbol={a.toSymbol}
           toChain={a.toChain}
           amountIn={a.amountIn}
@@ -730,8 +736,10 @@ export const LiveResponse = memo(function LiveResponseInner({
           decisionPending={cardPending(approvalId)}
           active={interactive && !superseded}
           requestedAt={createdAt ? new Date(createdAt).toISOString() : undefined}
+          fromAssetId={entry.assetId}
           fromSymbol={symbol}
           fromChain={assetMeta.get(entry.assetId)?.chain}
+          toAssetId={entry.assetId}
           toSymbol={symbol}
           toChain="near"
           amountIn={amount}
@@ -821,8 +829,10 @@ export const LiveResponse = memo(function LiveResponseInner({
           decisionPending={cardPending(approvalId)}
           active={interactive && !superseded}
           requestedAt={withdrawal.requestedAt}
+          fromAssetId={withdrawal.fromAssetId}
           fromSymbol={withdrawal.fromSymbol}
           fromChain={withdrawal.fromChain}
+          toAssetId={withdrawal.toAssetId}
           toSymbol={withdrawal.toSymbol}
           toChain={withdrawal.toChain}
           amountIn={amountLabel}
@@ -932,8 +942,10 @@ export const LiveResponse = memo(function LiveResponseInner({
           conversationId={conversationId}
           decisionPending={cardPending(approvalId)}
           active={interactive && !superseded}
+          fromAssetId={order.baseAssetId}
           fromSymbol={order.baseSymbol}
           fromChain={order.baseChain}
+          toAssetId={order.quoteAssetId}
           toSymbol={order.quoteSymbol}
           toChain={order.quoteChain}
           amountIn={order.quantity}

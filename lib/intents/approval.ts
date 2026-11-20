@@ -40,16 +40,6 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   }
 }
 
-/** Raw smallest-unit digits to whole units for display; never rounded up. */
-export function formatRawAmount(raw: string, decimals: number): string {
-  if (decimals <= 0 || !/^\d+$/.test(raw)) return raw;
-  const digits = raw.replace(/^0+(?=\d)/, "");
-  const padded = digits.padStart(decimals + 1, "0");
-  const head = padded.slice(0, -decimals);
-  const tail = padded.slice(-decimals).replace(/0+$/, "").slice(0, 6);
-  return tail ? `${head}.${tail}` : head;
-}
-
 /* ------------------------------------------------------------------ */
 /* the deposit request                                                */
 /* ------------------------------------------------------------------ */

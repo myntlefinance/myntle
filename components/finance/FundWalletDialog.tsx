@@ -25,6 +25,7 @@ import {
   type DepositMetadata,
   type DepositWalletKind,
 } from "@/lib/intents/deposit-metadata";
+import { formatRawAmount, isStableSymbol } from "@/lib/format/amount";
 import { evmChainForId, evmChainForSlug } from "@/lib/wallet/evm-chains";
 import {
   connectEvmFunding,
@@ -33,7 +34,6 @@ import {
   createConnectedEvmFunding,
   createConnectedNearFunding,
   createConnectedSolanaFunding,
-  formatRawAmount,
   friendlyFundingError,
   fundingActionsForState,
   fundingStateForCheck,
@@ -236,7 +236,9 @@ export function FundWalletDialog({
   }, []);
 
   const amount = details
-    ? `${formatRawAmount(BigInt(details.amountRaw), details.decimals)} ${details.symbol}`
+    ? `${formatRawAmount(BigInt(details.amountRaw), details.decimals, {
+        stable: isStableSymbol(details.symbol),
+      })} ${details.symbol}`
     : null;
   const network =
     depositNetworkLabel(deposit) ??
@@ -505,7 +507,7 @@ export function FundWalletDialog({
                 "This wallet does not have enough for the deposit.")
               : state === "ready"
                 ? depositReady
-                  ? "The wallet has the amount and the gas for this deposit."
+                  ? "This wallet has enough for the deposit and the network fee."
                   : "Checking the deposit address before sending…"
                 : state === "error"
                   ? error

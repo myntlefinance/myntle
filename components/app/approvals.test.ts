@@ -731,7 +731,7 @@ describe("collectApprovals", () => {
       catalogueMeta(),
     );
     expect(info.amountOut).toBe("1,993,997.12");
-    expect(info.minAmountOut).toBe("1.974122");
+    expect(info.minAmountOut).toBe("1.97412");
     // Dollar math still runs on the raw figure (rounded past thousands).
     expect(info.amountInUsd).toBe("$14,000,000");
   });
@@ -809,10 +809,10 @@ describe("collectWithdrawals", () => {
       destination: DESTINATION,
       destinationChain: "arb",
       quoteId: "11111111-2222-4333-8444-555555555555",
-      amountIn: "0.5",
-      amountOut: "0.4894",
-      minAmountOut: "0.484506",
-      fee: "0.0106",
+      amountIn: "0.50",
+      amountOut: "0.48",
+      minAmountOut: "0.48",
+      fee: "0.01",
       amount: "500000",
     });
   });
@@ -936,7 +936,7 @@ describe("collectWithdrawals", () => {
       {
         id: "ap-w8",
         quoteId: "11111111-2222-4333-8444-555555555555",
-        amountIn: "0.5",
+        amountIn: "0.50",
         destination: DESTINATION,
       },
       {
@@ -965,7 +965,6 @@ describe("collectWithdrawals", () => {
       "withdraw-2",
       "withdraw-1",
     ]);
-    expect(withdrawals.map((w) => w.amountOut)).toEqual(["0.4895", "0.4894"]);
   });
 
   it("never lets an approved withdrawal consume the quote a waiting card needs", () => {

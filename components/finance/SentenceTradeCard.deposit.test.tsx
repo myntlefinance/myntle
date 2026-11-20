@@ -261,7 +261,7 @@ describe("the deposit Start state", () => {
   it("shows a skeleton instead of guessing while the record is checked", () => {
     const html = render(<SentenceTradeCard {...depositCard} decisionPending />);
 
-    expect(html).toContain("Checking the record.");
+    expect(html).toContain("Checking your transaction.");
     expect(html).toContain("skullet-bar");
     expect(button("Start")).toBeUndefined();
     expect(button("Reject")).toBeUndefined();
@@ -377,7 +377,7 @@ describe("the deposit record's live states", () => {
       }),
     );
 
-    expect(html).toContain("Deposit detected. Processing…");
+    expect(html).toContain("Your deposit arrived. Processing…");
     expect(html).toContain("View on explorer");
   });
 });
@@ -534,7 +534,7 @@ describe("the deposit status table", () => {
   it("withdraws the address once the deposit is detected", () => {
     const html = render(waitingCard({ state: "processing" }));
 
-    expect(html).toContain("Deposit detected. Processing…");
+    expect(html).toContain("Your deposit arrived. Processing…");
     expect(html).toContain("Processing");
     // A detected address is not funded again, so the QR, the address, and
     // the send control leave the card instead of fading behind it.
@@ -548,9 +548,7 @@ describe("the deposit status table", () => {
   it("reports success without ageing the record out", () => {
     const html = render(waitingCard({ state: "settled", expiresAt: PAST }));
 
-    expect(html).toContain(
-      "Your deposit was detected and credited to your account.",
-    );
+    expect(html).toContain("Your deposit is in your Myntle account.");
     expect(html).not.toContain("Expired");
     expect(html).not.toContain("Executed");
   });
@@ -564,9 +562,7 @@ describe("the deposit status table", () => {
       }),
     );
 
-    expect(html).toContain(
-      "Your deposit was detected and credited to your account.",
-    );
+    expect(html).toContain("Your deposit is in your Myntle account.");
     expect(html).toContain("View Txn");
     expect(html).toContain("https://arbiscan.io/tx/0xabc");
   });
@@ -580,9 +576,7 @@ describe("the deposit status table", () => {
       }),
     );
 
-    expect(html).toContain(
-      "Your deposit was detected and credited to your account.",
-    );
+    expect(html).toContain("Your deposit is in your Myntle account.");
     expect(html).toContain("View Txn");
     expect(html).toContain(
       `https://explorer.near-intents.org/mask/${DEPOSIT}`,
@@ -592,21 +586,21 @@ describe("the deposit status table", () => {
   it("keeps detected status ahead of the clock", () => {
     const html = render(waitingCard({ state: "processing", expiresAt: PAST }));
 
-    expect(html).toContain("Deposit detected. Processing…");
+    expect(html).toContain("Your deposit arrived. Processing…");
     expect(html).not.toContain("Expired");
   });
 
   it("names a short deposit, a refund, and a failed settlement separately", () => {
     const incomplete = render(waitingCard({ state: "incomplete" }));
-    expect(incomplete).toContain("The deposit was below the required amount.");
+    expect(incomplete).toContain("Your deposit was below the required amount.");
     expect(incomplete).not.toContain("Deposit failed");
 
     const refunded = render(waitingCard({ state: "refunded" }));
-    expect(refunded).toContain("The deposit was refunded.");
+    expect(refunded).toContain("Your deposit was refunded.");
 
     const failed = render(waitingCard({ state: "failed" }));
     expect(failed).toContain(
-      "The deposit did not settle. The record has the details.",
+      "Your deposit did not go through. Open Details to see why.",
     );
   });
 
@@ -648,7 +642,7 @@ describe("a revisited deposit", () => {
 
     expect(html).toContain("Expired");
     expect(html).not.toContain("skullet-bar");
-    expect(html).not.toContain("Checking the record.");
+    expect(html).not.toContain("Checking your transaction.");
   });
 
   it("keeps a pending record without a deadline out of the Unverified state", () => {
@@ -787,7 +781,7 @@ describe("a refused deposit", () => {
   it("withdraws the funding panel and keeps the record's own rows", () => {
     const html = render(waitingCard({ state: "denied" }));
 
-    expect(html).toContain("The proposal was rejected. Nothing was moved.");
+    expect(html).toContain("You rejected the deposit.");
     // The address belonged to a proposal that was refused: no QR, no copy
     // control, no funding CTA, and no View Txn without a reported hash.
     expect(html).not.toContain("Deposit address QR code");

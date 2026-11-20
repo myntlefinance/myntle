@@ -21,6 +21,7 @@ import { SpinnerRing } from "@/components/primitives/TaskRows";
 import { TokenChip } from "@/components/finance/TokenChip";
 import { TokenAvatar } from "@/components/finance/TokenAvatar";
 import { NetworkIcon } from "@/components/finance/NetworkIcon";
+import { ProtocolIcon } from "@/components/finance/ProtocolIcon";
 import { PopupRow, TokenPopup } from "@/components/finance/TokenPopup";
 import { DepositQr } from "@/components/finance/DepositQr";
 import { FundWalletDialog } from "@/components/finance/FundWalletDialog";
@@ -75,12 +76,19 @@ import {
   buildTradeApprovalMessage,
   isApprovalWindowValid,
 } from "@/lib/trade/approval-message";
+import { formatAmount, isStableSymbol } from "@/lib/format/amount";
 import {
   getApprovalOutcome,
   getApprovalTx,
   rememberApprovalOutcome,
 } from "@/components/app/approvalStore";
-import { actionTitle, type TradeAction } from "@/lib/trade/action";
+import {
+  actionTitle,
+  failureSentence,
+  rejectionSentence,
+  settledSentence,
+  type TradeAction,
+} from "@/lib/trade/action";
 import type { SentenceApproval } from "./sentence-approval";
 
 /* Kept on this module for callers and tests that already import it here;
@@ -209,8 +217,10 @@ export function cardStateAfterDeny(
  */
 export default function SentenceTradeCard({
   action = "swap",
+  fromAssetId,
   fromSymbol,
   fromChain,
+  toAssetId,
   toSymbol,
   toChain,
   amountIn,
@@ -255,6 +265,9 @@ export default function SentenceTradeCard({
   onSignIn,
 }: {
   action?: TradeAction;
+  /** Exact catalogue identities, when the quote supplied them. */
+  fromAssetId?: string;
+  toAssetId?: string;
   fromSymbol: string;
   fromChain?: string;
   toSymbol: string;
@@ -1168,7 +1181,22 @@ export default function SentenceTradeCard({
           fresh?: Partial<CardFigures>;
         } | null;
         const fresh = moved?.fresh;
-        if (fresh) setFigures((f) => adoptRevisedQuote(f, fresh));
+        if (fresh) {
+          // The route's revised figures are whole-unit strings; the card
+          // reads them with the same rule as the original quote.
+          const display = { ...fresh };
+          if (display.amountOut) {
+            display.amountOut = formatAmount(display.amountOut, {
+              stable: isStableSymbol(toSymbol),
+            });
+          }
+          if (display.minAmountOut) {
+            display.minAmountOut = formatAmount(display.minAmountOut, {
+              stable: isStableSymbol(toSymbol),
+            });
+          }
+          setFigures((f) => adoptRevisedQuote(f, display));
+        }
         setTxState("awaiting");
         setSubmitError(moved?.message ?? "The price has moved. Please review and resubmit.");
         return;
@@ -1259,7 +1287,7 @@ export default function SentenceTradeCard({
       });
     } catch {
       setTxState("awaiting");
-      setSubmitError("Unable to execute trade. Please try again.");
+      setSubmitError("The trade could not be sent. Please try again.");
     }
   };
 
@@ -1418,7 +1446,7 @@ export default function SentenceTradeCard({
         // The transfer is already broadcast. The record still finds it by
         // address, so this is a warning rather than a failed deposit.
         setSubmitError(
-          "The transfer was sent, but its hash was not recorded yet. The deposit will still be detected.",
+          "Your transfer was sent. Tracking has not started yet, but the deposit will still be detected.",
         );
       }
     } catch (err) {
@@ -1619,6 +1647,22 @@ export default function SentenceTradeCard({
       onEscape={closePopup}
     />
   );
+  // A figure and the pill that names its asset are one object. The sentence
+  // is prose and may break wherever it likes, except between a number and the
+  // ticker it belongs to: a card that reads "for 10.41" / "USDC" has split a
+  // single figure into two lines and made the reader rejoin it.
+  const amountToken = (
+    amount: React.ReactNode,
+    id: string,
+    symbol: string,
+    chain?: string,
+    assetId?: string,
+  ) => (
+    <span className="whitespace-nowrap">
+      <Amount>{amount}</Amount>{" "}
+      {hover(id, <TokenChip symbol={symbol} badge={chain} assetId={assetId} />)}
+    </span>
+  );
   const popup: {
     label: string;
     height: number;
@@ -1638,6 +1682,7 @@ export default function SentenceTradeCard({
           <TokenPopup
             symbol={fromSymbol}
             chain={fromChain}
+            assetId={fromAssetId}
             price={fromPriceUsd}
           />
         ),
@@ -1647,7 +1692,7 @@ export default function SentenceTradeCard({
         label: `${toSymbol} details`,
         height: 220,
         body: (
-          <TokenPopup symbol={toSymbol} chain={toChain} price={toPriceUsd} />
+          <TokenPopup symbol={toSymbol} chain={toChain} assetId={toAssetId} price={toPriceUsd} />
         ),
       }
     ) : openId === "sender" && senderIdentity ? (
@@ -1685,11 +1730,8 @@ export default function SentenceTradeCard({
   const sentence =
     action === "deposit" ? (
       <>
-        {sender === null ? "Deposit" : "Send"} <Amount>{amountIn}</Amount>{" "}
-        {hover(
-          "token-from",
-          <TokenChip symbol={fromSymbol} badge={fromChain} />,
-        )}{" "}
+        {sender === null ? "Deposit" : "Send"}{" "}
+        {amountToken(amountIn, "token-from", fromSymbol, fromChain, fromAssetId)}{" "}
         {sender === null ? null : sender ? (
           <>
             from <AddressChip label={sender.label} icon={sender.icon} />{" "}
@@ -1715,11 +1757,7 @@ export default function SentenceTradeCard({
       </>
     ) : action === "withdraw" ? (
       <>
-        {verb} <Amount>{amountIn}</Amount>{" "}
-        {hover(
-          "token-from",
-          <TokenChip symbol={fromSymbol} badge={fromChain} />,
-        )}{" "}
+        {verb} {amountToken(amountIn, "token-from", fromSymbol, fromChain, fromAssetId)}{" "}
         from your {hover("venue", <VenueChip label="Myntle account" />)}{" "}
         {shownRecipient ? (
           <>
@@ -1737,21 +1775,17 @@ export default function SentenceTradeCard({
     ) : action === "limit" ? (
       <>
         {limit?.side === "BUY" ? "Buy" : "Sell"}{" "}
-        <Amount>{amountIn}</Amount>{" "}
-        {hover(
-          "token-from",
-          <TokenChip symbol={fromSymbol} badge={fromChain} />,
-        )}{" "}
-        at <Amount>{limit?.price ?? figures.amountOut}</Amount>{" "}
-        {hover(
+        {amountToken(amountIn, "token-from", fromSymbol, fromChain, fromAssetId)}{" "}
+        at{" "}
+        {amountToken(
+          limit?.price ?? figures.amountOut,
           "token-to",
-          <TokenChip symbol={toSymbol} badge={toChain} />,
+          toSymbol,
+          toChain,
+          toAssetId,
         )}{" "}
-        each, for about <Amount>{figures.amountOut}</Amount>{" "}
-        {hover(
-          "token-to",
-          <TokenChip symbol={toSymbol} badge={toChain} />,
-        )}{" "}
+        each, for about{" "}
+        {amountToken(figures.amountOut, "token-to", toSymbol, toChain, toAssetId)}{" "}
         {limit?.funding === "account" ? "in your" : "from your"}{" "}
         {hover(
           "venue",
@@ -1762,11 +1796,7 @@ export default function SentenceTradeCard({
       </>
     ) : action === "earn" ? (
       <>
-        Earn <Amount>{amountIn}</Amount>{" "}
-        {hover(
-          "token-from",
-          <TokenChip symbol={fromSymbol} badge={fromChain} />,
-        )}{" "}
+        Earn {amountToken(amountIn, "token-from", fromSymbol, fromChain, fromAssetId)}{" "}
         in {earn?.name ?? toSymbol}
         {earn?.apy !== null && earn?.apy !== undefined
           ? ` at ${earn.apy.toFixed(2)}% APY`
@@ -1779,16 +1809,8 @@ export default function SentenceTradeCard({
       </>
     ) : (
       <>
-        {verb} <Amount>{amountIn}</Amount>{" "}
-        {hover(
-          "token-from",
-          <TokenChip symbol={fromSymbol} badge={fromChain} />,
-        )}{" "}
-        for <Amount>{figures.amountOut}</Amount>{" "}
-        {hover(
-          "token-to",
-          <TokenChip symbol={toSymbol} badge={toChain} />,
-        )}{" "}
+        {verb} {amountToken(amountIn, "token-from", fromSymbol, fromChain, fromAssetId)}{" "}
+        for {amountToken(figures.amountOut, "token-to", toSymbol, toChain, toAssetId)}{" "}
         {intents ? "in your" : "on"}{" "}
         {hover("venue", <VenueChip label="Myntle account" />)}
       </>
@@ -1865,7 +1887,15 @@ export default function SentenceTradeCard({
     <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-baseline gap-x-3">
       <DetailRow
         label="Token"
-        icon={<TokenAvatar symbol={tokenSymbol} size={14} />}
+        icon={
+          <TokenAvatar
+            symbol={tokenSymbol}
+            assetId={fromAssetId}
+            contractAddress={contract || undefined}
+            chain={meta?.chainSlug ?? fromChain}
+            size={14}
+          />
+        }
       >
         {tokenSymbol}
       </DetailRow>
@@ -2103,7 +2133,12 @@ export default function SentenceTradeCard({
                 ) : null}
                 {feeLabel ? (
                   <DetailRow label="Fee">
-                    <TokenAmount amount={feeLabel} symbol={fromSymbol} />
+                    <TokenAmount
+                      amount={feeLabel}
+                      symbol={fromSymbol}
+                      chain={fromChain}
+                      assetId={fromAssetId}
+                    />
                   </DetailRow>
                 ) : null}
                 {destinationChain ? (
@@ -2124,6 +2159,8 @@ export default function SentenceTradeCard({
                     <TokenAmount
                       amount={figures.minAmountOut}
                       symbol={toSymbol}
+                      chain={toChain}
+                      assetId={toAssetId}
                     />
                   </DetailRow>
                 ) : null}
@@ -2157,7 +2194,14 @@ export default function SentenceTradeCard({
                 ) : null}
                 {viewState === "settled" && received ? (
                   <DetailRow label="Received">
-                    <TokenAmount amount={received} symbol={toSymbol} />
+                    <TokenAmount
+                      amount={formatAmount(received, {
+                        stable: isStableSymbol(toSymbol),
+                      })}
+                      symbol={toSymbol}
+                      chain={toChain}
+                      assetId={toAssetId}
+                    />
                   </DetailRow>
                 ) : null}
               </div>
@@ -2407,7 +2451,7 @@ export default function SentenceTradeCard({
           {pendingDecision ? (
             <>
               <span className="sr-only" role="status">
-                Checking the record.
+                Checking your transaction.
               </span>
               <SkeletonBox width={76} height={27} radius={999} />
             </>
@@ -2653,8 +2697,9 @@ function TerminalSheet({
 }) {
   return (
     <div
-      className="mt-1.5 rounded-t-card border-t"
+      className="mt-1.5 rounded-t-card border-t motion-reduce:animate-none"
       style={{
+        animation: "fade-up 300ms cubic-bezier(0.23,1,0.32,1) both",
         background:
           tone === "green"
             ? "color-mix(in oklch, var(--green) 12%, var(--surface))"
@@ -2963,38 +3008,33 @@ export function directApprovalFailure(body: unknown): string {
   const text = typeof message === "string" ? message.trim() : "";
   return text.length > 0 && text !== "An error occurred."
     ? text
-    : "Unable to execute trade. Please try again.";
+    : "The trade could not be sent. Please try again.";
 }
 
-/** Failure copy names the action; a withdrawal settles, a deposit arrives. */
+/** Failure copy names the action that failed, never a generic transaction. */
 export function failureMessage(
   recordState: string,
   action: TradeAction,
   intents: boolean,
 ): string {
   if (intents) {
-    if (action === "withdraw") {
-      return "Transaction failed. Please try again.";
-    }
-    // A signed intent is a trade, never a deposit: nothing was sent to an
-    // address, so the wallet deposit sentences would be a lie.
-    if (action !== "deposit") {
-      return "Transaction failed. Please try again.";
-    }
+    // A signed intent is a trade or a withdrawal, never a deposit: nothing
+    // was sent to an address, so the wallet deposit sentences would be a lie.
+    if (action !== "deposit") return failureSentence(action);
   }
   if (recordState === "incomplete_deposit") {
-    return "The deposit arrived short of the quoted amount.";
+    return "Your deposit arrived short of the quoted amount.";
   }
   if (recordState === "needs_reconciliation") {
-    return "The settlement timed out before confirming.";
+    return "This transfer is still unconfirmed. Check Details before trying again.";
   }
   return "Deposit failed. Nothing was moved.";
 }
 
 /**
  * The terminal sheet's sentence. Deposit states reuse the status block's own
- * message (minus the "Success." the title already says); failures reuse the
- * recorded failure; the rest name the outcome in one sentence.
+ * message; failures reuse the recorded failure; the rest name the outcome in
+ * one sentence.
  */
 export function terminalBodyText(input: {
   viewState: SentenceCardState;
@@ -3018,7 +3058,7 @@ export function terminalBodyText(input: {
     viewState !== "denied" &&
     depositMessage
   ) {
-    return depositMessage.replace(/^Success\. /, "");
+    return depositMessage;
   }
   if (viewState === "failed" || viewState === "incomplete") {
     return (
@@ -3032,30 +3072,24 @@ export function terminalBodyText(input: {
   }
   if (viewState === "refunded") {
     return action === "deposit"
-      ? "The deposit was refunded."
-      : "The funds were returned.";
+      ? "Your deposit was refunded."
+      : "Your funds were returned.";
   }
   if (viewState === "expired") {
     return action === "limit"
-      ? "The order expired."
+      ? "Your limit order expired."
       : "This quote is no longer valid.";
   }
-  if (viewState === "denied") {
-    return "The proposal was rejected. Nothing was moved.";
-  }
-  if (action === "withdraw") {
-    // Generic on purpose: the destination may be someone else's address,
-    // so the card never claims the reader received anything. The record's
-    // own figure stays in the drawer's Received row.
-    return "Your withdrawal was successful.";
-  }
-  if (action === "limit") return "The order filled.";
+  if (viewState === "denied") return rejectionSentence(action);
   if (action === "earn") {
     return earnName
       ? `Your deposit is earning in ${earnName}.`
-      : "The deposit settled in the vault.";
+      : "Your deposit is in the vault.";
   }
-  return "The settlement is confirmed in the record.";
+  // A withdrawal stays generic on purpose: the destination may be someone
+  // else's address, so the card never claims the reader received anything.
+  // The record's own figure stays in the drawer's Received row.
+  return settledSentence(action);
 }
 
 export type SentenceApprovalWiring = {
@@ -3194,7 +3228,7 @@ export async function approveThroughAdapter(
     });
   } catch {
     input.setState("awaiting");
-    input.setError("Unable to execute trade. Please try again.");
+    input.setError("The trade could not be sent. Please try again.");
   } finally {
     input.inFlight.current = false;
   }
@@ -3204,7 +3238,7 @@ function VenueChip({ label }: { label: string }) {
   return (
     <span className="inline-flex items-center gap-[0.4em] whitespace-nowrap rounded-full bg-field py-[0.25em] pl-[0.25em] pr-[0.7em] align-middle font-medium leading-none text-ink">
       <span aria-hidden="true" className="inline-flex shrink-0">
-        <NetworkIcon network="near" size={18} />
+        <ProtocolIcon protocol="near-intents" size={18} />
       </span>
       <span>{label}</span>
     </span>
@@ -3680,15 +3714,24 @@ function DetailRow({
 function TokenAmount({
   amount,
   symbol,
+  chain,
+  assetId,
 }: {
   amount: React.ReactNode;
   symbol: string;
+  chain?: string;
+  assetId?: string;
 }) {
   return (
     <span className="inline-flex items-center gap-2">
       {amount}
       <span className="inline-flex items-center gap-1">
-        <TokenAvatar symbol={symbol} size={14} />
+        <TokenAvatar
+          symbol={symbol}
+          chain={chain}
+          assetId={assetId}
+          size={14}
+        />
         {symbol}
       </span>
     </span>

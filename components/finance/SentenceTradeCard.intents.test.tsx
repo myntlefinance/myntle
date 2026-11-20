@@ -538,7 +538,7 @@ describe("passkey withdrawal on the sentence card", () => {
     // the same token grouping as the quote's own figures.
     expect(html).toContain("Received");
     expect(html).toMatch(
-      /<span class="inline-flex items-center gap-2">1\.9894<span class="inline-flex items-center gap-1"><span[^>]*title="USDC"/,
+      /<span class="inline-flex items-center gap-2">1\.98<span class="inline-flex items-center gap-1"><span[^>]*title="USDC"/,
     );
     expect(html).toContain("0x9f2c…1c2d");
   });
@@ -547,9 +547,7 @@ describe("passkey withdrawal on the sentence card", () => {
     const html = render(
       <SentenceTradeCard {...withdrawCard} state="failed" />,
     );
-    expect(html).toContain(
-      "Transaction failed. Please try again.",
-    );
+    expect(html).toContain("Your withdrawal failed. Please try again.");
     expect(html).not.toContain("Deposit failed");
   });
 
@@ -565,7 +563,7 @@ describe("passkey withdrawal on the sentence card", () => {
     ).toContain(">Submitted<");
     expect(
       render(<SentenceTradeCard {...withdrawCard} state="settled" />),
-    ).toContain("Your withdrawal was successful.");
+    ).toContain("Your withdrawal is complete.");
     expect(
       render(<SentenceTradeCard {...withdrawCard} state="settled" />),
     ).not.toContain(">Approved<");
@@ -714,7 +712,7 @@ describe("passkey swap on the sentence card", () => {
 
   it("names a failed swap plainly, not a deposit", () => {
     const html = render(<SentenceTradeCard {...swapCard} state="failed" />);
-    expect(html).toContain("Transaction failed. Please try again.");
+    expect(html).toContain("Your swap failed. Please try again.");
     expect(html).not.toContain("Deposit failed");
   });
 
@@ -727,7 +725,7 @@ describe("passkey swap on the sentence card", () => {
         mode="confidential-external"
       />,
     );
-    expect(html).toContain("The settlement is confirmed in the record.");
+    expect(html).toContain("Your swap is complete.");
     expect(html).toContain("View Txn");
     expect(html).toContain(
       "https://explorer.near-intents.org/mask/0xdepos1taddress",
@@ -743,7 +741,7 @@ describe("passkey swap on the sentence card", () => {
         initialExplorerUrls={["https://arbiscan.io/tx/0xabc"]}
       />,
     );
-    expect(html).toContain("The settlement is confirmed in the record.");
+    expect(html).toContain("Your swap is complete.");
     expect(html).toContain("View Txn");
     expect(html).toContain("https://arbiscan.io/tx/0xabc");
   });
@@ -757,7 +755,7 @@ describe("passkey swap on the sentence card", () => {
         mode="confidential-intents"
       />,
     );
-    expect(html).toContain("The settlement is confirmed in the record.");
+    expect(html).toContain("Your swap is complete.");
     expect(html).not.toContain("View Txn");
     expect(html).toContain("justify-end");
     // No empty trailing span: the gap must not push Details off the edge.
@@ -766,7 +764,7 @@ describe("passkey swap on the sentence card", () => {
 
   it("offers no View Txn when a settled swap names nothing to point at", () => {
     const html = render(<SentenceTradeCard {...swapCard} state="settled" />);
-    expect(html).toContain("The settlement is confirmed in the record.");
+    expect(html).toContain("Your swap is complete.");
     expect(html).not.toContain("View Txn");
     expect(html).toContain("justify-end");
     // No empty trailing span: the gap must not push Details off the edge.
@@ -954,13 +952,13 @@ describe("the wallet branch under the same card", () => {
 describe("failure copy", () => {
   it("is action-aware and leaves the wallet sentences alone", () => {
     expect(failureMessage("failed", "withdraw", true)).toBe(
-      "Transaction failed. Please try again.",
+      "Your withdrawal failed. Please try again.",
     );
     expect(failureMessage("incomplete_deposit", "deposit", true)).toBe(
-      "The deposit arrived short of the quoted amount.",
+      "Your deposit arrived short of the quoted amount.",
     );
     expect(failureMessage("needs_reconciliation", "deposit", true)).toBe(
-      "The settlement timed out before confirming.",
+      "This transfer is still unconfirmed. Check Details before trying again.",
     );
     expect(failureMessage("failed", "swap", false)).toBe(
       "Deposit failed. Nothing was moved.",

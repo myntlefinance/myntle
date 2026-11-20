@@ -1,4 +1,5 @@
 import { getAssets } from "@/lib/intents/service";
+import { isStableSymbol } from "@/lib/format/amount";
 
 export type SupportedNetwork =
   | "arbitrum"
@@ -250,22 +251,6 @@ export function formatTokenAmount(rawBigInt: bigint, decimals: number): string {
   return `${isNegative ? "-" : ""}${integerPart.toString()}.${truncatedFraction}`;
 }
 
-const STABLECOIN_SYMBOLS = new Set([
-  "USDC",
-  "USDT",
-  "USDS",
-  "SUSDS",
-  "DAI",
-  "AUSD",
-  "USDC.E",
-  "USDE",
-  "FRAX",
-  "BUSD",
-  "TUSD",
-  "FDUSD",
-  "PYUSD",
-]);
-
 const NATIVE_SYMBOLS = new Set([
   "ETH",
   "WETH",
@@ -293,12 +278,7 @@ export function classifyAssetCategory(
   if (val > 0 && val < 1.0) {
     return "dust";
   }
-  if (
-    STABLECOIN_SYMBOLS.has(sym) ||
-    sym.includes("USDC") ||
-    sym.includes("USDT") ||
-    sym.includes("USD")
-  ) {
+  if (isStableSymbol(sym)) {
     return "stables";
   }
   if (NATIVE_SYMBOLS.has(sym)) {

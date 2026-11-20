@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import { formatAmount, isStableSymbol } from "@/lib/format/amount";
 import { assetName, inputOf, outputOf, stateOf, str, toolNameOf, type AssetMeta, type ToolPart } from "./toolParts";
 import {
   approvalDecision,
@@ -135,6 +136,9 @@ export function collectLimitOrders(
         ? "approved"
         : "awaiting";
 
+    const baseSymbol = assetName(candidate.baseAssetId, symbols);
+    const quoteSymbol = assetName(candidate.quoteAssetId, symbols);
+
     out.push({
       approvalId,
       status,
@@ -142,14 +146,18 @@ export function collectLimitOrders(
       side: candidate.side,
       baseAssetId: candidate.baseAssetId,
       quoteAssetId: candidate.quoteAssetId,
-      baseSymbol: assetName(candidate.baseAssetId, symbols),
-      quoteSymbol: assetName(candidate.quoteAssetId, symbols),
+      baseSymbol,
+      quoteSymbol,
       baseChain: meta.get(candidate.baseAssetId)?.chain,
       quoteChain: meta.get(candidate.quoteAssetId)?.chain,
-      quantity: candidate.quantity,
+      quantity: formatAmount(candidate.quantity, {
+        stable: isStableSymbol(baseSymbol),
+      }),
       quantityRaw: candidate.quantityRaw,
       price: candidate.price,
-      total: candidate.total,
+      total: formatAmount(candidate.total, {
+        stable: isStableSymbol(quoteSymbol),
+      }),
       totalRaw: candidate.totalRaw,
       funding: candidate.funding,
       accountKind: candidate.accountKind,

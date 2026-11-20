@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
 import type { DepositMetadata } from "@/lib/intents/deposit-metadata";
+import { formatRawAmount } from "@/lib/format/amount";
 import type { Wallet } from "@wallet-standard/base";
 import {
   createConnectedNearFunding,
   createConnectedSolanaFunding,
-  formatRawAmount,
   friendlyFundingError,
   fundingActionsForState,
   fundingStateForCheck,
@@ -220,7 +220,7 @@ describe("the funding dialog", () => {
     const html = render(dialog());
 
     expect(html).toContain("Fund from wallet");
-    expect(html).toContain("2 USDC on Arbitrum One");
+    expect(html).toContain("2.00 USDC on Arbitrum One");
     expect(html).toContain("MetaMask");
     expect(html).toContain("Coinbase Wallet");
     expect(html).toContain("Use QR");
@@ -332,7 +332,7 @@ describe("the funding states", () => {
       shortfall: tokenShortfall(2_000_000n, 400_000n, 6, "USDC"),
     };
 
-    expect(check.shortfall).toBe("Need 2 USDC, wallet has 0.4");
+    expect(check.shortfall).toBe("Need 2.00 USDC, wallet has 0.40");
     expect(fundingStateForCheck(check)).toBe("insufficient");
     expect(fundingActionsForState("insufficient", true)).toEqual([
       "Use QR",
@@ -399,7 +399,7 @@ describe("the funding states", () => {
   it("formats amounts without floating-point rounding", () => {
     expect(formatRawAmount(2_000_000n, 6)).toBe("2");
     expect(formatRawAmount(400_000n, 6)).toBe("0.4");
-    expect(formatRawAmount(123_456_789n, 6)).toBe("123.456789");
+    expect(formatRawAmount(123_456_789n, 6)).toBe("123.456");
   });
 
   it("turns wallet refusals into the copy the card uses", () => {
