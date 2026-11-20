@@ -29,6 +29,8 @@ import type { AssetItem } from "@/lib/wallet/balances";
  * bar. Numbers on screen are the total and the allocation shares,
  * nothing else. The bar sits straight on the page with no track
  * behind it, so the gaps read as separation between the holdings.
+ * The first and last held pills meet the page's edges: a slot with
+ * no share keeps its mount but spends no width and no gap.
  * One segment per asset group in fixed order; the selection is
  * owned by the page, which filters the holdings table to match.
  * Segments stay bare color pills — the glyph, name, and share live
@@ -44,6 +46,11 @@ export const SEGMENT_TONE = {
 
 /** Floor under a segment's width so the smallest share stays clickable. */
 export const SEGMENT_MIN_PX = 24;
+
+/** The space between two pills that both hold share. It rides the pill on
+ * the right as a margin rather than the row as a gap, so a hidden slot
+ * between two visible pills cannot spend that space on nothing. */
+export const SEGMENT_GAP_PX = 4;
 
 export type AllocationGroup = keyof typeof SEGMENT_TONE;
 
@@ -159,11 +166,14 @@ function AllocationSegmentButton({
   segment,
   selected,
   onSelect,
+  gapBefore = false,
   steady = false,
 }: {
   segment: AllocationSegment;
   selected: boolean;
   onSelect: () => void;
+  /** A held pill already sits to the left, so this one opens a gap to it. */
+  gapBefore?: boolean;
   /** Watched bar only: the slot stays mounted when its share hits zero
     * and glides its length back, instead of popping in and out. */
   steady?: boolean;
@@ -226,6 +236,10 @@ function AllocationSegmentButton({
         width: empty ? "0%" : `${segment.pct}%`,
         minWidth: empty ? 0 : SEGMENT_MIN_PX,
         opacity: empty ? 0 : 1,
+        // The gap is the pill's own left margin, and a hidden slot keeps
+        // none, so the first held pill always starts on the page's left
+        // edge and the last one ends on its right edge.
+        marginInlineStart: gapBefore ? SEGMENT_GAP_PX : 0,
       }}
       aria-hidden={empty ? true : undefined}
       onMouseEnter={handleMouseEnter}
@@ -248,8 +262,11 @@ function AllocationSegmentButton({
             : undefined,
         }}
       >
+        {/* The selected wash is decoration on the segment, not another
+          * bar: the segment's bone already carries the shape. */}
         <span
           className="absolute inset-y-1 left-1 rounded-full bg-white/20 transition-[width,opacity] duration-500"
+          {...{ "skullet-ignore": "" }}
           style={{
             width: selected ? "calc(100% - 8px)" : "0%",
             opacity: selected ? 1 : 0,
@@ -318,6 +335,9 @@ export function PortfolioHero({
   const bar = steadyBar
     ? allocationShares(items, total)
     : allocationSegments(items, total);
+  // The first pill holding share anchors the bar's left edge; everything
+  // before it is a mounted-but-empty slot with no length.
+  const firstHeld = bar.findIndex((s) => s.pct > 0);
   const sentence =
     scope === "watched"
       ? subject
@@ -362,16 +382,20 @@ export function PortfolioHero({
       )}
       {bar.some((s) => s.pct > 0) ? (
         <div
-          className="mt-3 flex h-9 gap-1"
+          className="mt-3 flex h-9"
           role="group"
           aria-label="Allocation"
         >
-          {bar.map((s) => (
+          {bar.map((s, i) => (
             <AllocationSegmentButton
               key={s.name}
               segment={s}
               selected={selected === s.name}
               onSelect={() => onSelect(s.name)}
+              // Spacing only between pills that hold share: a mounted slot
+              // with nothing in it reserves no width and no gap, so a bar
+              // showing one group still spans edge to edge.
+              gapBefore={s.pct > 0 && i > firstHeld}
               steady={steadyBar}
             />
           ))}

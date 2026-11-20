@@ -94,12 +94,11 @@ function ShellSample({
     variant === "trash" ||
     variant === "page";
   return (
-    <main className="flex h-[100dvh] gap-0 bg-canvas p-2.5 text-ink lg:pl-0 [&_.sidebar-copy.sticky]:bg-transparent [&_img]:rounded-[6px] [&_svg]:rounded-[4px]">
+    <main className="flex h-[100dvh] gap-0 bg-canvas p-2.5 text-ink lg:pl-0 [&_.sidebar-copy.sticky]:bg-transparent">
       {/* The rail's sticky "Chats" header has a canvas background. Left
        * opaque, skullet draws the whole 219×32 row as one bone and hides the
        * label and search icon; transparent here lets it measure the contents.
-       * The image and SVG radii are what skullet reads for each bone, so an
-       * icon is never a sharp square. */}
+       * Icon and image bones take the shared radius from globals.css. */}
       <SidebarNav
         fill
         className="hidden lg:flex"
@@ -253,7 +252,7 @@ function ThreadBody() {
               }}
             />
             <div className="relative px-4 pb-6 sm:px-8 lg:px-12">
-              <div className="mx-auto w-full max-w-[720px]">
+              <div className="mx-auto w-full max-w-[864px]">
                 <ComposerSample />
               </div>
             </div>
@@ -268,7 +267,7 @@ function EmptyBody() {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto scroll-slim [scrollbar-gutter:stable]">
       <div className="mx-auto flex min-h-full w-full flex-col justify-center px-4 py-10 sm:px-8 lg:px-12">
-        <div className="mx-auto w-full max-w-[720px]">
+        <div className="mx-auto w-full max-w-[864px]">
           <h1 className="text-[26px] font-normal tracking-[-0.02em] text-ink">
             <span className="block text-ink-3">
               Your money, in plain language

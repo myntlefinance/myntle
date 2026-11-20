@@ -284,10 +284,9 @@ export function WatchedCards({
     // overflow-y to auto, so without padding the top and left 1px rings
     // paint under the clip. The negative margin pays the padding back so
     // the row still lines up with the sections above and below it.
-    // The SVG radius is what skullet reads for each icon bone, so the
-    // kebab, copy, plus, and network marks never skeleton as sharp
-    // squares — the same `[&_svg]` cover the app shell uses.
-    <div className="-m-1 flex items-stretch gap-2 overflow-x-auto p-1 [&_svg]:rounded-[4px]">
+    // Icon bones take the shared SVG radius from globals.css; the card
+    // itself reads as its title line and the address pill.
+    <div className="-m-1 flex items-stretch gap-2 overflow-x-auto p-1">
       {entries.map((entry) => {
         const active = entry.id === selectedId;
         const label = entryLabel(entry);
@@ -342,6 +341,8 @@ export function WatchedCards({
                 aria-expanded={menu?.id === entry.id}
                 title="Card actions"
                 onClick={(e) => openMenu(e, entry)}
+                // An action, not information: no bone, but its slot stays.
+                {...{ "skullet-ignore": "" }}
                 className={`flex size-6 shrink-0 items-center justify-center rounded-[6px] transition-colors duration-100 focus-visible:outline-none ${
                   menu?.id === entry.id
                     ? "text-ink"
@@ -355,6 +356,7 @@ export function WatchedCards({
               <p
                 className="mt-0.5 min-w-0 truncate text-[12px] leading-relaxed text-ink-3"
                 title={nameLine}
+                {...{ "skullet-ignore": "" }}
               >
                 {nameLine}
               </p>

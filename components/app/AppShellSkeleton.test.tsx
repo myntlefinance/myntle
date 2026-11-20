@@ -15,10 +15,10 @@ describe("AppShellSkeleton", () => {
     expect(html).toContain("w-[235px]");
     expect(html).toContain("rounded-[14px]");
     expect(html).toContain("h-11");
-    // Skullet reads each element's computed radius for its bone; without
-    // these, every icon would be a sharp square.
-    expect(html).toContain("[&amp;_svg]:rounded-[4px]");
-    expect(html).toContain("[&amp;_img]:rounded-[6px]");
+    // The icon/image radius is one setting in globals.css now, not a
+    // per-sample cover that each shell has to remember.
+    expect(html).not.toContain("[&amp;_svg]:rounded-[4px]");
+    expect(html).not.toContain("[&amp;_img]:rounded-[6px]");
     // The thread sample is measured, not drawn from guessed boxes.
     expect(html).toContain("Swap 100 USDC for NEAR");
     expect(html).toContain("Loading chat.");
@@ -61,7 +61,7 @@ describe("AppShellSkeleton", () => {
     expect(html).toContain("max-w-[860px]");
     // The shared HistoryList: real status pills, no hardcoded route.
     expect(html).toContain("Executed");
-    expect(html).toContain("250.00");
+    expect(html).toContain("250.12");
     expect(html).not.toContain("Base → Ethereum");
     expect(html).toContain("Loading your history.");
   });
@@ -76,7 +76,7 @@ describe("AppShellSkeleton", () => {
     const sample = ReactDOMServer.renderToStaticMarkup(<HistoryListSample />);
     // The shell wraps the shared sample; every row in the sample
     // appears verbatim in the shell.
-    for (const row of ["250.00", "0.0340", "75.00"]) {
+    for (const row of ["250.12", "0.0345", "75.42"]) {
       expect(sample).toContain(row);
       expect(shell).toContain(row);
     }
@@ -95,7 +95,7 @@ describe("AppShellSkeleton", () => {
     const sample = ReactDOMServer.renderToStaticMarkup(
       <PortfolioSkeletonBody snapshot={SAMPLE_PORTFOLIO} />,
     );
-    for (const marker of ["Your wallet", "Myntle account", "USDC"]) {
+    for (const marker of ["Your wallet", "Myntle account", "TOKEN"]) {
       expect(sample).toContain(marker);
       expect(shell).toContain(marker);
     }

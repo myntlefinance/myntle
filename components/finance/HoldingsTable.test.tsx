@@ -30,7 +30,8 @@ describe("HoldingsTable", () => {
     expect(html).toContain("$3,000.00");
     // The hero bar owns filtering now; the table carries no pills.
     expect(html).not.toContain("Stables");
-    // The chain mark is skeleton noise; the name beside it is measured.
+    // The group name under the ticker is detail: the skeleton keeps its
+    // line and draws no bar for it.
     expect(html).toContain("skullet-ignore");
   });
 

@@ -150,6 +150,21 @@
   --skullet-highlight: rgb(255 255 255 / 0.08);
 }
 
+/* Skullet gives a text bar the theme radius and a box the radius it measured.
+ * An icon or an image has no radius of its own, so its bone came out a sharp
+ * square unless every sample remembered to carry `[&_svg]`/`[&_img]` covers.
+ * Set the rung once here, scoped to the measured ghost. The base layer and
+ * `:where()` keep an explicit `rounded-*` on the element in charge, which is
+ * how an avatar stays a circle and a chip stays a pill. */
+@layer base {
+  [skullet-loading] :where(svg) {
+    border-radius: 4px;
+  }
+  [skullet-loading] :where(img) {
+    border-radius: 6px;
+  }
+}
+
 @theme inline {
   /* colors */
   --color-page: var(--page);

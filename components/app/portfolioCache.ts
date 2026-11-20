@@ -2,6 +2,7 @@ import {
   INTENTS_GROUP_NAME,
   groupBalancesByNetwork,
   isIntentsGroupName,
+  type AssetCategory,
   type AssetGroup,
   type TokenBalance,
 } from "@/lib/wallet/balances";
@@ -28,253 +29,97 @@ export type PortfolioSnapshot = {
   superUsd?: number;
 };
 
+/* ─────────────────────────────────────────────────────────
+ * SKELETON SAMPLE
+ * What a portfolio looks like before its read lands: eight rows per
+ * account, three allocation groups, and nothing else. The sample is
+ * not a pretend account. A holding's bones are the same whatever the
+ * ticker says, so every row carries the layout — one line for the
+ * symbol, one for the balance, one for the value — and no names,
+ * prices, or logos for the skeleton to draw as detail.
+ *
+ * A generic ticker also keeps the avatar a monogram. A real token logo
+ * is an inline SVG, and the sample only needs a circle; the artwork
+ * would be measured for nothing. (The remembered content shape still
+ * carries it, which is why the row-count hint below exists.)
+ * ───────────────────────────────────────────────────────── */
+
+/** The three allocation groups the hero bar reads, in a normal split. */
+const SKELETON_CATEGORIES: AssetCategory[] = [
+  "stables",
+  "stables",
+  "native",
+  "token",
+  "stables",
+  "native",
+  "token",
+  "stables",
+];
+
+/** One generic holding: enough to lay out a row, no real asset behind it. */
+function skeletonItem(
+  prefix: string,
+  index: number,
+  category: AssetCategory,
+): AssetGroup["items"][number] {
+  return {
+    id: `${prefix}-holding-${index}`,
+    // No uploaded logo resolves for this ticker, so the avatar is a
+    // monogram instead of another inline SVG in the measured tree.
+    symbol: "TOKEN",
+    name: "Token",
+    amount: "1,000.00",
+    valueUsd: 1000,
+    priceUsd: 1,
+    category,
+    chain: "base",
+    network: "base",
+  };
+}
+
+/** One group of skeleton rows; the table never shows group headers. */
+function skeletonGroups(
+  prefix: string,
+  name = "Base",
+  icon = "base",
+): AssetGroup[] {
+  return [
+    {
+      id: `${prefix}-group`,
+      name,
+      icon,
+      items: SKELETON_CATEGORIES.map((category, index) =>
+        skeletonItem(prefix, index, category),
+      ),
+    },
+  ];
+}
+
+function skeletonTotal(groups: AssetGroup[]): number {
+  return Number.parseFloat(
+    groups
+      .flatMap((group) => group.items)
+      .reduce((sum, item) => sum + item.valueUsd, 0)
+      .toFixed(2),
+  );
+}
+
+const SKELETON_WALLET = skeletonGroups("skeleton-wallet");
+const SKELETON_SUPER = skeletonGroups(
+  "skeleton-super",
+  INTENTS_GROUP_NAME,
+  "near",
+);
+const SKELETON_ALL = [...SKELETON_WALLET, ...SKELETON_SUPER];
+
 /** One account's shape, for the skeleton before the first read lands. */
 export const SAMPLE_PORTFOLIO: PortfolioSnapshot = {
-  groups: [
-    {
-      id: "base",
-      name: "Base",
-      icon: "base",
-      items: [
-        {
-          id: "sample-base-usdc",
-          symbol: "USDC",
-          name: "USD Coin",
-          amount: "1,250.00",
-          valueUsd: 1250,
-          priceUsd: 1,
-          category: "stables",
-          chain: "base",
-          network: "base",
-        },
-        {
-          id: "sample-base-eth",
-          symbol: "ETH",
-          name: "Ether",
-          amount: "0.8420",
-          valueUsd: 2734.18,
-          priceUsd: 3247.24,
-          category: "native",
-          chain: "base",
-          network: "base",
-        },
-        {
-          id: "sample-base-degen",
-          symbol: "DEGEN",
-          name: "Degen",
-          amount: "12,400",
-          valueUsd: 86.4,
-          category: "token",
-          chain: "base",
-          network: "base",
-        },
-      ],
-    },
-    {
-      id: "sol",
-      name: "Solana",
-      icon: "sol",
-      items: [
-        {
-          id: "sample-sol-sol",
-          symbol: "SOL",
-          name: "Solana",
-          amount: "12.50",
-          valueUsd: 1121.5,
-          priceUsd: 89.72,
-          category: "native",
-          chain: "solana",
-          network: "solana",
-        },
-        {
-          id: "sample-sol-bonk",
-          symbol: "BONK",
-          name: "Bonk",
-          amount: "1,200,000",
-          valueUsd: 14.4,
-          category: "token",
-          chain: "solana",
-          network: "solana",
-        },
-      ],
-    },
-    {
-      id: "settlement",
-      name: INTENTS_GROUP_NAME,
-      icon: "near",
-      items: [
-        {
-          id: "sample-intents-usdc",
-          symbol: "USDC",
-          name: "USD Coin",
-          amount: "320.50",
-          valueUsd: 320.5,
-          priceUsd: 1,
-          category: "stables",
-          chain: "near",
-          network: "intents",
-        },
-        {
-          id: "sample-intents-usdt",
-          symbol: "USDT",
-          name: "Tether USD",
-          amount: "150.00",
-          valueUsd: 150,
-          priceUsd: 1,
-          category: "stables",
-          chain: "near",
-          network: "intents",
-        },
-        {
-          id: "sample-intents-near",
-          symbol: "NEAR",
-          name: "NEAR",
-          amount: "85.20",
-          valueUsd: 264.12,
-          priceUsd: 3.1,
-          category: "native",
-          chain: "near",
-          network: "intents",
-        },
-        {
-          id: "sample-intents-eth",
-          symbol: "ETH",
-          name: "Ether",
-          amount: "0.05",
-          valueUsd: 162.36,
-          priceUsd: 3247.24,
-          category: "native",
-          chain: "near",
-          network: "intents",
-        },
-      ],
-    },
-  ],
-  totalUsd: 6103.46,
-  walletGroups: [
-    {
-      id: "base",
-      name: "Base",
-      icon: "base",
-      items: [
-        {
-          id: "sample-base-usdc",
-          symbol: "USDC",
-          name: "USD Coin",
-          amount: "1,250.00",
-          valueUsd: 1250,
-          priceUsd: 1,
-          category: "stables",
-          chain: "base",
-          network: "base",
-        },
-        {
-          id: "sample-base-eth",
-          symbol: "ETH",
-          name: "Ether",
-          amount: "0.8420",
-          valueUsd: 2734.18,
-          priceUsd: 3247.24,
-          category: "native",
-          chain: "base",
-          network: "base",
-        },
-        {
-          id: "sample-base-degen",
-          symbol: "DEGEN",
-          name: "Degen",
-          amount: "12,400",
-          valueUsd: 86.4,
-          category: "token",
-          chain: "base",
-          network: "base",
-        },
-      ],
-    },
-    {
-      id: "sol",
-      name: "Solana",
-      icon: "sol",
-      items: [
-        {
-          id: "sample-sol-sol",
-          symbol: "SOL",
-          name: "Solana",
-          amount: "12.50",
-          valueUsd: 1121.5,
-          priceUsd: 89.72,
-          category: "native",
-          chain: "solana",
-          network: "solana",
-        },
-        {
-          id: "sample-sol-bonk",
-          symbol: "BONK",
-          name: "Bonk",
-          amount: "1,200,000",
-          valueUsd: 14.4,
-          category: "token",
-          chain: "solana",
-          network: "solana",
-        },
-      ],
-    },
-  ],
-  superGroups: [
-    {
-      id: "settlement",
-      name: INTENTS_GROUP_NAME,
-      icon: "near",
-      items: [
-        {
-          id: "sample-intents-usdc",
-          symbol: "USDC",
-          name: "USD Coin",
-          amount: "320.50",
-          valueUsd: 320.5,
-          priceUsd: 1,
-          category: "stables",
-          chain: "near",
-          network: "intents",
-        },
-        {
-          id: "sample-intents-usdt",
-          symbol: "USDT",
-          name: "Tether USD",
-          amount: "150.00",
-          valueUsd: 150,
-          priceUsd: 1,
-          category: "stables",
-          chain: "near",
-          network: "intents",
-        },
-        {
-          id: "sample-intents-near",
-          symbol: "NEAR",
-          name: "NEAR",
-          amount: "85.20",
-          valueUsd: 264.12,
-          priceUsd: 3.1,
-          category: "native",
-          chain: "near",
-          network: "intents",
-        },
-        {
-          id: "sample-intents-eth",
-          symbol: "ETH",
-          name: "Ether",
-          amount: "0.05",
-          valueUsd: 162.36,
-          priceUsd: 3247.24,
-          category: "native",
-          chain: "near",
-          network: "intents",
-        },
-      ],
-    },
-  ],
-  walletUsd: 5206.48,
-  superUsd: 896.98,
+  groups: SKELETON_ALL,
+  totalUsd: skeletonTotal(SKELETON_ALL),
+  walletGroups: SKELETON_WALLET,
+  superGroups: SKELETON_SUPER,
+  walletUsd: skeletonTotal(SKELETON_WALLET),
+  superUsd: skeletonTotal(SKELETON_SUPER),
 };
 
 type LedgerItem = {

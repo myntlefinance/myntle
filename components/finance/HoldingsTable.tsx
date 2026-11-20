@@ -532,7 +532,13 @@ export function HoldingsTable({
                         <span className="block truncate text-[13px] font-medium leading-tight text-ink">
                           {item.symbol}
                         </span>
-                        <span className="mt-0.5 block truncate text-[11.5px] leading-tight text-ink-3">
+                        {/* The network badge on the token disc already
+                          * says where the row settles; the skeleton keeps
+                          * its line's height and draws nothing here. */}
+                        <span
+                          className="mt-0.5 block truncate text-[11.5px] leading-tight text-ink-3"
+                          {...{ "skullet-ignore": "" }}
+                        >
                           {item.groupName}
                         </span>
                       </span>
@@ -542,14 +548,23 @@ export function HoldingsTable({
                     <span className="block text-[13px] tabular-nums leading-tight text-ink">
                       <MorphNumber disabled={!animate}>{item.amount}</MorphNumber>
                     </span>
+                    {/* The unit price is the balance's detail. Skipping
+                      * it in the skeleton also drops the lone em-dash
+                      * bone an unpriced holding used to draw here. */}
                     {item.priceUsd ? (
-                      <span className="mt-0.5 block text-[11.5px] tabular-nums leading-tight text-ink-3">
+                      <span
+                        className="mt-0.5 block text-[11.5px] tabular-nums leading-tight text-ink-3"
+                        {...{ "skullet-ignore": "" }}
+                      >
                         <MorphNumber disabled={!animate}>
                           {`$${item.priceUsd.toLocaleString(undefined, { maximumFractionDigits: 4 })}`}
                         </MorphNumber>
                       </span>
                     ) : (
-                      <span className="mt-0.5 block text-[11.5px] tabular-nums leading-tight text-ink-3">
+                      <span
+                        className="mt-0.5 block text-[11.5px] tabular-nums leading-tight text-ink-3"
+                        {...{ "skullet-ignore": "" }}
+                      >
                         —
                       </span>
                     )}

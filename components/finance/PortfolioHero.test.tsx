@@ -183,6 +183,65 @@ describe("PortfolioHero", () => {
     ]);
   });
 
+  it("spends no gap on a mounted slot with no share", () => {
+    // Others is the whole wallet, and the two empty slots ahead of it are
+    // still mounted: the visible pill must still start on the left edge
+    // and end on the right, aligned with the rows above and below.
+    const othersOnly = [
+      { id: "degen", symbol: "DEGEN", name: "Degen", amount: "10", valueUsd: 10, category: "token" as const },
+    ];
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <PortfolioHero
+        total={10}
+        count={1}
+        scope="wallet"
+        items={othersOnly}
+        selected={null}
+        onSelect={vi.fn()}
+        steadyBar
+      />,
+    );
+    // The row carries no gap of its own; the spacing travels on the pill.
+    expect(html).not.toContain("gap-1");
+    expect(html).not.toContain("margin-inline-start:4px");
+
+    // The mirror case: Stables is the whole wallet and the two empty
+    // slots behind it stay mounted, so the pill's right end has to reach
+    // the same edge as the rows below.
+    const stablesOnly = ReactDOMServer.renderToStaticMarkup(
+      <PortfolioHero
+        total={10}
+        count={1}
+        scope="wallet"
+        items={[
+          { id: "usdc", symbol: "USDC", name: "USD Coin", amount: "10", valueUsd: 10, category: "stables" as const },
+        ]}
+        selected={null}
+        onSelect={vi.fn()}
+        steadyBar
+      />,
+    );
+    expect(stablesOnly).not.toContain("margin-inline-start:4px");
+
+    // With Stables ahead of it, Others keeps the gap it shares with a
+    // held neighbour — even though Gas sits empty between them.
+    const split = ReactDOMServer.renderToStaticMarkup(
+      <PortfolioHero
+        total={20}
+        count={2}
+        scope="wallet"
+        items={[
+          { id: "usdc", symbol: "USDC", name: "USD Coin", amount: "10", valueUsd: 10, category: "stables" as const },
+          { id: "degen", symbol: "DEGEN", name: "Degen", amount: "10", valueUsd: 10, category: "token" as const },
+        ]}
+        selected={null}
+        onSelect={vi.fn()}
+        steadyBar
+      />,
+    );
+    expect(split).toContain("margin-inline-start:4px");
+  });
+
   it("keeps every slot mounted behind a steady bar", () => {
     const stablesOnly = [
       { id: "usdc", symbol: "USDC", name: "USD Coin", amount: "10", valueUsd: 10, category: "stables" as const },

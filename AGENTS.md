@@ -184,6 +184,8 @@ Never build a component in the lab. The lab is where a component is decided.
 
 **Assets are addressed by chain and contract id.** The same ticker means different contracts on different chains, and there is no `usdc.near` on NEAR at all. Every asset reference carries its chain and its full contract id. Ticker strings never reach a signature or a contract call.
 
+**Brand marks come from the local registry.** Network, token, and protocol artwork lives once under `public/brand/`; `icons.registry.json` maps aliases and exact `assetId` or `chain + contract` identities to that artwork. `bun run icons` validates the files, writes `components/finance/brandIcons.generated.ts` and `icons.lock.json`, and fails on unregistered, unsafe, or ambiguous entries. Render through `BrandIcon` or its `NetworkIcon`, `TokenAvatar`, and `ProtocolIcon` wrappers. An exact but unregistered identity falls back to a monogram, never to a same-ticker logo. Do not add a runtime icon service, and do not edit the generated module by hand.
+
 **Identity is chain plus address.** The account the verifier knows is derived from the public key, so the same wallet on two chains is two accounts with two sets of balances. Every address in the database sits next to its chain, and the two are always read together.
 
 **The settlement decides the outcome.** A transaction is `settled` only when the authoritative source says so. A successful wallet signature, a successful HTTP response, or a sentence from the assistant are never sufficient evidence.
@@ -195,6 +197,8 @@ Never build a component in the lab. The lab is where a component is decided.
 **The wallet providers are client-only.** One of the wallet connectors reaches for `indexedDB` when it is evaluated, and the server has no such thing. The whole provider tree is loaded with `ssr: false` for that reason, and the wallet standard's registry is imported inside an effect for the same reason. They mount once, in `app/(app)/layout.tsx`; do not wrap an individual page in `ProvidersLoader`, because a page-level mount is torn down on every navigation and takes the session and query cache with it.
 
 **Numbers that move.** A visually important number that updates in place, such as the portfolio hero total, renders through the `MorphMoney` wrapper so its digits morph by place value instead of cutting. Table cells and sentences stay static unless a prototype says otherwise, and the masked, skeleton, and reduced-motion states always render plain text with the morph disabled.
+
+**Skeletons reserve layout, not detail.** The measured sample is the real component, so a skeleton is coarse by marking detail with `skullet-ignore`: the group name under a ticker, the unit price under a balance, the metadata line under a trade, and actions such as a copy or refresh mark. The slot stays so the row height cannot move, and only the primary line of each column draws a bone. Sample data is structural — eight generic rows and a total are enough for the portfolio — and never a realistic account. Radius is set once: text bars take `--skullet-radius`, boxes keep their measured radius, and `[skullet-loading] :where(svg)` / `:where(img)` supplies the icon fallback in `globals.css`; a sample never carries its own `[&_svg]` cover.
 
 ## Design rules
 

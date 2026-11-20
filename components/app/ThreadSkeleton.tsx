@@ -14,10 +14,8 @@ import { Skeleton } from "skullet/react";
  * never replays an entrance. It is shared with the first-paint shell, which
  * wraps it in its own skeleton rather than nesting a second one.
  *
- * The icon and image radii are not decoration. Skullet reads each element's
- * computed border-radius when it draws a control or an image, so a bare SVG
- * becomes a sharp square; the descendant utilities give every bone the same
- * soft edge the real control has. */
+ * Icon and image bones take the shared radius from globals.css, once for
+ * every measured sample. A sample does not carry its own `[&_svg]` cover. */
 export function ThreadSample({
   bottomPad,
   narrow = false,
@@ -27,14 +25,14 @@ export function ThreadSample({
 }) {
   return (
     <div
-      className={`flex flex-col gap-8 pt-8 [&_img]:rounded-[6px] [&_svg]:rounded-[4px] ${narrow ? "px-4" : "px-4 sm:px-8 lg:px-12"}`}
+      className={`flex flex-col gap-8 pt-8 ${narrow ? "px-4" : "px-4 sm:px-8 lg:px-12"}`}
       style={
         bottomPad !== undefined
           ? { paddingBottom: bottomPad }
           : { paddingBottom: "2rem" }
       }
     >
-      <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+      <div className={narrow ? "w-full" : "mx-auto w-full max-w-[864px]"}>
         <div className="scroll-mt-8 flex items-center justify-center py-2 select-none">
           <div className="flex items-center gap-2 text-[12px] font-medium tracking-normal text-ink-2">
             <span className="font-semibold text-ink">Today</span>
@@ -43,17 +41,17 @@ export function ThreadSample({
           </div>
         </div>
       </div>
-      <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+      <div className={narrow ? "w-full" : "mx-auto w-full max-w-[864px]"}>
         <UserSample text="Swap 100 USDC for NEAR" />
       </div>
-      <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
-        <AssistantSample text="You hold 1,250 USDC on Base and 470.50 USDC in the settlement ledger, plus a small amount of ETH. The swap would leave your stable balance untouched and settle in NEAR." />
+      <div className={narrow ? "w-full" : "mx-auto w-full max-w-[864px]"}>
+        <AssistantSample text="You hold 1,250 USDC on Base and 470.50 USDC in your Myntle account, plus a small amount of ETH. The swap would leave your stable balance untouched and settle in NEAR." />
       </div>
-      <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+      <div className={narrow ? "w-full" : "mx-auto w-full max-w-[864px]"}>
         <UserSample text="What do I hold across my wallets?" />
       </div>
-      <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
-        <AssistantSample text="Your balances are split across Base and the settlement ledger. Nothing is below the dust threshold." />
+      <div className={narrow ? "w-full" : "mx-auto w-full max-w-[864px]"}>
+        <AssistantSample text="Your balances are split across Base and your Myntle account. Nothing is below the dust threshold." />
       </div>
     </div>
   );

@@ -13,8 +13,10 @@ describe("ThreadSkeleton", () => {
     // reply, and the action row that reserves its height.
     expect(html).toContain("Swap 100 USDC for NEAR");
     expect(html).toContain("Checked your balances");
-    expect(html).toContain("[&amp;_svg]:rounded-[4px]");
-    expect(html).toContain("[&amp;_img]:rounded-[6px]");
+    // Icon and image radii are one rule in globals.css, not a per-sample
+    // cover the next skeleton can forget.
+    expect(html).not.toContain("[&amp;_svg]:rounded-[4px]");
+    expect(html).not.toContain("[&amp;_img]:rounded-[6px]");
   });
 
   it("applies bottomPad when provided", () => {

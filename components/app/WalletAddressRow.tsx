@@ -39,6 +39,9 @@ function RefreshMark({
       aria-busy={busy || undefined}
       disabled={disabled}
       onClick={onRefresh}
+      // A control, not information: its 32px slot keeps the row's
+      // spacing and the skeleton draws no bone on top of the total.
+      {...{ "skullet-ignore": "" }}
       className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink disabled:opacity-40 disabled:pointer-events-none"
     >
       <span className="relative flex size-[22px] shrink-0 items-center justify-center">
@@ -101,8 +104,13 @@ export function WalletAddressRow({
             <MorphAddress value={address} animate={animate} />
           </div>
           {/* The mark centers on the address's first line, not the block:
-            * a wrapped address must not push it to the middle. */}
-          <span className="flex h-[21px] shrink-0 items-center">
+            * a wrapped address must not push it to the middle. It is a
+            * control, not information, so the skeleton keeps its slot
+            * and draws nothing for it. */}
+          <span
+            className="flex h-[21px] shrink-0 items-center"
+            {...{ "skullet-ignore": "" }}
+          >
             <CopyButton value={address} size={16} tone="ink" />
           </span>
         </div>

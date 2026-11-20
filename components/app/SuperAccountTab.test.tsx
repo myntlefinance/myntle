@@ -206,8 +206,8 @@ describe("SuperAccountTab", () => {
     state.priv = { status: "pending", snapshot: null };
     const html = renderTab([]);
     expect(html).toContain("Reading your Myntle account.");
-    expect(html).toContain("USDC");
-    expect(html).toContain("$320.50");
+    expect(html).toContain("TOKEN");
+    expect(html).toContain("$1,000.00");
   });
 
   it("offers a retry when the unlocked read fails", () => {
