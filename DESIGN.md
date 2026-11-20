@@ -223,7 +223,7 @@ The two families are loaded through `next/font` as the variables `--font-inter` 
 - **Meta** (400, 12px to 11px): metadata, timestamps, secondary detail, and anything that supports a label without competing with it.
 - **Mono** (400, 12px): a contract identifier, an address, a raw enum, or a value that has to be compared character by character.
 
-Body copy is capped at 46 characters a line (`max-w-[46ch]`) and the thread itself is capped at 720 pixels, so a paragraph never runs long enough to lose its beginning.
+Body copy is capped at 46 characters a line (`max-w-[46ch]`) and the thread itself is capped at 864 pixels, so a paragraph never runs long enough to lose its beginning.
 
 ### Named Rules
 
@@ -235,7 +235,7 @@ Body copy is capped at 46 characters a line (`max-w-[46ch]`) and the thread itse
 
 The application fills the viewport and never scrolls as a whole; only the thread scrolls. The frame is a `100dvh` flex row with a sidebar on the left and the conversation on the right, separated by a 10-pixel gap (`gap-2.5`).
 
-The sidebar is a 224-pixel column that collapses to a 52-pixel rail, with the rows inside it 208 pixels wide so that every glyph stays on the same centre line in both states. The conversation area centres its content in a 720-pixel column, with 16, 32, and 48 pixels of horizontal padding at the three breakpoints. Messages are separated by 32 pixels of vertical space, and the thread carries 32 pixels of padding at the top and 160 at the bottom so the composer can float over the end of the conversation.
+The sidebar is a 224-pixel column that collapses to a 52-pixel rail, with the rows inside it 208 pixels wide so that every glyph stays on the same centre line in both states. The conversation area centres its content in an 864-pixel column, with 16, 32, and 48 pixels of horizontal padding at the three breakpoints. Messages are separated by 32 pixels of vertical space, and the thread carries 32 pixels of padding at the top and 160 at the bottom so the composer can float over the end of the conversation.
 
 The density is high inside components and open between them. Inside a card, the rhythm is 10 and 12 pixels, with a 28-pixel icon button and a 44-pixel top bar. Between sections of a screen, it is 24 and 32 pixels. The composer floats over the thread on a raised surface, and the transcript fades behind it rather than stopping short of it.
 

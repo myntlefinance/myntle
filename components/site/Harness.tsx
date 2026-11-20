@@ -607,7 +607,7 @@ function EmptyState({ onSend, shuffle, offset, live }: { onSend: (text: string, 
 
   return (
     <div className="mx-auto flex min-h-full w-full flex-col justify-center px-4 py-10 sm:px-8 lg:px-12">
-      <div className="mx-auto w-full max-w-[720px]">
+      <div className="mx-auto w-full max-w-[864px]">
         <h1 className="text-[26px] font-normal tracking-[-0.02em] text-ink">
           {live ? null : (
             <span className="home-reveal block text-ink-3" style={homeRevealStyle(stage >= 1, revealParams.reveal)}>{`Hello ${NAME}`}</span>
@@ -1294,50 +1294,72 @@ export default function Harness({
       }
     };
 
-    const pin = () => {
+    /**
+     * The correction is written in the frame that changed the layout, not in
+     * a later one.
+     *
+     * The ResizeObserver is the caller that matters for size: its delivery
+     * lands after this frame's layout and before its paint, so writing
+     * `scrollTop` there means the paint carries both the new height and the
+     * scroll that answers it. Deferring the write into a requestAnimationFrame
+     * landed it one frame late, and anything that grows fast in its first
+     * frame — the trade card's drawer travels about a fifth of its height in
+     * the first 16ms — was painted that far below the pinned edge and snapped
+     * back on the next frame. A taller drawer lost a proportionally bigger
+     * step, which is why only some expansions showed it.
+     *
+     * The MutationObserver still coalesces into a frame. A streaming answer
+     * can mutate the tree many times per frame, and each correction reads
+     * layout, so running it per mutation would reread the whole thread for
+     * every token.
+     */
+    const applyPin = () => {
       if (!stickRef.current) return;
       if (content.querySelector("[data-prevent-scroll-pin='true']")) return;
 
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const scrollEl = scrollRef.current;
-        if (!scrollEl) return;
+      const scrollEl = scrollRef.current;
+      if (!scrollEl) return;
 
-        // "the ultimate combo is that the user prompt + agent + empty space is the total viewport"
-        // As the assistant response expands, decrease the empty space spacer proportionally
-        if (initialSpacerRef.current > 0) {
-          const assistantEl = content.querySelector(
-            '[data-role="assistant"]:last-of-type, [data-role="loading"]:last-of-type'
-          ) as HTMLElement | null;
-          if (assistantEl) {
-            const assistantH = assistantEl.offsetHeight;
-            const remainingSpacer = Math.max(0, initialSpacerRef.current - assistantH);
-            setActiveSpacer((current) => (current !== remainingSpacer ? remainingSpacer : current));
-          }
-        }
+      const lastChild = content.lastElementChild as HTMLElement | null;
+      if (!lastChild) return;
 
-        const lastChild = content.lastElementChild as HTMLElement | null;
-        if (!lastChild) return;
+      const contentBottom = lastChild.offsetTop + lastChild.offsetHeight;
+      const composerThreshold = scrollEl.clientHeight - composerH - 24;
+      const bottomInViewport = contentBottom - scrollEl.scrollTop;
 
-        const contentBottom = lastChild.offsetTop + lastChild.offsetHeight;
-        const composerThreshold = scrollEl.clientHeight - composerH - 24;
-        const bottomInViewport = contentBottom - scrollEl.scrollTop;
-
-        if (bottomInViewport <= composerThreshold) {
-          return;
-        }
-
+      if (bottomInViewport > composerThreshold) {
         const neededScrollTop = contentBottom - composerThreshold;
         if (neededScrollTop > scrollEl.scrollTop) {
           scrollEl.scrollTop = neededScrollTop;
         }
-      });
+      }
+
+      // "the ultimate combo is that the user prompt + agent + empty space is the total viewport"
+      // As the assistant response expands, decrease the empty space spacer proportionally.
+      // The spacer is React state, so it still waits for a frame of its own.
+      if (initialSpacerRef.current > 0) {
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          const assistantEl = content.querySelector(
+            '[data-role="assistant"]:last-of-type, [data-role="loading"]:last-of-type'
+          ) as HTMLElement | null;
+          if (!assistantEl) return;
+          const assistantH = assistantEl.offsetHeight;
+          const remainingSpacer = Math.max(0, initialSpacerRef.current - assistantH);
+          setActiveSpacer((current) => (current !== remainingSpacer ? remainingSpacer : current));
+        });
+      }
+    };
+
+    const pinNextFrame = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(applyPin);
     };
 
     el.addEventListener("scroll", onScroll, { passive: true });
-    const resize = new ResizeObserver(pin);
+    const resize = new ResizeObserver(applyPin);
     resize.observe(content);
-    const mutate = new MutationObserver(pin);
+    const mutate = new MutationObserver(pinNextFrame);
     mutate.observe(content, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
     return () => {
       el.removeEventListener("scroll", onScroll);
@@ -1539,7 +1561,7 @@ export default function Harness({
                     {showTimestamp && (
                       <div
                         data-timestamp="true"
-                        className={`scroll-mt-8 ${narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}`}
+                        className={`scroll-mt-8 ${narrow ? "w-full" : "mx-auto w-full max-w-[864px]"}`}
                       >
                         <TimestampPill timestamp={timestamp} />
                       </div>
@@ -1547,7 +1569,7 @@ export default function Harness({
                     <div
                       data-role={message.role}
                       data-message-id={message.id}
-                      className={`scroll-mt-8 ${narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}`}
+                      className={`scroll-mt-8 ${narrow ? "w-full" : "mx-auto w-full max-w-[864px]"}`}
                     >
                       {message.role === "user" ? (
                         <UserBubble
@@ -1597,7 +1619,7 @@ export default function Harness({
                 <div
                   key={`gated-${exchange.id}`}
                   data-role="gated"
-                  className={`scroll-mt-8 ${narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}`}
+                  className={`scroll-mt-8 ${narrow ? "w-full" : "mx-auto w-full max-w-[864px]"}`}
                 >
                   <div className="flex flex-col gap-8">
                     <UserBubble text={exchange.prompt} />
@@ -1614,7 +1636,7 @@ export default function Harness({
                   {showTimestamp && (
                     <div
                       data-timestamp="true"
-                      className={`scroll-mt-8 ${narrow || full ? "w-full" : "mx-auto w-full max-w-[720px]"}`}
+                      className={`scroll-mt-8 ${narrow || full ? "w-full" : "mx-auto w-full max-w-[864px]"}`}
                     >
                       <TimestampPill timestamp={timestamp} />
                     </div>
@@ -1622,7 +1644,7 @@ export default function Harness({
                   <div
                     data-role={message.role}
                     data-message-id={message.id}
-                    className={`scroll-mt-8 ${narrow || full ? "w-full" : "mx-auto w-full max-w-[720px]"}`}
+                    className={`scroll-mt-8 ${narrow || full ? "w-full" : "mx-auto w-full max-w-[864px]"}`}
                   >
                     {message.role === "user" ? (
                       <UserBubble
@@ -1653,7 +1675,7 @@ export default function Harness({
           {/* the round trip from send to the first stream chunk has no
               assistant content to attach to, so the loader sits on its own */}
           {showInflightLoader ? (
-            <div data-role="loading" className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+            <div data-role="loading" className={narrow ? "w-full" : "mx-auto w-full max-w-[864px]"}>
               {/* Pixel-matched to ActivityStatus' status row (-mx-1.5 + px-1.5
                   + py-1, icon 15px, gap-2, 13px label) so the swap to the live
                   activity line on the first stream chunk doesn't move the text. */}
@@ -1665,7 +1687,7 @@ export default function Harness({
             </div>
           ) : null}
           {live?.error ? (
-            <div data-role="error" className="mx-auto w-full max-w-[720px] text-[13px] text-red">
+            <div data-role="error" className="mx-auto w-full max-w-[864px] text-[13px] text-red">
               {live.error}
             </div>
           ) : null}
@@ -1685,7 +1707,7 @@ export default function Harness({
         className={`absolute inset-x-0 bottom-0 ${narrow ? "px-4 pb-4" : "px-4 pb-6 sm:px-8 lg:px-12"}`}
         style={{ marginRight: scrollGutter }}
       >
-        <div className={narrow ? "w-full" : "mx-auto w-full max-w-[720px]"}>
+        <div className={narrow ? "w-full" : "mx-auto w-full max-w-[864px]"}>
           <PromptBar
             demo={false}
             tall

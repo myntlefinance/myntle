@@ -1,34 +1,22 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
-
-vi.mock("liveline", () => ({
-  Liveline: (props: Record<string, unknown>) => {
-    const data = Array.isArray(props.data) ? props.data : [];
-    return (
-      <div
-        data-liveline
-        data-empty-text={String(props.emptyText ?? "")}
-        data-points={String(data.length)}
-        data-value={String(props.value ?? "")}
-      />
-    );
-  },
-}));
 
 import { TokenPriceChart } from "@/components/finance/TokenPriceChart";
 
 describe("TokenPriceChart", () => {
-  it("passes the no-data state to Liveline when there is no history", () => {
+  it("draws the no-data state without a chart", () => {
     const html = ReactDOMServer.renderToStaticMarkup(<TokenPriceChart />);
     expect(html).toContain("24h");
-    expect(html).toContain('data-points="0"');
-    expect(html).toContain('data-empty-text="No data to display"');
-    expect(html).not.toContain("bg-inset");
-    expect(html).not.toContain("shadow-hairline");
+    expect(html).toContain("No data to display");
+    expect(html).toContain(
+      'aria-label="24 hour price chart. No data to display."',
+    );
+    expect(html).not.toContain("<svg");
+    expect(html).not.toContain("<canvas");
   });
 
-  it("passes a 24-hour series through when one exists", () => {
+  it("draws a 24-hour series as a static path", () => {
     const now = Math.floor(Date.now() / 1000);
     const html = ReactDOMServer.renderToStaticMarkup(
       <TokenPriceChart
@@ -38,8 +26,11 @@ describe("TokenPriceChart", () => {
         ]}
       />,
     );
-    expect(html).toContain('data-points="2"');
-    expect(html).toContain('data-value="1.01"');
     expect(html).toContain("+2.02%");
+    expect(html).toContain('aria-label="24 hour price chart"');
+    expect(html).toContain("<svg");
+    expect(html).toContain("<path");
+    // A canvas is what replayed the reveal animation on every hover.
+    expect(html).not.toContain("<canvas");
   });
 });

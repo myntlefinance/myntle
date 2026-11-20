@@ -293,7 +293,7 @@ export default function TrashDetailView({ slug }: { slug: string }) {
                     style={{ animation: "fade-in 150ms ease both" }}
                   >
                     {missing ? (
-                      <div className="mx-auto flex w-full max-w-[720px] flex-col items-center justify-center gap-1 py-16">
+                      <div className="mx-auto flex w-full max-w-[864px] flex-col items-center justify-center gap-1 py-16">
                         <span className="text-[13.5px] font-medium text-ink">
                           This chat is gone.
                         </span>
@@ -302,7 +302,7 @@ export default function TrashDetailView({ slug }: { slug: string }) {
                         </span>
                       </div>
                     ) : messages!.length === 0 ? (
-                      <div className="mx-auto flex w-full max-w-[720px] flex-col items-center justify-center gap-1 py-16">
+                      <div className="mx-auto flex w-full max-w-[864px] flex-col items-center justify-center gap-1 py-16">
                         <span className="text-[13.5px] font-medium text-ink">
                           No messages.
                         </span>
@@ -314,11 +314,11 @@ export default function TrashDetailView({ slug }: { slug: string }) {
                       clusteredMessages.map(({ message, showTimestamp, timestamp }) => (
                         <Fragment key={message.id}>
                           {showTimestamp && (
-                            <div className="mx-auto w-full max-w-[720px]">
+                            <div className="mx-auto w-full max-w-[864px]">
                               <TimestampPill timestamp={timestamp} />
                             </div>
                           )}
-                          <div className="mx-auto w-full max-w-[720px]">
+                          <div className="mx-auto w-full max-w-[864px]">
                             {message.role === "user" ? (
                               <UserBubble
                                 text={message.parts
